@@ -10,7 +10,13 @@ Conductor (MQTT) → Broker Aedes → Node.js Bridge → Socket.io → Pasajero 
 
 ```bash
 npm install
+npm run build
 npm start
+```
+
+Para desarrollo con hot-reload:
+```bash
+npm run dev
 ```
 
 Servidor corre en `http://localhost:3000`.
