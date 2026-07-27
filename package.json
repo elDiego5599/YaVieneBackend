@@ -1,0 +1,18 @@
+{
+  "name": "ya-viene-backend",
+  "version": "0.1.0",
+  "description": "Backend en tiempo real para Ya Viene — MQTT + WebSocket bridge para seguimiento de buses en Barranquilla",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": ["barranquilla", "bus-tracking", "mqtt", "websocket"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "aedes": "^0.51.1",
+    "socket.io": "^4.7.5",
+    "uuid": "^9.0.1"
+  }
+}
