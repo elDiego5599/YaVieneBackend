@@ -1,0 +1,6 @@
+export const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3000', 10);
+export const WS_PATH = process.env.WS_PATH || '/ws';
+export const MQTT_PORT = parseInt(process.env.MQTT_PORT || '8883', 10);
+export const MQTT_HOST = process.env.MQTT_HOST || '0.0.0.0';
+export const GHOST_TIMEOUT_MS = 90_000;
+export const BUS_TIMEOUT_MS = 30_000;
