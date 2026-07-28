@@ -24,17 +24,35 @@ const server = http.createServer((req, res) => {
 setupSocketServer(server);
 
 startBroker((clientId, topic, payload) => {
-  const parts = topic.split('/');
-  const phoneNumber = parts[1];
-  const driver = getDriver(phoneNumber);
+  const isNewFormat = topic.startsWith('empresa/');
+  let driverPhone: string | null = null;
 
-  if (!driver) {
-    console.warn(`[MQTT] Unknown driver: ${phoneNumber}`);
+  if (isNewFormat) {
+    // empresa/{empresaId}/bus/{busId}/posicion
+    const parts = topic.split('/');
+    const busId = parts[3];
+    driverPhone = payload.phoneNumber as string;
+    payload.busId = busId;
+  } else {
+    // gps/{phoneNumber}
+    const parts = topic.split('/');
+    driverPhone = parts[1];
+  }
+
+  if (!driverPhone) {
+    console.warn(`[MQTT] No phoneNumber in topic: ${topic}`);
     return;
   }
 
-  const updated = upsertPosition(phoneNumber, {
-    busId: (payload.busId as string) || `BUS-${phoneNumber.slice(-4)}`,
+  const driver = getDriver(driverPhone);
+
+  if (!driver) {
+    console.warn(`[MQTT] Unknown driver: ${driverPhone}`);
+    return;
+  }
+
+  const updated = upsertPosition(driverPhone, {
+    busId: (payload.busId as string) || `BUS-${driverPhone.slice(-4)}`,
     routeId: driver.routeId,
     lat: payload.lat as number,
     lon: payload.lon as number,

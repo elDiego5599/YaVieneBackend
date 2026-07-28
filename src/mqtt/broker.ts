@@ -8,10 +8,19 @@ export function startBroker(onMessage: MessageHandler): Promise<Server> {
   const broker: any = new aedes();
 
   broker.on('publish', (packet: any, client: any) => {
-    if (client && packet.topic.startsWith('gps/')) {
+    if (!client) return;
+
+    const topic = packet.topic;
+
+    // Format legacy: gps/{phoneNumber}
+    // Format multi-tenant: empresa/{empresaId}/bus/{busId}/posicion
+    const matchesNew = topic.match(/^empresa\/[^/]+\/bus\/([^/]+)\/posicion$/);
+    const matchesOld = topic.startsWith('gps/');
+
+    if (matchesNew || matchesOld) {
       try {
         const payload = JSON.parse(packet.payload.toString());
-        onMessage(client.id, packet.topic, payload);
+        onMessage(client.id, topic, payload);
       } catch (err) {
         console.error('[MQTT] Error parsing payload:', (err as Error).message);
       }
