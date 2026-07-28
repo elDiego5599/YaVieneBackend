@@ -1,5 +1,6 @@
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDriver, getPosition, registerDriver } from '../data/buses';
+import { signToken } from '../auth/tokens';
 
 interface RouteHandler {
   method: string;
@@ -107,15 +108,51 @@ addRoute('POST', '/api/gps', (_req, res, _params, body) => {
 });
 
 addRoute('POST', '/api/drivers/register', (_req, res, _params, body) => {
-  const { phoneNumber, name, routeId } = body || {};
-  if (!phoneNumber || !routeId) {
+  const { phoneNumber, name, routeId, busId, empresaId } = body || {};
+  if (!phoneNumber || !routeId || !busId) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'phoneNumber and routeId required' }));
+    res.end(JSON.stringify({ error: 'phoneNumber, routeId, and busId required' }));
     return;
   }
+
   registerDriver(String(phoneNumber), String(name || phoneNumber), String(routeId));
+
+  const token = signToken({
+    phoneNumber: String(phoneNumber),
+    busId: String(busId),
+    empresaId: String(empresaId || '1'),
+    role: 'driver',
+  });
+
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ phoneNumber, routeId, status: 'registered' }));
+  res.end(JSON.stringify({ phoneNumber, routeId, busId, status: 'registered', token }));
+});
+
+addRoute('POST', '/api/auth/login', (_req, res, _params, body) => {
+  const { phoneNumber, pin } = body || {};
+
+  if (!phoneNumber) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'phoneNumber required' }));
+    return;
+  }
+
+  const driver = getDriver(String(phoneNumber));
+  if (!driver) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Driver not registered' }));
+    return;
+  }
+
+  const token = signToken({
+    phoneNumber: String(phoneNumber),
+    busId: 'unknown',
+    empresaId: '1',
+    role: 'driver',
+  });
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ phoneNumber, routeId: driver.routeId, token }));
 });
 
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {

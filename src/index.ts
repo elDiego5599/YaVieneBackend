@@ -3,7 +3,55 @@ import { HTTP_PORT } from './config';
 import { startBroker } from './mqtt/broker';
 import { setupSocketServer, broadcastBusPosition } from './socket/handler';
 import { handleAPI } from './api/routes';
-import { upsertPosition, getDriver } from './data/buses';
+import { upsertPosition, getDriver, getPosition } from './data/buses';
+
+// ── Candado 3: Sanity check de física imposible ─────────────────────
+const MAX_SPEED_KMH = 120;
+const EARTH_RADIUS_KM = 6371;
+
+function toRad(deg: number): number {
+  return (deg * Math.PI) / 180;
+}
+
+function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return EARTH_RADIUS_KM * c;
+}
+
+function sanityCheck(busId: string, lat: number, lon: number, speedKmh: number): boolean {
+  const previous = getPosition(busId);
+  if (!previous) return true; // first position, cannot check
+
+  const elapsedSec = (Date.now() - new Date(previous.timestamp).getTime()) / 1000;
+  if (elapsedSec <= 0) return true;
+
+  const distanceKm = haversineDistanceKm(previous.lat, previous.lon, lat, lon);
+  const calculatedSpeedKmh = (distanceKm / elapsedSec) * 3600;
+
+  if (calculatedSpeedKmh > MAX_SPEED_KMH) {
+    console.warn(
+      `[SANITY] REJECTED: bus ${busId} moviéndose a ${calculatedSpeedKmh.toFixed(1)} km/h ` +
+      `(${distanceKm.toFixed(3)} km en ${elapsedSec.toFixed(1)}s) — máximo ${MAX_SPEED_KMH} km/h`
+    );
+    return false;
+  }
+
+  if (speedKmh > MAX_SPEED_KMH) {
+    console.warn(
+      `[SANITY] REJECTED: bus ${busId} reporta speedKmh=${speedKmh} — máximo ${MAX_SPEED_KMH} km/h`
+    );
+    return false;
+  }
+
+  return true;
+}
+// ─────────────────────────────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -28,13 +76,11 @@ startBroker((clientId, topic, payload) => {
   let driverPhone: string | null = null;
 
   if (isNewFormat) {
-    // empresa/{empresaId}/bus/{busId}/posicion
     const parts = topic.split('/');
     const busId = parts[3];
     driverPhone = payload.phoneNumber as string;
     payload.busId = busId;
   } else {
-    // gps/{phoneNumber}
     const parts = topic.split('/');
     driverPhone = parts[1];
   }
@@ -51,13 +97,23 @@ startBroker((clientId, topic, payload) => {
     return;
   }
 
+  const busId = (payload.busId as string) || `BUS-${driverPhone.slice(-4)}`;
+  const lat = payload.lat as number;
+  const lon = payload.lon as number;
+  const speedKmh = payload.speedKmh as number | undefined;
+
+  // ── Candado 3: Rechazar posiciones físicamente imposibles ──────
+  if (!sanityCheck(busId, lat, lon, speedKmh ?? 0)) {
+    return;
+  }
+
   const updated = upsertPosition(driverPhone, {
-    busId: (payload.busId as string) || `BUS-${driverPhone.slice(-4)}`,
+    busId,
     routeId: driver.routeId,
-    lat: payload.lat as number,
-    lon: payload.lon as number,
+    lat,
+    lon,
     heading: payload.heading as number | undefined,
-    speedKmh: payload.speedKmh as number | undefined,
+    speedKmh: speedKmh,
   });
 
   if (updated) broadcastBusPosition(updated);

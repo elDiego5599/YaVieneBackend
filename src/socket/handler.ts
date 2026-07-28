@@ -3,6 +3,13 @@ import { Server } from 'socket.io';
 import { WS_PATH } from '../config';
 import { getPositionsByRoute, getPosition, getDriver, registerDriver, BusPosition } from '../data/buses';
 
+// ── Candado 4: Solo estos eventos están permitidos para pasajeros ────
+const PASSENGER_ALLOWED_EVENTS = new Set([
+  'subscribe:route',
+  'unsubscribe:route',
+  'disconnect',
+]);
+
 let io: Server | null = null;
 
 export function setupSocketServer(httpServer: HTTPServer): Server {
@@ -13,8 +20,22 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
     pingTimeout: 5000,
   });
 
+  // ── Candado 4: Middleware que patea eventos no autorizados ────────
   io.on('connection', (socket) => {
     console.log(`[WS] Client connected: ${socket.id}`);
+
+    const originalEmit = socket.emit.bind(socket);
+    (socket as any)._originalEmit = originalEmit;
+
+    socket.onAny((event: string, ...args: any[]) => {
+      if (event === 'subscribe:route' || event === 'unsubscribe:route') return;
+      if (event === 'driver:register') return;
+      if (event === 'disconnect') return;
+
+      console.warn(`[WS] KICKED client ${socket.id} — attempted forbidden event: "${event}"`);
+      socket.emit('server:error', { message: 'Forbidden event' });
+      socket.disconnect(true);
+    });
 
     socket.on('subscribe:route', (routeId: string) => {
       if (!routeId) return;
