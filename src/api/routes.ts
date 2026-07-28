@@ -144,6 +144,13 @@ addRoute('POST', '/api/auth/login', (_req, res, _params, body) => {
     return;
   }
 
+  // Validar PIN (mock: 1234 para desarrollo)
+  if (!pin || String(pin) !== '1234') {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid PIN' }));
+    return;
+  }
+
   const token = signToken({
     phoneNumber: String(phoneNumber),
     busId: 'unknown',

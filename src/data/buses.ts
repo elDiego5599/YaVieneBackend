@@ -1,4 +1,4 @@
-import { GHOST_TIMEOUT_MS } from '../config';
+import { GHOST_TIMEOUT_MS, BUS_TIMEOUT_MS } from '../config';
 
 export interface BusPosition {
   busId: string;
@@ -20,6 +20,17 @@ interface DriverInfo {
 
 const busPositions = new Map<string, BusPosition>();
 const drivers = new Map<string, DriverInfo>();
+
+// ── Sweep periódico para evitar memory leak ──────────────────────────
+const SWEEP_INTERVAL_MS = 30_000;
+setInterval(() => {
+  const cutoff = Date.now() - BUS_TIMEOUT_MS;
+  for (const [busId, pos] of busPositions) {
+    if (new Date(pos.timestamp).getTime() < cutoff) {
+      busPositions.delete(busId);
+    }
+  }
+}, SWEEP_INTERVAL_MS);
 
 export function upsertPosition(phoneNumber: string, data: {
   busId: string;

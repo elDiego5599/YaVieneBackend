@@ -20,17 +20,22 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
     pingTimeout: 5000,
   });
 
-  // ── Candado 4: Middleware que patea eventos no autorizados ────────
+  // ── Candado 4: onAny — default deny, pero ignorando eventos internos ──
   io.on('connection', (socket) => {
     console.log(`[WS] Client connected: ${socket.id}`);
 
-    const originalEmit = socket.emit.bind(socket);
-    (socket as any)._originalEmit = originalEmit;
+    const PASSENGER_ALLOWED_EVENTS = new Set([
+      'subscribe:route',
+      'unsubscribe:route',
+      'driver:register',
+    ]);
 
     socket.onAny((event: string, ...args: any[]) => {
-      if (event === 'subscribe:route' || event === 'unsubscribe:route') return;
-      if (event === 'driver:register') return;
-      if (event === 'disconnect') return;
+      // Ignorar eventos internos del motor Socket.io
+      if (event.startsWith('/')) return;
+      if (['connect', 'disconnect', 'error', 'connect_error', 'reconnect', 'reconnect_attempt'].includes(event)) return;
+
+      if (PASSENGER_ALLOWED_EVENTS.has(event)) return;
 
       console.warn(`[WS] KICKED client ${socket.id} — attempted forbidden event: "${event}"`);
       socket.emit('server:error', { message: 'Forbidden event' });
