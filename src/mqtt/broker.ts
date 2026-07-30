@@ -33,11 +33,12 @@ export function startBroker(onMessage: MessageHandler): Promise<Server> {
     const topic = packet.topic;
 
     if (!payload) {
+      console.warn(`[MQTT] authorizePublish: no authPayload for client ${client.id}`);
       return callback(null, false);
     }
 
-    // Only allow publishing to own empresa/bus topic
     const expectedTopic = `empresa/${payload.empresaId}/bus/${payload.busId}/posicion`;
+    console.log(`[MQTT] authorizePublish: client=${client.id} topic=${topic} expected=${expectedTopic}`);
     if (topic !== expectedTopic) {
       console.warn(`[MQTT] Unauthorized publish by ${payload.phoneNumber} to ${topic} (expected ${expectedTopic})`);
       return callback(null, false);
@@ -47,6 +48,7 @@ export function startBroker(onMessage: MessageHandler): Promise<Server> {
   };
 
   broker.on('publish', (packet: any, client: any) => {
+    console.log(`[MQTT] publish event: client=${client?.id ?? 'null'} topic=${packet.topic}`);
     if (!client) return;
 
     const topic = packet.topic;

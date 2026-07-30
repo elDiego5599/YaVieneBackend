@@ -223,6 +223,7 @@ async function publishPositionWithAuth(lat, lon) {
 
   const topic = `empresa/${EMPRESA_ID}/bus/${BUS_ID}/posicion`;
   const payload = JSON.stringify({
+    phoneNumber: PHONE,
     lat,
     lon,
     heading: 45 + (step * 5 % 360),
