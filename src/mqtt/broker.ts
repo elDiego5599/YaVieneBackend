@@ -4,8 +4,9 @@ import { MQTT_PORT, MQTT_HOST } from '../config';
 import { verifyToken } from '../auth/tokens';
 
 type MessageHandler = (clientId: string, topic: string, payload: Record<string, unknown>) => void;
+type DisconnectHandler = (phoneNumber: string, busId: string) => void;
 
-export function startBroker(onMessage: MessageHandler): Promise<Server> {
+export function startBroker(onMessage: MessageHandler, onDisconnect?: DisconnectHandler): Promise<Server> {
   const broker: any = new aedes();
 
   // ── Candado 1: JWT authentication ──────────────────────────────────
@@ -63,6 +64,14 @@ export function startBroker(onMessage: MessageHandler): Promise<Server> {
       } catch (err) {
         console.error('[MQTT] Error parsing payload:', (err as Error).message);
       }
+    }
+  });
+
+  broker.on('clientDisconnect', (client: any) => {
+    const payload = client.authPayload;
+    if (payload && onDisconnect) {
+      console.log(`[MQTT] Disconnect: ${payload.phoneNumber} (bus ${payload.busId})`);
+      onDisconnect(payload.phoneNumber as string, payload.busId as string);
     }
   });
 

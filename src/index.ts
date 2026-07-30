@@ -1,9 +1,9 @@
 import http from 'http';
-import { HTTP_PORT } from './config';
+import { HTTP_PORT, BUS_TIMEOUT_MS } from './config';
 import { startBroker } from './mqtt/broker';
-import { setupSocketServer, broadcastBusPosition } from './socket/handler';
+import { setupSocketServer, broadcastBusPosition, broadcastBusLeft } from './socket/handler';
 import { handleAPI } from './api/routes';
-import { upsertPosition, getDriver, getPosition } from './data/buses';
+import { upsertPosition, getDriver, getPosition, removePosition, sweepPositions } from './data/buses';
 
 // ── Candado 3: Sanity check de física imposible ─────────────────────
 const MAX_SPEED_KMH = 120;
@@ -71,7 +71,26 @@ const server = http.createServer((req, res) => {
 
 setupSocketServer(server);
 
-startBroker((clientId, topic, payload) => {
+// ── Sweep de ciclo de vida de buses (cada 10s) ──────────────────────
+const GHOST_MS = 30_000;
+const REMOVE_MS = 60_000;
+
+setInterval(() => {
+  const { toGhost, toRemove } = sweepPositions(GHOST_MS, REMOVE_MS);
+
+  for (const bus of toGhost) {
+    broadcastBusPosition(bus);
+    console.log(`[SWEEP] Bus ${bus.busId} marcado como ghost (>${GHOST_MS / 1000}s)`);
+  }
+
+  for (const { busId, routeId } of toRemove) {
+    broadcastBusLeft(busId, routeId);
+    console.log(`[SWEEP] Bus ${busId} removido del mapa (>${REMOVE_MS / 1000}s)`);
+  }
+}, 10_000);
+
+startBroker(
+  (clientId, topic, payload) => {
   const isNewFormat = topic.startsWith('empresa/');
   let driverPhone: string | null = null;
 
@@ -117,7 +136,15 @@ startBroker((clientId, topic, payload) => {
   });
 
   if (updated) broadcastBusPosition(updated);
-});
+},
+  (phoneNumber, busId) => {
+    const driver = getDriver(phoneNumber);
+    if (!driver) return;
+    removePosition(busId);
+    broadcastBusLeft(busId, driver.routeId);
+    console.log(`[MQTT] Bus ${busId} removido por desconexión del conductor ${phoneNumber}`);
+  }
+);
 
 server.listen(HTTP_PORT, () => {
   console.log(`[HTTP] Server listening on http://localhost:${HTTP_PORT}`);

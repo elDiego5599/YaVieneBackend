@@ -80,3 +80,12 @@ export function broadcastBusPosition(busData: BusPosition): void {
   if (!io) return;
   io.to(`route:${busData.routeId}`).emit('bus:position', busData);
 }
+
+export function broadcastBusLeft(busId: string, routeId: string): void {
+  if (!io) return;
+  io.to(`route:${routeId}`).emit('bus:left', { busId, routeId });
+}
+
+export function getIO(): Server | null {
+  return io;
+}

@@ -1,4 +1,4 @@
-import { GHOST_TIMEOUT_MS, BUS_TIMEOUT_MS } from '../config';
+import { BUS_TIMEOUT_MS } from '../config';
 
 export interface BusPosition {
   busId: string;
@@ -20,17 +20,6 @@ interface DriverInfo {
 
 const busPositions = new Map<string, BusPosition>();
 const drivers = new Map<string, DriverInfo>();
-
-// ── Sweep periódico para evitar memory leak ──────────────────────────
-const SWEEP_INTERVAL_MS = 30_000;
-setInterval(() => {
-  const cutoff = Date.now() - BUS_TIMEOUT_MS;
-  for (const [busId, pos] of busPositions) {
-    if (new Date(pos.timestamp).getTime() < cutoff) {
-      busPositions.delete(busId);
-    }
-  }
-}, SWEEP_INTERVAL_MS);
 
 export function upsertPosition(phoneNumber: string, data: {
   busId: string;
@@ -60,16 +49,41 @@ export function upsertPosition(phoneNumber: string, data: {
 }
 
 export function getPositionsByRoute(routeId: string): BusPosition[] {
-  const now = Date.now();
   const result: BusPosition[] = [];
   for (const bus of busPositions.values()) {
     if (bus.routeId !== routeId) continue;
-    const elapsed = now - new Date(bus.timestamp).getTime();
-    if (elapsed < GHOST_TIMEOUT_MS) {
-      result.push({ ...bus });
-    }
+    result.push({ ...bus });
   }
   return result;
+}
+
+export function sweepPositions(ghostMs: number, removeMs: number): {
+  toGhost: BusPosition[];
+  toRemove: { busId: string; routeId: string }[];
+} {
+  const now = Date.now();
+  const toGhost: BusPosition[] = [];
+  const toRemove: { busId: string; routeId: string }[] = [];
+
+  for (const [busId, pos] of busPositions) {
+    const elapsed = now - new Date(pos.timestamp).getTime();
+
+    if (elapsed > removeMs) {
+      busPositions.delete(busId);
+      toRemove.push({ busId: pos.busId, routeId: pos.routeId });
+    } else if (elapsed > ghostMs && !pos.isGhost) {
+      pos.isGhost = true;
+      toGhost.push({ ...pos });
+    }
+  }
+
+  return { toGhost, toRemove };
+}
+
+export function removePosition(busId: string): BusPosition | undefined {
+  const pos = busPositions.get(busId);
+  if (pos) busPositions.delete(busId);
+  return pos;
 }
 
 export function getPosition(busId: string): BusPosition | null {
