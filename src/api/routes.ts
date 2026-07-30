@@ -76,6 +76,22 @@ addRoute('GET', '/api/buses/:busId', (_req, res, params) => {
   res.end(JSON.stringify(bus));
 });
 
+addRoute('POST', '/api/buses/:busId/offline', (_req, res, params) => {
+  const bus = getPosition(params.busId);
+  if (!bus) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Bus not found' }));
+    return;
+  }
+  const { removePosition } = require('../data/buses');
+  const { broadcastBusLeft } = require('../socket/handler');
+  removePosition(params.busId);
+  broadcastBusLeft(params.busId, bus.routeId);
+  console.log(`[API] Bus ${params.busId} marcado offline por el conductor`);
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: 'offline', busId: params.busId }));
+});
+
 addRoute('GET', '/api/drivers/:phone', (_req, res, params) => {
   const driver = getDriver(params.phone);
   if (!driver) {
