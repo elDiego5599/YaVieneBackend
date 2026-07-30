@@ -146,8 +146,8 @@ startBroker(
   }
 );
 
-server.listen(HTTP_PORT, () => {
-  console.log(`[HTTP] Server listening on http://localhost:${HTTP_PORT}`);
+server.listen(HTTP_PORT, '0.0.0.0', () => {
+  console.log(`[HTTP] Server listening on http://0.0.0.0:${HTTP_PORT}`);
 });
 
 process.on('SIGTERM', () => {
