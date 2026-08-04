@@ -32,6 +32,7 @@ interface PositionRow {
   speed_kmh: number;
   timestamp: number;
   driver_phone: string;
+  session_id: string | null;
   is_ghost: number;
 }
 
@@ -61,6 +62,7 @@ export function upsertPosition(phoneNumber: string, data: {
   lon: number;
   heading?: number;
   speedKmh?: number;
+  sessionId?: string;
 }): BusPosition | null {
   const db = getDb();
 
@@ -77,16 +79,29 @@ export function upsertPosition(phoneNumber: string, data: {
   const speedKmh = data.speedKmh ?? 0;
 
   db.prepare(`
-    INSERT INTO positions (bus_id, route_id, lat, lon, heading, speed_kmh, timestamp, driver_phone, is_ghost)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+    INSERT INTO positions (
+      bus_id, route_id, lat, lon, heading, speed_kmh, timestamp, driver_phone, session_id, is_ghost
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     ON CONFLICT(bus_id) DO UPDATE SET
       lat = excluded.lat,
       lon = excluded.lon,
       heading = excluded.heading,
       speed_kmh = excluded.speed_kmh,
       timestamp = excluded.timestamp,
+      driver_phone = excluded.driver_phone,
+      session_id = excluded.session_id,
       is_ghost = 0
-  `).run(data.busId, routeId, data.lat, data.lon, heading, speedKmh, now, phoneNumber);
+  `).run(
+    data.busId,
+    routeId,
+    data.lat,
+    data.lon,
+    heading,
+    speedKmh,
+    now,
+    phoneNumber,
+    data.sessionId ?? null,
+  );
 
   return {
     busId: data.busId,
@@ -136,6 +151,14 @@ export function removePosition(busId: string): BusPosition | null {
   const row = db.prepare(
     'DELETE FROM positions WHERE bus_id = ? RETURNING *'
   ).get(busId) as PositionRow | undefined;
+  return row ? rowToPosition(row) : null;
+}
+
+export function removePositionOwned(busId: string, sessionId: string): BusPosition | null {
+  const db = getDb();
+  const row = db.prepare(
+    'DELETE FROM positions WHERE bus_id = ? AND session_id = ? RETURNING *'
+  ).get(busId, sessionId) as PositionRow | undefined;
   return row ? rowToPosition(row) : null;
 }
 

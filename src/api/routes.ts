@@ -5,12 +5,14 @@ import {
   getPosition,
   getPositionsByRoute,
   registerDriver,
-  removePosition,
+  removePositionOwned,
   toPublicPosition,
 } from '../data/buses';
 import { authenticateRequest, isAdminRequest, isDriverForBus } from '../auth/http';
 import { hashPin, verifyPin } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
+import { createDriverSession, revokeSession } from '../data/sessions';
+import { broadcastBusLeft } from '../socket/handler';
 
 interface RouteHandler {
   method: string;
@@ -113,9 +115,11 @@ addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
     writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
     return;
   }
-  const { broadcastBusLeft } = require('../socket/handler');
-  const removed = removePosition(params.busId);
-  if (removed) broadcastBusLeft(params.busId, bus.routeId);
+  const removed = removePositionOwned(params.busId, auth!.sessionId);
+  revokeSession(auth!.sessionId);
+  if (removed) {
+    broadcastBusLeft(params.busId, bus.routeId);
+  }
   console.log(`[API] Bus ${params.busId} marcado offline por el conductor`);
   writeJson(res, 200, { status: 'offline', busId: params.busId });
 });
@@ -206,6 +210,7 @@ addRoute('POST', '/api/auth/login', (_req, res, _params, body) => {
     return;
   }
 
+  const sessionId = randomUUID();
   const token = signToken({
     sub: driver.driverId,
     driverId: driver.driverId,
@@ -214,7 +219,16 @@ addRoute('POST', '/api/auth/login', (_req, res, _params, body) => {
     companyId: driver.companyId,
     busId: driver.busId,
     routeId: driver.routeId,
-    sessionId: randomUUID(),
+    sessionId,
+  });
+
+  createDriverSession({
+    sessionId,
+    driverId: driver.driverId,
+    phoneNumber: driver.phoneNumber,
+    companyId: driver.companyId,
+    busId: driver.busId,
+    routeId: driver.routeId,
   });
 
   writeJson(res, 200, {

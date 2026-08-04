@@ -45,18 +45,37 @@ function initSchema(): void {
       speed_kmh REAL NOT NULL DEFAULT 0,
       timestamp INTEGER NOT NULL,
       driver_phone TEXT NOT NULL,
+      session_id TEXT,
       is_ghost INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (driver_phone) REFERENCES drivers(phone_number) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS driver_sessions (
+      session_id TEXT PRIMARY KEY,
+      driver_id TEXT NOT NULL,
+      phone_number TEXT NOT NULL,
+      company_id TEXT NOT NULL,
+      bus_id TEXT NOT NULL,
+      route_id TEXT NOT NULL,
+      client_id TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      revoked_at INTEGER,
+      FOREIGN KEY (phone_number) REFERENCES drivers(phone_number) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_positions_timestamp ON positions(timestamp);
     CREATE INDEX IF NOT EXISTS idx_positions_route_id ON positions(route_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_bus_status ON driver_sessions(bus_id, status);
+    CREATE INDEX IF NOT EXISTS idx_sessions_driver_status ON driver_sessions(driver_id, status);
   `);
 
   ensureColumn(d, 'drivers', 'driver_id', 'TEXT');
   ensureColumn(d, 'drivers', 'company_id', 'TEXT');
   ensureColumn(d, 'drivers', 'bus_id', 'TEXT');
   ensureColumn(d, 'drivers', 'pin_hash', 'TEXT');
+  ensureColumn(d, 'positions', 'session_id', 'TEXT');
 
   d.exec(`
     UPDATE drivers
@@ -66,6 +85,9 @@ function initSchema(): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_driver_id
     ON drivers(driver_id)
     WHERE driver_id IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_positions_session_id
+    ON positions(session_id);
   `);
 }
 

@@ -3,7 +3,7 @@ import { HTTP_PORT, BUS_TIMEOUT_MS } from './config';
 import { startBroker } from './mqtt/broker';
 import { setupSocketServer, broadcastBusPosition, broadcastBusLeft } from './socket/handler';
 import { handleAPI } from './api/routes';
-import { upsertPosition, getDriver, getPosition, removePosition, sweepPositions } from './data/buses';
+import { upsertPosition, getDriver, getPosition, removePositionOwned, sweepPositions } from './data/buses';
 import { TokenPayload } from './auth/tokens';
 
 // ── Candado 3: Sanity check de física imposible ─────────────────────
@@ -133,6 +133,7 @@ startBroker(
     lon,
     heading: payload.heading as number | undefined,
     speedKmh: speedKmh,
+    sessionId: auth.sessionId,
   });
 
   if (updated) broadcastBusPosition(updated);
@@ -140,7 +141,7 @@ startBroker(
   (_clientId: string, auth: TokenPayload) => {
     const driver = getDriver(auth.phoneNumber);
     if (!driver || driver.driverId !== auth.driverId) return;
-    const removed = removePosition(auth.busId);
+    const removed = removePositionOwned(auth.busId, auth.sessionId);
     if (!removed || removed.driverPhone !== auth.phoneNumber) return;
     broadcastBusLeft(auth.busId, removed.routeId);
     console.log(`[MQTT] Bus ${auth.busId} removido por desconexión del conductor ${auth.phoneNumber}`);

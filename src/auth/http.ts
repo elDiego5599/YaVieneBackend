@@ -1,5 +1,6 @@
 import { IncomingMessage } from 'http';
 import { TokenPayload, verifyToken } from './tokens';
+import { getSession } from '../data/sessions';
 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
 if (!ADMIN_API_KEY && process.env.NODE_ENV === 'production') {
@@ -18,5 +19,9 @@ export function isAdminRequest(req: IncomingMessage): boolean {
 }
 
 export function isDriverForBus(auth: TokenPayload | null, busId: string): boolean {
-  return auth?.role === 'driver' && auth.busId === busId;
+  if (!auth || auth.role !== 'driver' || auth.busId !== busId) return false;
+  const session = getSession(auth.sessionId);
+  return session?.status === 'active' &&
+      session.driverId === auth.driverId &&
+      session.busId === auth.busId;
 }

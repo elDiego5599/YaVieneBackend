@@ -2,6 +2,7 @@ import aedes from 'aedes';
 import { createServer, Server } from 'net';
 import { MQTT_PORT, MQTT_HOST } from '../config';
 import { TokenPayload, verifyToken } from '../auth/tokens';
+import { claimSession, isSessionAuthorized, releaseSession } from '../data/sessions';
 
 type MessageHandler = (
   clientId: string,
@@ -28,6 +29,11 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
       return callback(null, false);
     }
 
+    if (!claimSession(payload.sessionId, client.id)) {
+      console.warn(`[MQTT] Session rejected for client ${client.id}: already owned or revoked`);
+      return callback(null, false);
+    }
+
     (client as any).authPayload = payload;
     console.log(`[MQTT] Auth OK: ${payload.phoneNumber} (bus ${payload.busId})`);
     callback(null, true);
@@ -40,6 +46,11 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
 
     if (!payload) {
       console.warn(`[MQTT] authorizePublish: no authPayload for client ${client.id}`);
+      return callback(null, false);
+    }
+
+    if (!isSessionAuthorized(payload.sessionId, client.id)) {
+      console.warn(`[MQTT] Session no longer authorized for client ${client.id}`);
       return callback(null, false);
     }
 
@@ -77,6 +88,7 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
   broker.on('clientDisconnect', (client: any) => {
     const authPayload = client.authPayload as TokenPayload | undefined;
     if (authPayload && onDisconnect) {
+      if (!releaseSession(authPayload.sessionId, client.id as string)) return;
       console.log(`[MQTT] Disconnect: ${authPayload.phoneNumber} (bus ${authPayload.busId})`);
       onDisconnect(client.id as string, authPayload);
     }
