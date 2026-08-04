@@ -1,5 +1,15 @@
 import { IncomingMessage, ServerResponse } from 'http';
-import { getDriver, getPosition, registerDriver } from '../data/buses';
+import { randomUUID } from 'crypto';
+import {
+  getDriver,
+  getPosition,
+  getPositionsByRoute,
+  registerDriver,
+  removePosition,
+  toPublicPosition,
+} from '../data/buses';
+import { authenticateRequest, isAdminRequest, isDriverForBus } from '../auth/http';
+import { hashPin, verifyPin } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
 
 interface RouteHandler {
@@ -10,6 +20,28 @@ interface RouteHandler {
 }
 
 const handlers: RouteHandler[] = [];
+const MAX_BODY_BYTES = 32 * 1024;
+
+function writeJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(payload));
+}
+
+function writeError(res: ServerResponse, status: number, code: string, message: string): void {
+  writeJson(res, status, { error: { code, message } });
+}
+
+function publicDriver(driver: NonNullable<ReturnType<typeof getDriver>>): Record<string, unknown> {
+  return {
+    driverId: driver.driverId,
+    phoneNumber: driver.phoneNumber,
+    name: driver.name,
+    companyId: driver.companyId,
+    busId: driver.busId,
+    routeId: driver.routeId,
+    registeredAt: driver.registeredAt,
+  };
+}
 
 function addRoute(method: string, path: string, handler: RouteHandler['handler']): void {
   const paramNames: string[] = [];
@@ -26,8 +58,7 @@ function addRoute(method: string, path: string, handler: RouteHandler['handler']
 }
 
 addRoute('GET', '/api/health', (_req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
+  writeJson(res, 200, { status: 'ok', uptime: process.uptime() });
 });
 
 addRoute('GET', '/api/companies', (_req, res) => {
@@ -36,8 +67,7 @@ addRoute('GET', '/api/companies', (_req, res) => {
     { id: '2', name: 'Metrocaribe Ltda.' },
     { id: '3', name: 'Transcaribe S.A.S.' },
   ];
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(companies));
+  writeJson(res, 200, companies);
 });
 
 addRoute('GET', '/api/companies/:id/routes', (_req, res, params) => {
@@ -54,128 +84,143 @@ addRoute('GET', '/api/companies/:id/routes', (_req, res, params) => {
     ],
   };
   const routes = allRoutes[params.id] ?? [];
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(routes));
+  writeJson(res, 200, routes);
 });
 
 addRoute('GET', '/api/routes/:routeId/positions', (_req, res, params) => {
-  const { getPositionsByRoute } = require('../data/buses');
-  const positions = getPositionsByRoute(params.routeId);
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ routeId: params.routeId, buses: positions }));
+  const positions = getPositionsByRoute(params.routeId).map(toPublicPosition);
+  writeJson(res, 200, { routeId: params.routeId, buses: positions });
 });
 
 addRoute('GET', '/api/buses/:busId', (_req, res, params) => {
   const bus = getPosition(params.busId);
   if (!bus) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Bus not found' }));
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
     return;
   }
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(bus));
+  writeJson(res, 200, toPublicPosition(bus));
 });
 
-addRoute('POST', '/api/buses/:busId/offline', (_req, res, params) => {
+addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
+  const auth = authenticateRequest(req);
+  if (!isDriverForBus(auth, params.busId)) {
+    writeError(res, 403, 'BUS_FORBIDDEN', 'The token cannot control this bus');
+    return;
+  }
+
   const bus = getPosition(params.busId);
   if (!bus) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Bus not found' }));
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
     return;
   }
-  const { removePosition } = require('../data/buses');
   const { broadcastBusLeft } = require('../socket/handler');
-  removePosition(params.busId);
-  broadcastBusLeft(params.busId, bus.routeId);
+  const removed = removePosition(params.busId);
+  if (removed) broadcastBusLeft(params.busId, bus.routeId);
   console.log(`[API] Bus ${params.busId} marcado offline por el conductor`);
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'offline', busId: params.busId }));
+  writeJson(res, 200, { status: 'offline', busId: params.busId });
 });
 
-addRoute('GET', '/api/drivers/:phone', (_req, res, params) => {
+addRoute('GET', '/api/drivers/:phone', (req, res, params) => {
   const driver = getDriver(params.phone);
   if (!driver) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Driver not found' }));
+    writeError(res, 404, 'DRIVER_NOT_FOUND', 'Driver not found');
     return;
   }
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(driver));
+
+  const auth = authenticateRequest(req);
+  if (!isAdminRequest(req) && auth?.driverId !== driver.driverId) {
+    writeError(res, 403, 'DRIVER_FORBIDDEN', 'The token cannot read this driver');
+    return;
+  }
+  writeJson(res, 200, publicDriver(driver));
 });
 
-addRoute('POST', '/api/gps', (_req, res, _params, body) => {
-  const { phoneNumber, busId, routeId, lat, lon, heading, speedKmh } = body || {};
-  if (!phoneNumber || !busId || lat == null || lon == null) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Missing required fields' }));
-    return;
-  }
-  const { upsertPosition } = require('../data/buses');
-  const { broadcastBusPosition } = require('../socket/handler');
-  const updated = upsertPosition(phoneNumber, { busId, routeId, lat, lon, heading, speedKmh });
-  if (!updated) {
-    res.writeHead(403, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Driver not registered' }));
-    return;
-  }
-  broadcastBusPosition(updated);
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(updated));
+addRoute('POST', '/api/gps', (_req, res) => {
+  writeError(res, 410, 'HTTP_GPS_DISABLED', 'GPS ingestion is available through authenticated MQTT only');
 });
 
-addRoute('POST', '/api/drivers/register', (_req, res, _params, body) => {
-  const { phoneNumber, name, routeId, busId, empresaId } = body || {};
-  if (!phoneNumber || !routeId || !busId) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'phoneNumber, routeId, and busId required' }));
+function provisionDriver(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  body?: Record<string, unknown>,
+): void {
+  if (!isAdminRequest(req)) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
     return;
   }
 
-  registerDriver(String(phoneNumber), String(name || phoneNumber), String(routeId));
+  const phoneNumber = typeof body?.phoneNumber === 'string' ? body.phoneNumber : '';
+  const name = typeof body?.name === 'string' ? body.name : phoneNumber;
+  const routeId = typeof body?.routeId === 'string' ? body.routeId : '';
+  const busId = typeof body?.busId === 'string' ? body.busId : '';
+  const companyId = typeof body?.companyId === 'string'
+    ? body.companyId
+    : typeof body?.empresaId === 'string' ? body.empresaId : '';
+  const pin = typeof body?.pin === 'string' ? body.pin : '';
 
-  const token = signToken({
-    phoneNumber: String(phoneNumber),
-    busId: String(busId),
-    empresaId: String(empresaId || '1'),
-    role: 'driver',
+  if (!phoneNumber || !name || !routeId || !busId || !companyId || !/^\d{4,8}$/.test(pin)) {
+    writeError(res, 400, 'INVALID_DRIVER_PROVISION', 'phoneNumber, name, routeId, busId, companyId and a numeric pin are required');
+    return;
+  }
+
+  const driver = registerDriver(phoneNumber, name, routeId, {
+    driverId: phoneNumber,
+    companyId,
+    busId,
+    pinHash: hashPin(pin),
   });
 
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ phoneNumber, routeId, busId, status: 'registered', token }));
-});
+  writeJson(res, 201, {
+    status: 'provisioned',
+    driver: publicDriver(driver),
+  });
+}
+
+addRoute('POST', '/api/admin/drivers', provisionDriver);
+addRoute('POST', '/api/drivers/register', provisionDriver);
 
 addRoute('POST', '/api/auth/login', (_req, res, _params, body) => {
-  const { phoneNumber, pin } = body || {};
+  const phoneNumber = typeof body?.phoneNumber === 'string' ? body.phoneNumber : '';
+  const pin = typeof body?.pin === 'string' ? body.pin : '';
+  const requestedBusId = typeof body?.busId === 'string' ? body.busId : null;
+  const requestedRouteId = typeof body?.routeId === 'string' ? body.routeId : null;
 
-  if (!phoneNumber) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'phoneNumber required' }));
+  if (!phoneNumber || !pin) {
+    writeError(res, 400, 'CREDENTIALS_REQUIRED', 'phoneNumber and pin are required');
     return;
   }
 
-  const driver = getDriver(String(phoneNumber));
-  if (!driver) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Driver not registered' }));
+  const driver = getDriver(phoneNumber);
+  if (!driver || !verifyPin(pin, driver.pinHash) || !driver.companyId || !driver.busId) {
+    writeError(res, 401, 'INVALID_CREDENTIALS', 'Invalid driver credentials');
     return;
   }
 
-  // Validar PIN (mock: 1234 para desarrollo)
-  if (!pin || String(pin) !== '1234') {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Invalid PIN' }));
+  if (requestedBusId && requestedBusId !== driver.busId) {
+    writeError(res, 403, 'BUS_FORBIDDEN', 'The driver is not assigned to this bus');
+    return;
+  }
+  if (requestedRouteId && requestedRouteId !== driver.routeId) {
+    writeError(res, 403, 'ROUTE_FORBIDDEN', 'The driver is not assigned to this route');
     return;
   }
 
   const token = signToken({
+    sub: driver.driverId,
+    driverId: driver.driverId,
     phoneNumber: String(phoneNumber),
-    busId: 'unknown',
-    empresaId: '1',
     role: 'driver',
+    companyId: driver.companyId,
+    busId: driver.busId,
+    routeId: driver.routeId,
+    sessionId: randomUUID(),
   });
 
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ phoneNumber, routeId: driver.routeId, token }));
+  writeJson(res, 200, {
+    driver: publicDriver(driver),
+    token,
+  });
 });
 
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
@@ -193,12 +238,38 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
 
     if (req.method === 'POST') {
       let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      let bodyBytes = 0;
+      let tooLarge = false;
+      req.on('data', (chunk: Buffer) => {
+        bodyBytes += chunk.length;
+        if (bodyBytes > MAX_BODY_BYTES) {
+          tooLarge = true;
+          req.destroy();
+          if (!res.headersSent) {
+            writeError(res, 413, 'REQUEST_TOO_LARGE', 'Request body is too large');
+          }
+          return;
+        }
+        body += chunk.toString();
+      });
       req.on('end', () => {
+        if (tooLarge) return;
+
+        let parsedBody: Record<string, unknown>;
         try {
-          h.handler(req, res, params, body ? JSON.parse(body) : {});
+          parsedBody = body ? JSON.parse(body) as Record<string, unknown> : {};
         } catch {
-          h.handler(req, res, params, {});
+          writeError(res, 400, 'INVALID_JSON', 'Request body must be valid JSON');
+          return;
+        }
+
+        try {
+          h.handler(req, res, params, parsedBody);
+        } catch (error) {
+          console.error('[HTTP] Handler error:', error);
+          if (!res.headersSent) {
+            writeError(res, 500, 'INTERNAL_ERROR', 'Internal server error');
+          }
         }
       });
     } else {

@@ -1,14 +1,7 @@
 import { Server as HTTPServer } from 'http';
 import { Server } from 'socket.io';
 import { WS_PATH } from '../config';
-import { getPositionsByRoute, getPosition, getDriver, registerDriver, BusPosition } from '../data/buses';
-
-// ── Candado 4: Solo estos eventos están permitidos para pasajeros ────
-const PASSENGER_ALLOWED_EVENTS = new Set([
-  'subscribe:route',
-  'unsubscribe:route',
-  'disconnect',
-]);
+import { getPositionsByRoute, toPublicPosition, BusPosition } from '../data/buses';
 
 let io: Server | null = null;
 
@@ -27,7 +20,6 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
     const PASSENGER_ALLOWED_EVENTS = new Set([
       'subscribe:route',
       'unsubscribe:route',
-      'driver:register',
     ]);
 
     socket.onAny((event: string, ...args: any[]) => {
@@ -46,26 +38,14 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
       if (!routeId) return;
       socket.join(`route:${routeId}`);
       const positions = getPositionsByRoute(routeId);
-      socket.emit('positions:batch', { routeId, buses: positions });
+      socket.emit('positions:batch', {
+        routeId,
+        buses: positions.map(toPublicPosition),
+      });
     });
 
     socket.on('unsubscribe:route', (routeId: string) => {
       if (routeId) socket.leave(`route:${routeId}`);
-    });
-
-    socket.on('driver:register', ({ phoneNumber, name, routeId }: {
-      phoneNumber: string;
-      name: string;
-      routeId: string;
-    }) => {
-      if (!phoneNumber || !routeId) {
-        socket.emit('driver:error', { message: 'phoneNumber and routeId required' });
-        return;
-      }
-      registerDriver(phoneNumber, name || phoneNumber, routeId);
-      socket.join(`route:${routeId}`);
-      (socket as any).data = { ...(socket as any).data, driverPhone: phoneNumber, routeId };
-      socket.emit('driver:registered', { phoneNumber, routeId });
     });
 
     socket.on('disconnect', () => {
@@ -78,7 +58,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
 
 export function broadcastBusPosition(busData: BusPosition): void {
   if (!io) return;
-  io.to(`route:${busData.routeId}`).emit('bus:position', busData);
+  io.to(`route:${busData.routeId}`).emit('bus:position', toPublicPosition(busData));
 }
 
 export function broadcastBusLeft(busId: string, routeId: string): void {

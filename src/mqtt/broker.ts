@@ -1,10 +1,15 @@
 import aedes from 'aedes';
 import { createServer, Server } from 'net';
 import { MQTT_PORT, MQTT_HOST } from '../config';
-import { verifyToken } from '../auth/tokens';
+import { TokenPayload, verifyToken } from '../auth/tokens';
 
-type MessageHandler = (clientId: string, topic: string, payload: Record<string, unknown>) => void;
-type DisconnectHandler = (phoneNumber: string, busId: string) => void;
+type MessageHandler = (
+  clientId: string,
+  auth: TokenPayload,
+  topic: string,
+  payload: Record<string, unknown>,
+) => void;
+type DisconnectHandler = (clientId: string, auth: TokenPayload) => void;
 
 export function startBroker(onMessage: MessageHandler, onDisconnect?: DisconnectHandler): Promise<Server> {
   const broker: any = new aedes();
@@ -38,7 +43,7 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
       return callback(null, false);
     }
 
-    const expectedTopic = `empresa/${payload.empresaId}/bus/${payload.busId}/posicion`;
+    const expectedTopic = `empresa/${payload.companyId}/bus/${payload.busId}/posicion`;
     console.log(`[MQTT] authorizePublish: client=${client.id} topic=${topic} expected=${expectedTopic}`);
     if (topic !== expectedTopic) {
       console.warn(`[MQTT] Unauthorized publish by ${payload.phoneNumber} to ${topic} (expected ${expectedTopic})`);
@@ -59,8 +64,10 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
 
     if (matchesNew || matchesOld) {
       try {
+        const authPayload = (client as any).authPayload as TokenPayload | undefined;
+        if (!authPayload) return;
         const payload = JSON.parse(packet.payload.toString());
-        onMessage(client.id, topic, payload);
+        onMessage(client.id, authPayload, topic, payload);
       } catch (err) {
         console.error('[MQTT] Error parsing payload:', (err as Error).message);
       }
@@ -68,10 +75,10 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
   });
 
   broker.on('clientDisconnect', (client: any) => {
-    const payload = client.authPayload;
-    if (payload && onDisconnect) {
-      console.log(`[MQTT] Disconnect: ${payload.phoneNumber} (bus ${payload.busId})`);
-      onDisconnect(payload.phoneNumber as string, payload.busId as string);
+    const authPayload = client.authPayload as TokenPayload | undefined;
+    if (authPayload && onDisconnect) {
+      console.log(`[MQTT] Disconnect: ${authPayload.phoneNumber} (bus ${authPayload.busId})`);
+      onDisconnect(client.id as string, authPayload);
     }
   });
 

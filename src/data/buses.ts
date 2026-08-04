@@ -12,10 +12,15 @@ export interface BusPosition {
   isGhost: boolean;
 }
 
-interface DriverInfo {
+export interface DriverInfo {
+  driverId: string;
+  phoneNumber: string;
   name: string;
   routeId: string;
   registeredAt: string;
+  companyId: string | null;
+  busId: string | null;
+  pinHash: string | null;
 }
 
 interface PositionRow {
@@ -42,6 +47,11 @@ function rowToPosition(row: PositionRow): BusPosition {
     driverPhone: row.driver_phone,
     isGhost: row.is_ghost === 1,
   };
+}
+
+export function toPublicPosition(position: BusPosition): Omit<BusPosition, 'driverPhone'> {
+  const { driverPhone: _driverPhone, ...publicPosition } = position;
+  return publicPosition;
 }
 
 export function upsertPosition(phoneNumber: string, data: {
@@ -142,28 +152,81 @@ export function getAllPositions(): BusPosition[] {
   return rows.map(rowToPosition);
 }
 
-export function registerDriver(phoneNumber: string, name: string, routeId: string): DriverInfo {
+export function registerDriver(
+  phoneNumber: string,
+  name: string,
+  routeId: string,
+  options: {
+    driverId?: string;
+    companyId?: string;
+    busId?: string;
+    pinHash?: string;
+  } = {},
+): DriverInfo {
   const db = getDb();
   const now = Date.now();
+  const driverId = options.driverId ?? phoneNumber;
+  const companyId = options.companyId ?? null;
+  const busId = options.busId ?? null;
+  const pinHash = options.pinHash ?? null;
+
   db.prepare(`
-    INSERT INTO drivers (phone_number, name, route_id, registered_at)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO drivers (
+      phone_number, driver_id, name, route_id, company_id, bus_id, pin_hash, registered_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(phone_number) DO UPDATE SET
+      driver_id = excluded.driver_id,
       name = excluded.name,
       route_id = excluded.route_id,
+      company_id = excluded.company_id,
+      bus_id = excluded.bus_id,
+      pin_hash = excluded.pin_hash,
       registered_at = excluded.registered_at
-  `).run(phoneNumber, name, routeId, now);
-  return { name, routeId, registeredAt: new Date(now).toISOString() };
+  `).run(phoneNumber, driverId, name, routeId, companyId, busId, pinHash, now);
+  return {
+    driverId,
+    phoneNumber,
+    name,
+    routeId,
+    registeredAt: new Date(now).toISOString(),
+    companyId,
+    busId,
+    pinHash,
+  };
 }
 
 export function getDriver(phoneNumber: string): DriverInfo | null {
   const db = getDb();
-  const row = db.prepare('SELECT name, route_id, registered_at FROM drivers WHERE phone_number = ?')
-    .get(phoneNumber) as { name: string; route_id: string; registered_at: number } | undefined;
+  const row = db.prepare(`
+    SELECT driver_id, phone_number, name, route_id, company_id, bus_id, pin_hash, registered_at
+    FROM drivers
+    WHERE phone_number = ?
+  `).get(phoneNumber) as {
+    driver_id: string;
+    phone_number: string;
+    name: string;
+    route_id: string;
+    company_id: string | null;
+    bus_id: string | null;
+    pin_hash: string | null;
+    registered_at: number;
+  } | undefined;
   if (!row) return null;
   return {
+    driverId: row.driver_id,
+    phoneNumber: row.phone_number,
     name: row.name,
     routeId: row.route_id,
     registeredAt: new Date(row.registered_at).toISOString(),
+    companyId: row.company_id,
+    busId: row.bus_id,
+    pinHash: row.pin_hash,
   };
+}
+
+export function getDriverById(driverId: string): DriverInfo | null {
+  const db = getDb();
+  const row = db.prepare('SELECT phone_number FROM drivers WHERE driver_id = ?')
+    .get(driverId) as { phone_number: string } | undefined;
+  return row ? getDriver(row.phone_number) : null;
 }

@@ -4,6 +4,7 @@ import { startBroker } from './mqtt/broker';
 import { setupSocketServer, broadcastBusPosition, broadcastBusLeft } from './socket/handler';
 import { handleAPI } from './api/routes';
 import { upsertPosition, getDriver, getPosition, removePosition, sweepPositions } from './data/buses';
+import { TokenPayload } from './auth/tokens';
 
 // ── Candado 3: Sanity check de física imposible ─────────────────────
 const MAX_SPEED_KMH = 120;
@@ -90,45 +91,44 @@ setInterval(() => {
 }, 10_000);
 
 startBroker(
-  (clientId, topic, payload) => {
-  const isNewFormat = topic.startsWith('empresa/');
-  let driverPhone: string | null = null;
-
-  if (isNewFormat) {
-    const parts = topic.split('/');
-    const busId = parts[3];
-    driverPhone = payload.phoneNumber as string;
-    payload.busId = busId;
-  } else {
-    const parts = topic.split('/');
-    driverPhone = parts[1];
-  }
-
-  if (!driverPhone) {
-    console.warn(`[MQTT] No phoneNumber in topic: ${topic}`);
+  (_clientId: string, auth: TokenPayload, topic, payload) => {
+  const match = topic.match(/^empresa\/[^/]+\/bus\/([^/]+)\/posicion$/);
+  if (!match) {
+    console.warn(`[MQTT] Topic rejected after authorization: ${topic}`);
     return;
   }
 
-  const driver = getDriver(driverPhone);
-
-  if (!driver) {
-    console.warn(`[MQTT] Unknown driver: ${driverPhone}`);
+  const topicBusId = match[1];
+  if (topicBusId !== auth.busId) {
+    console.warn(`[MQTT] Topic bus mismatch for authenticated driver ${auth.driverId}`);
     return;
   }
 
-  const busId = (payload.busId as string) || `BUS-${driverPhone.slice(-4)}`;
+  const driver = getDriver(auth.phoneNumber);
+
+  if (
+    !driver ||
+    driver.driverId !== auth.driverId ||
+    driver.companyId !== auth.companyId ||
+    driver.busId !== auth.busId ||
+    driver.routeId !== auth.routeId
+  ) {
+    console.warn(`[MQTT] Stale or unauthorized driver assignment: ${auth.driverId}`);
+    return;
+  }
+
   const lat = payload.lat as number;
   const lon = payload.lon as number;
   const speedKmh = payload.speedKmh as number | undefined;
 
   // ── Candado 3: Rechazar posiciones físicamente imposibles ──────
-  if (!sanityCheck(busId, lat, lon, speedKmh ?? 0)) {
+  if (!sanityCheck(auth.busId, lat, lon, speedKmh ?? 0)) {
     return;
   }
 
-  const updated = upsertPosition(driverPhone, {
-    busId,
-    routeId: driver.routeId,
+  const updated = upsertPosition(auth.phoneNumber, {
+    busId: auth.busId,
+    routeId: auth.routeId,
     lat,
     lon,
     heading: payload.heading as number | undefined,
@@ -137,12 +137,13 @@ startBroker(
 
   if (updated) broadcastBusPosition(updated);
 },
-  (phoneNumber, busId) => {
-    const driver = getDriver(phoneNumber);
-    if (!driver) return;
-    removePosition(busId);
-    broadcastBusLeft(busId, driver.routeId);
-    console.log(`[MQTT] Bus ${busId} removido por desconexión del conductor ${phoneNumber}`);
+  (_clientId: string, auth: TokenPayload) => {
+    const driver = getDriver(auth.phoneNumber);
+    if (!driver || driver.driverId !== auth.driverId) return;
+    const removed = removePosition(auth.busId);
+    if (!removed || removed.driverPhone !== auth.phoneNumber) return;
+    broadcastBusLeft(auth.busId, removed.routeId);
+    console.log(`[MQTT] Bus ${auth.busId} removido por desconexión del conductor ${auth.phoneNumber}`);
   }
 );
 

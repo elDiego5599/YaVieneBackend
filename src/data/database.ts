@@ -14,6 +14,8 @@ export function getDb(): Database.Database {
     }
     db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    db.pragma('busy_timeout = 5000');
     initSchema();
     console.log(`[DB] SQLite abierta en ${DB_PATH} (WAL mode)`);
   }
@@ -25,8 +27,12 @@ function initSchema(): void {
   d.exec(`
     CREATE TABLE IF NOT EXISTS drivers (
       phone_number TEXT PRIMARY KEY,
+      driver_id TEXT,
       name TEXT NOT NULL,
       route_id TEXT NOT NULL,
+      company_id TEXT,
+      bus_id TEXT,
+      pin_hash TEXT,
       registered_at INTEGER NOT NULL
     );
 
@@ -46,4 +52,30 @@ function initSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_positions_timestamp ON positions(timestamp);
     CREATE INDEX IF NOT EXISTS idx_positions_route_id ON positions(route_id);
   `);
+
+  ensureColumn(d, 'drivers', 'driver_id', 'TEXT');
+  ensureColumn(d, 'drivers', 'company_id', 'TEXT');
+  ensureColumn(d, 'drivers', 'bus_id', 'TEXT');
+  ensureColumn(d, 'drivers', 'pin_hash', 'TEXT');
+
+  d.exec(`
+    UPDATE drivers
+    SET driver_id = phone_number
+    WHERE driver_id IS NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_driver_id
+    ON drivers(driver_id)
+    WHERE driver_id IS NOT NULL;
+  `);
+}
+
+function ensureColumn(
+  d: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  const columns = d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (columns.some((item) => item.name === column)) return;
+  d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }

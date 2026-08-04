@@ -16,6 +16,8 @@ const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
 const MQTT_PORT = parseInt(process.env.MQTT_PORT || '8883', 10);
 const BUS_ID = process.env.BUS_ID || 'B-042';
 const PHONE = process.env.PHONE || '3000000000';
+const PIN = process.env.PIN || '1234';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const EMPRESA_ID = process.env.EMPRESA_ID || 'EMP-01';
 const ROUTE_ID = process.env.ROUTE_ID || 'R-101';
 
@@ -37,36 +39,31 @@ let step = 0;
 let token = '';
 let mqttClient = null;
 
-async function registerDriver() {
+function postJson(path, payload, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      phoneNumber: PHONE,
-      name: `Conductor ${PHONE}`,
-      busId: BUS_ID,
-      routeId: ROUTE_ID,
-      empresaId: EMPRESA_ID,
-    });
+    const data = JSON.stringify(payload);
 
-    const url = new URL(`${BACKEND_URL}/api/drivers/register`);
+    const url = new URL(`${BACKEND_URL}${path}`);
     const req = http.request(
       {
         hostname: url.hostname,
         port: url.port,
         path: url.pathname,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data),
+          ...extraHeaders,
+        },
       },
       (res) => {
         let body = '';
         res.on('data', (chunk) => (body += chunk));
         res.on('end', () => {
-          const json = JSON.parse(body);
-          if (json.token) {
-            console.log(`[REGISTER] Conductor ${PHONE} registrado. JWT obtenido.`);
-            token = json.token;
-            resolve();
-          } else {
-            reject(new Error(`Registro falló: ${body}`));
+          try {
+            resolve({ statusCode: res.statusCode, body: JSON.parse(body) });
+          } catch {
+            reject(new Error(`Respuesta JSON invalida: ${body}`));
           }
         });
       }
@@ -75,6 +72,39 @@ async function registerDriver() {
     req.write(data);
     req.end();
   });
+}
+
+async function registerDriver() {
+  if (!ADMIN_API_KEY) {
+    throw new Error('ADMIN_API_KEY es obligatorio para provisionar el simulador');
+  }
+
+  const registration = await postJson('/api/drivers/register', {
+    phoneNumber: PHONE,
+    name: `Conductor ${PHONE}`,
+    pin: PIN,
+    busId: BUS_ID,
+    routeId: ROUTE_ID,
+    companyId: EMPRESA_ID,
+  }, { 'x-admin-key': ADMIN_API_KEY });
+
+  if (registration.statusCode !== 201) {
+    throw new Error(`Registro fallo: ${JSON.stringify(registration.body)}`);
+  }
+
+  const login = await postJson('/api/auth/login', {
+    phoneNumber: PHONE,
+    pin: PIN,
+    busId: BUS_ID,
+    routeId: ROUTE_ID,
+  });
+
+  if (login.statusCode !== 200 || !login.body.token) {
+    throw new Error(`Login fallo: ${JSON.stringify(login.body)}`);
+  }
+
+  console.log(`[REGISTER] Conductor ${PHONE} provisionado y autenticado. JWT obtenido.`);
+  token = login.body.token;
 }
 
 function connectMQTT() {
@@ -201,6 +231,9 @@ async function connectMQTTWithAuth() {
       ? Buffer.from([remaining])
       : Buffer.from([(remaining & 0x7f) | 0x80, remaining >> 7]);
 
+    const passwordLength = Buffer.alloc(2);
+    passwordLength.writeUInt16BE(passwordBuf.length);
+
     const packet = Buffer.concat([
       Buffer.from([0x10]),                                                      // CONNECT
       remainingBuf,                                                              // remaining length
@@ -211,7 +244,7 @@ async function connectMQTTWithAuth() {
       Buffer.from([0x00, keepAlive]),                                            // keep alive
       Buffer.from([0x00, clientIdBuf.length]), clientIdBuf,                      // client id
       Buffer.from([0x00, usernameBuf.length]), usernameBuf,                      // username
-      Buffer.from([0x00, passwordBuf.length]), passwordBuf,                      // password
+      passwordLength, passwordBuf,                                               // password
     ]);
 
     client.write(packet);
