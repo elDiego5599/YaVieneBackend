@@ -5,8 +5,7 @@ import { setupSocketServer, broadcastBusPosition, broadcastBusLeft } from './soc
 import { handleAPI } from './api/routes';
 import {
   getDriver,
-  getPosition,
-  getPositionSequence,
+  getPositionValidationState,
   removePositionOwned,
   sweepPositions,
   upsertPosition,
@@ -16,6 +15,7 @@ import { TokenPayload } from './auth/tokens';
 // ── Candado 3: Sanity check de física imposible ─────────────────────
 const MAX_SPEED_KMH = 120;
 const EARTH_RADIUS_KM = 6371;
+const MAX_CAPTURE_CLOCK_SKEW_MS = 30_000;
 
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
@@ -32,12 +32,41 @@ function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: num
   return EARTH_RADIUS_KM * c;
 }
 
-function sanityCheck(busId: string, lat: number, lon: number, speedKmh: number): boolean {
-  const previous = getPosition(busId);
-  if (!previous) return true; // first position, cannot check
+interface SanityResult {
+  accepted: boolean;
+  reason?: string;
+}
 
-  const elapsedSec = (Date.now() - new Date(previous.timestamp).getTime()) / 1000;
-  if (elapsedSec <= 0) return true;
+function sanityCheck(
+  busId: string,
+  sessionId: string,
+  previous: ReturnType<typeof getPositionValidationState>,
+  lat: number,
+  lon: number,
+  speedKmh: number,
+  capturedAt: number,
+): SanityResult {
+  if (capturedAt > Date.now() + MAX_CAPTURE_CLOCK_SKEW_MS) {
+    return { accepted: false, reason: 'FUTURE_CAPTURE_TIME' };
+  }
+
+  if (!Number.isFinite(speedKmh) || speedKmh < 0 || speedKmh > MAX_SPEED_KMH) {
+    console.warn(`[SANITY] REJECTED: bus ${busId} reporta speedKmh=${speedKmh}`);
+    return { accepted: false, reason: 'INVALID_REPORTED_SPEED' };
+  }
+
+  if (!previous || previous.sessionId !== sessionId) {
+    return { accepted: true };
+  }
+
+  if (capturedAt <= previous.capturedAt) {
+    return { accepted: false, reason: 'OUT_OF_ORDER_CAPTURE' };
+  }
+
+  const elapsedSec = (capturedAt - previous.capturedAt) / 1000;
+  if (elapsedSec <= 0) {
+    return { accepted: false, reason: 'NO_CAPTURE_TIME_DELTA' };
+  }
 
   const distanceKm = haversineDistanceKm(previous.lat, previous.lon, lat, lon);
   const calculatedSpeedKmh = (distanceKm / elapsedSec) * 3600;
@@ -47,17 +76,10 @@ function sanityCheck(busId: string, lat: number, lon: number, speedKmh: number):
       `[SANITY] REJECTED: bus ${busId} moviéndose a ${calculatedSpeedKmh.toFixed(1)} km/h ` +
       `(${distanceKm.toFixed(3)} km en ${elapsedSec.toFixed(1)}s) — máximo ${MAX_SPEED_KMH} km/h`
     );
-    return false;
+    return { accepted: false, reason: 'SANITY_REJECTED' };
   }
 
-  if (speedKmh > MAX_SPEED_KMH) {
-    console.warn(
-      `[SANITY] REJECTED: bus ${busId} reporta speedKmh=${speedKmh} — máximo ${MAX_SPEED_KMH} km/h`
-    );
-    return false;
-  }
-
-  return true;
+  return { accepted: true };
 }
 // ─────────────────────────────────────────────────────────────────────
 
@@ -158,14 +180,27 @@ startBroker(
     return { accepted: false, sequence: positionSequence, reason: 'INVALID_COORDINATES' };
   }
 
-  const currentSequence = getPositionSequence(auth.busId, auth.sessionId);
-  if (currentSequence != null && positionSequence <= currentSequence) {
+  const previous = getPositionValidationState(auth.busId);
+  if (
+    previous?.sessionId === auth.sessionId &&
+    previous.sequence != null &&
+    positionSequence <= previous.sequence
+  ) {
     return { accepted: true, sequence: positionSequence, reason: 'DUPLICATE' };
   }
 
   // ── Candado 3: Rechazar posiciones físicamente imposibles ──────
-  if (!sanityCheck(auth.busId, lat, lon, speedKmh ?? 0)) {
-    return { accepted: false, sequence: positionSequence, reason: 'SANITY_REJECTED' };
+  const sanity = sanityCheck(
+    auth.busId,
+    auth.sessionId,
+    previous,
+    lat,
+    lon,
+    speedKmh ?? 0,
+    captureTime,
+  );
+  if (!sanity.accepted) {
+    return { accepted: false, sequence: positionSequence, reason: sanity.reason };
   }
 
   const updated = upsertPosition(auth.phoneNumber, {

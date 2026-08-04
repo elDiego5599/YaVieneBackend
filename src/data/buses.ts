@@ -8,6 +8,9 @@ export interface BusPosition {
   heading: number;
   speedKmh: number;
   timestamp: string;
+  capturedAt: number;
+  receivedAt: number;
+  sequence: number | null;
   driverPhone: string;
   isGhost: boolean;
 }
@@ -47,6 +50,9 @@ function rowToPosition(row: PositionRow): BusPosition {
     heading: row.heading,
     speedKmh: row.speed_kmh,
     timestamp: new Date(row.timestamp).toISOString(),
+    capturedAt: row.captured_at ?? row.timestamp,
+    receivedAt: row.timestamp,
+    sequence: row.sequence,
     driverPhone: row.driver_phone,
     isGhost: row.is_ghost === 1,
   };
@@ -133,6 +139,9 @@ export function upsertPosition(phoneNumber: string, data: {
     heading,
     speedKmh,
     timestamp: new Date(now).toISOString(),
+    capturedAt: data.capturedAt ?? now,
+    receivedAt: now,
+    sequence: data.sequence ?? null,
     driverPhone: phoneNumber,
     isGhost: false,
   };
@@ -196,6 +205,41 @@ export function getPositionSequence(busId: string, sessionId: string): number | 
   const row = db.prepare('SELECT sequence FROM positions WHERE bus_id = ? AND session_id = ?')
     .get(busId, sessionId) as { sequence: number | null } | undefined;
   return row?.sequence ?? null;
+}
+
+export interface PositionValidationState {
+  lat: number;
+  lon: number;
+  capturedAt: number;
+  receivedAt: number;
+  sequence: number | null;
+  sessionId: string | null;
+}
+
+export function getPositionValidationState(busId: string): PositionValidationState | null {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT lat, lon, timestamp, captured_at, sequence, session_id
+    FROM positions
+    WHERE bus_id = ?
+  `).get(busId) as {
+    lat: number;
+    lon: number;
+    timestamp: number;
+    captured_at: number | null;
+    sequence: number | null;
+    session_id: string | null;
+  } | undefined;
+
+  if (!row) return null;
+  return {
+    lat: row.lat,
+    lon: row.lon,
+    capturedAt: row.captured_at ?? row.timestamp,
+    receivedAt: row.timestamp,
+    sequence: row.sequence,
+    sessionId: row.session_id,
+  };
 }
 
 export function getAllPositions(): BusPosition[] {

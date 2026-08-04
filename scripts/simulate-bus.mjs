@@ -20,6 +20,8 @@ const PIN = process.env.PIN || '1234';
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const EMPRESA_ID = process.env.EMPRESA_ID || 'EMP-01';
 const ROUTE_ID = process.env.ROUTE_ID || 'R-101';
+const CAPTURE_INTERVAL_MS = parseInt(process.env.CAPTURE_INTERVAL_MS || '2000', 10);
+const CAPTURE_BASE_LAG_MS = parseInt(process.env.CAPTURE_BASE_LAG_MS || '0', 10);
 
 // Coordenadas simulando un recorrido por la Calle 30, Barranquilla
 const WAYPOINTS = [
@@ -37,6 +39,7 @@ const WAYPOINTS = [
 
 let step = 0;
 let sequence = 0;
+let simulatedCapturedAt = Date.now() - CAPTURE_BASE_LAG_MS;
 let token = '';
 let mqttClient = null;
 
@@ -144,9 +147,10 @@ async function publishPosition(lat, lon) {
     lon,
     heading,
     speedKmh,
-    capturedAt: Date.now(),
+    capturedAt: simulatedCapturedAt,
     sequence: ++sequence,
   });
+  simulatedCapturedAt += CAPTURE_INTERVAL_MS;
 
   // MQTT packet: fixed header (0x30 = PUBLISH, QoS 0) + remaining length + topic + payload
   const topic = `empresa/${EMPRESA_ID}/bus/${BUS_ID}/posicion`;
@@ -298,9 +302,10 @@ async function publishPositionWithAuth(lat, lon) {
     lon,
     heading: 45 + (step * 5 % 360),
     speedKmh: 30 + Math.random() * 15,
-    capturedAt: Date.now(),
+    capturedAt: simulatedCapturedAt,
     sequence: ++sequence,
   });
+  simulatedCapturedAt += CAPTURE_INTERVAL_MS;
 
   const topicBuf = Buffer.from(topic);
   const payloadBuf = Buffer.from(payload);
