@@ -36,6 +36,7 @@ const WAYPOINTS = [
 ];
 
 let step = 0;
+let sequence = 0;
 let token = '';
 let mqttClient = null;
 
@@ -138,12 +139,13 @@ async function publishPosition(lat, lon) {
   const heading = 45 + (step * 5 % 360);
   const speedKmh = 30 + Math.random() * 15;
   const payload = JSON.stringify({
-    phoneNumber: PHONE,
+    protocolVersion: 1,
     lat,
     lon,
     heading,
     speedKmh,
-    timestamp: new Date().toISOString(),
+    capturedAt: Date.now(),
+    sequence: ++sequence,
   });
 
   // MQTT packet: fixed header (0x30 = PUBLISH, QoS 0) + remaining length + topic + payload
@@ -180,14 +182,49 @@ async function connectMQTTWithAuth() {
       resolve();
     });
 
+    const ackTopic = `empresa/${EMPRESA_ID}/bus/${BUS_ID}/ack`;
+    const ackTopicBuf = Buffer.from(ackTopic);
+    const ackPacket = Buffer.concat([
+      Buffer.from([0x82, 2 + 2 + ackTopicBuf.length + 1]),
+      Buffer.from([0x00, 0x01]),
+      Buffer.from([0x00, ackTopicBuf.length]),
+      ackTopicBuf,
+      Buffer.from([0x01]),
+    ]);
+    let incoming = Buffer.alloc(0);
+
     client.on('data', (data) => {
-      const firstByte = data[0];
-      if (firstByte === 0x20) {
-        console.log('[MQTT] ✓ CONNACK recibido');
-      } else if (firstByte === 0x30) {
-        console.log('[MQTT] ← PUBLISH recibido (ignorado por el simulador)');
-      } else {
-        console.log('[MQTT] ←', data.toString('hex').substring(0, 80));
+      incoming = Buffer.concat([incoming, data]);
+      while (incoming.length >= 2) {
+        let multiplier = 1;
+        let remaining = 0;
+        let index = 1;
+        let encoded;
+        do {
+          if (index >= incoming.length) return;
+          encoded = incoming[index++];
+          remaining += (encoded & 0x7f) * multiplier;
+          multiplier *= 128;
+        } while (encoded & 0x80);
+
+        const packetLength = index + remaining;
+        if (incoming.length < packetLength) return;
+
+        const packet = incoming.subarray(0, packetLength);
+        incoming = incoming.subarray(packetLength);
+        const firstByte = packet[0] & 0xf0;
+        if (firstByte === 0x20) {
+          console.log('[MQTT] ✓ CONNACK recibido');
+          client.write(ackPacket);
+        } else if (firstByte === 0x30) {
+          const topicLength = packet.readUInt16BE(index);
+          const topicStart = index + 2;
+          const topicEnd = topicStart + topicLength;
+          const payload = packet.subarray(topicEnd).toString();
+          console.log(`[MQTT] ACK ${packet.subarray(topicStart, topicEnd).toString()}: ${payload}`);
+        } else if (firstByte !== 0x90) {
+          console.log('[MQTT] ←', packet.toString('hex').substring(0, 80));
+        }
       }
     });
 
@@ -256,12 +293,13 @@ async function publishPositionWithAuth(lat, lon) {
 
   const topic = `empresa/${EMPRESA_ID}/bus/${BUS_ID}/posicion`;
   const payload = JSON.stringify({
-    phoneNumber: PHONE,
+    protocolVersion: 1,
     lat,
     lon,
     heading: 45 + (step * 5 % 360),
     speedKmh: 30 + Math.random() * 15,
-    timestamp: new Date().toISOString(),
+    capturedAt: Date.now(),
+    sequence: ++sequence,
   });
 
   const topicBuf = Buffer.from(topic);

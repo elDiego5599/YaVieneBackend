@@ -4,12 +4,18 @@ import { MQTT_PORT, MQTT_HOST } from '../config';
 import { TokenPayload, verifyToken } from '../auth/tokens';
 import { claimSession, isSessionAuthorized, releaseSession } from '../data/sessions';
 
+export interface PositionHandlingResult {
+  accepted: boolean;
+  sequence?: number;
+  reason?: string;
+}
+
 type MessageHandler = (
   clientId: string,
   auth: TokenPayload,
   topic: string,
   payload: Record<string, unknown>,
-) => void;
+) => PositionHandlingResult | void;
 type DisconnectHandler = (clientId: string, auth: TokenPayload) => void;
 
 export function startBroker(onMessage: MessageHandler, onDisconnect?: DisconnectHandler): Promise<Server> {
@@ -64,6 +70,43 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
     callback(null, true);
   };
 
+  broker.authorizeSubscribe = (client: any, subscription: any, callback: (err: Error | null, subscription?: any) => void) => {
+    const payload = (client as any).authPayload as TokenPayload | undefined;
+    const expectedTopic = payload
+      ? `empresa/${payload.companyId}/bus/${payload.busId}/ack`
+      : null;
+
+    if (!payload || subscription.topic !== expectedTopic || !isSessionAuthorized(payload.sessionId, client.id)) {
+      return callback(null, null);
+    }
+
+    callback(null, subscription);
+  };
+
+  function publishAck(auth: TokenPayload, result: PositionHandlingResult): void {
+    if (result.sequence == null) return;
+    const topic = `empresa/${auth.companyId}/bus/${auth.busId}/ack`;
+    const payload = Buffer.from(JSON.stringify({
+      protocolVersion: 1,
+      sessionId: auth.sessionId,
+      sequence: result.sequence,
+      accepted: result.accepted,
+      reason: result.reason,
+      receivedAt: Date.now(),
+    }));
+
+    broker.publish({
+      cmd: 'publish',
+      topic,
+      payload,
+      qos: 0,
+      retain: false,
+      dup: false,
+    }, (error: Error | undefined) => {
+      if (error) console.error('[MQTT] ACK publish error:', error.message);
+    });
+  }
+
   broker.on('publish', (packet: any, client: any) => {
     console.log(`[MQTT] publish event: client=${client?.id ?? 'null'} topic=${packet.topic}`);
     if (!client) return;
@@ -78,7 +121,8 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
         const authPayload = (client as any).authPayload as TokenPayload | undefined;
         if (!authPayload) return;
         const payload = JSON.parse(packet.payload.toString());
-        onMessage(client.id, authPayload, topic, payload);
+        const result = onMessage(client.id, authPayload, topic, payload);
+        if (result) publishAck(authPayload, result);
       } catch (err) {
         console.error('[MQTT] Error parsing payload:', (err as Error).message);
       }

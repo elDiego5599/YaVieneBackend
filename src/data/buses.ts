@@ -33,6 +33,8 @@ interface PositionRow {
   timestamp: number;
   driver_phone: string;
   session_id: string | null;
+  captured_at: number | null;
+  sequence: number | null;
   is_ghost: number;
 }
 
@@ -63,6 +65,8 @@ export function upsertPosition(phoneNumber: string, data: {
   heading?: number;
   speedKmh?: number;
   sessionId?: string;
+  capturedAt?: number;
+  sequence?: number;
 }): BusPosition | null {
   const db = getDb();
 
@@ -70,8 +74,21 @@ export function upsertPosition(phoneNumber: string, data: {
     .get(phoneNumber) as { route_id: string } | undefined;
   if (!driver) return null;
 
-  const previous = db.prepare('SELECT heading FROM positions WHERE bus_id = ?')
-    .get(data.busId) as { heading: number } | undefined;
+  const previous = db.prepare('SELECT heading, sequence, session_id FROM positions WHERE bus_id = ?')
+    .get(data.busId) as {
+      heading: number;
+      sequence: number | null;
+      session_id: string | null;
+    } | undefined;
+
+  if (
+    data.sequence != null &&
+    previous?.sequence != null &&
+    previous.session_id === data.sessionId &&
+    data.sequence <= previous.sequence
+  ) {
+    return null;
+  }
 
   const now = Date.now();
   const routeId = data.routeId || driver.route_id;
@@ -80,8 +97,9 @@ export function upsertPosition(phoneNumber: string, data: {
 
   db.prepare(`
     INSERT INTO positions (
-      bus_id, route_id, lat, lon, heading, speed_kmh, timestamp, driver_phone, session_id, is_ghost
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      bus_id, route_id, lat, lon, heading, speed_kmh, timestamp, driver_phone,
+      session_id, captured_at, sequence, is_ghost
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     ON CONFLICT(bus_id) DO UPDATE SET
       lat = excluded.lat,
       lon = excluded.lon,
@@ -90,6 +108,8 @@ export function upsertPosition(phoneNumber: string, data: {
       timestamp = excluded.timestamp,
       driver_phone = excluded.driver_phone,
       session_id = excluded.session_id,
+      captured_at = excluded.captured_at,
+      sequence = excluded.sequence,
       is_ghost = 0
   `).run(
     data.busId,
@@ -101,6 +121,8 @@ export function upsertPosition(phoneNumber: string, data: {
     now,
     phoneNumber,
     data.sessionId ?? null,
+    data.capturedAt ?? now,
+    data.sequence ?? null,
   );
 
   return {
@@ -167,6 +189,13 @@ export function getPosition(busId: string): BusPosition | null {
   const row = db.prepare('SELECT * FROM positions WHERE bus_id = ?')
     .get(busId) as PositionRow | undefined;
   return row ? rowToPosition(row) : null;
+}
+
+export function getPositionSequence(busId: string, sessionId: string): number | null {
+  const db = getDb();
+  const row = db.prepare('SELECT sequence FROM positions WHERE bus_id = ? AND session_id = ?')
+    .get(busId, sessionId) as { sequence: number | null } | undefined;
+  return row?.sequence ?? null;
 }
 
 export function getAllPositions(): BusPosition[] {

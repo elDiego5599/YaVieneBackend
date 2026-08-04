@@ -46,6 +46,8 @@ function initSchema(): void {
       timestamp INTEGER NOT NULL,
       driver_phone TEXT NOT NULL,
       session_id TEXT,
+      captured_at INTEGER,
+      sequence INTEGER,
       is_ghost INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (driver_phone) REFERENCES drivers(phone_number) ON DELETE CASCADE
     );
@@ -76,6 +78,8 @@ function initSchema(): void {
   ensureColumn(d, 'drivers', 'bus_id', 'TEXT');
   ensureColumn(d, 'drivers', 'pin_hash', 'TEXT');
   ensureColumn(d, 'positions', 'session_id', 'TEXT');
+  ensureColumn(d, 'positions', 'captured_at', 'INTEGER');
+  ensureColumn(d, 'positions', 'sequence', 'INTEGER');
 
   d.exec(`
     UPDATE drivers
@@ -88,6 +92,9 @@ function initSchema(): void {
 
     CREATE INDEX IF NOT EXISTS idx_positions_session_id
     ON positions(session_id);
+
+    CREATE INDEX IF NOT EXISTS idx_positions_sequence
+    ON positions(bus_id, sequence);
   `);
 }
 

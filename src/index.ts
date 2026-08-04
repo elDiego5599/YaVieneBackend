@@ -1,9 +1,16 @@
 import http from 'http';
 import { HTTP_PORT, BUS_TIMEOUT_MS } from './config';
-import { startBroker } from './mqtt/broker';
+import { PositionHandlingResult, startBroker } from './mqtt/broker';
 import { setupSocketServer, broadcastBusPosition, broadcastBusLeft } from './socket/handler';
 import { handleAPI } from './api/routes';
-import { upsertPosition, getDriver, getPosition, removePositionOwned, sweepPositions } from './data/buses';
+import {
+  getDriver,
+  getPosition,
+  getPositionSequence,
+  removePositionOwned,
+  sweepPositions,
+  upsertPosition,
+} from './data/buses';
 import { TokenPayload } from './auth/tokens';
 
 // ── Candado 3: Sanity check de física imposible ─────────────────────
@@ -91,19 +98,38 @@ setInterval(() => {
 }, 10_000);
 
 startBroker(
-  (_clientId: string, auth: TokenPayload, topic, payload) => {
-  const match = topic.match(/^empresa\/[^/]+\/bus\/([^/]+)\/posicion$/);
+  (_clientId: string, auth: TokenPayload, topic, payload): PositionHandlingResult | void => {
+  const match = topic.match(/^empresa\/([^/]+)\/bus\/([^/]+)\/posicion$/);
   if (!match) {
     console.warn(`[MQTT] Topic rejected after authorization: ${topic}`);
     return;
   }
 
-  const topicBusId = match[1];
-  if (topicBusId !== auth.busId) {
+  const topicCompanyId = match[1];
+  const topicBusId = match[2];
+  if (topicCompanyId !== auth.companyId || topicBusId !== auth.busId) {
     console.warn(`[MQTT] Topic bus mismatch for authenticated driver ${auth.driverId}`);
     return;
   }
 
+  const sequence = payload.sequence;
+  const capturedAt = payload.capturedAt;
+  if (payload.protocolVersion !== 1) {
+    return {
+      accepted: false,
+      sequence: Number.isSafeInteger(sequence) ? sequence as number : undefined,
+      reason: 'UNSUPPORTED_PROTOCOL_VERSION',
+    };
+  }
+  if (!Number.isSafeInteger(sequence) || (sequence as number) < 1) {
+    return { accepted: false, reason: 'INVALID_SEQUENCE' };
+  }
+  if (!Number.isSafeInteger(capturedAt) || (capturedAt as number) < 1) {
+    return { accepted: false, sequence: sequence as number, reason: 'INVALID_CAPTURE_TIME' };
+  }
+
+  const positionSequence = sequence as number;
+  const captureTime = capturedAt as number;
   const driver = getDriver(auth.phoneNumber);
 
   if (
@@ -114,16 +140,32 @@ startBroker(
     driver.routeId !== auth.routeId
   ) {
     console.warn(`[MQTT] Stale or unauthorized driver assignment: ${auth.driverId}`);
-    return;
+    return { accepted: false, sequence: positionSequence, reason: 'ASSIGNMENT_REVOKED' };
   }
 
   const lat = payload.lat as number;
   const lon = payload.lon as number;
   const speedKmh = payload.speedKmh as number | undefined;
 
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lon) ||
+    lat < -90 ||
+    lat > 90 ||
+    lon < -180 ||
+    lon > 180
+  ) {
+    return { accepted: false, sequence: positionSequence, reason: 'INVALID_COORDINATES' };
+  }
+
+  const currentSequence = getPositionSequence(auth.busId, auth.sessionId);
+  if (currentSequence != null && positionSequence <= currentSequence) {
+    return { accepted: true, sequence: positionSequence, reason: 'DUPLICATE' };
+  }
+
   // ── Candado 3: Rechazar posiciones físicamente imposibles ──────
   if (!sanityCheck(auth.busId, lat, lon, speedKmh ?? 0)) {
-    return;
+    return { accepted: false, sequence: positionSequence, reason: 'SANITY_REJECTED' };
   }
 
   const updated = upsertPosition(auth.phoneNumber, {
@@ -134,9 +176,15 @@ startBroker(
     heading: payload.heading as number | undefined,
     speedKmh: speedKmh,
     sessionId: auth.sessionId,
+    capturedAt: captureTime,
+    sequence: positionSequence,
   });
 
-  if (updated) broadcastBusPosition(updated);
+  if (!updated) {
+    return { accepted: true, sequence: positionSequence, reason: 'DUPLICATE' };
+  }
+  broadcastBusPosition(updated);
+  return { accepted: true, sequence: positionSequence };
 },
   (_clientId: string, auth: TokenPayload) => {
     const driver = getDriver(auth.phoneNumber);
