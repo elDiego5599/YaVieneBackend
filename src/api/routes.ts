@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
 import {
   getDriver,
+  endAssignment,
   getPosition,
   getPositionsByRoute,
   registerDriver,
@@ -141,6 +142,7 @@ addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
   }
   removePositionOwned(params.busId, auth!.sessionId);
   revokeSession(auth!.sessionId);
+  endAssignment(auth!.driverId, params.busId);
   console.log(`[API] Bus ${params.busId} marcado offline por el conductor`);
   writeJson(res, 200, { status: 'offline', busId: params.busId });
 });
@@ -194,7 +196,7 @@ function provisionDriver(
   }
 
   const driver = registerDriver(phoneNumber, name, routeId, {
-    driverId: phoneNumber,
+    driverId: getDriver(phoneNumber)?.driverId ?? randomUUID(),
     companyId,
     busId,
     pinHash: hashPin(pin),

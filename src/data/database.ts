@@ -94,6 +94,27 @@ function initSchema(): void {
       delivered_at INTEGER,
       last_error TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS buses (
+      bus_id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL,
+      plate_number TEXT,
+      capacity INTEGER NOT NULL DEFAULT 40,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS turn_assignments (
+      assignment_id TEXT PRIMARY KEY,
+      driver_id TEXT NOT NULL,
+      bus_id TEXT NOT NULL,
+      company_id TEXT NOT NULL,
+      route_id TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      status TEXT NOT NULL DEFAULT 'active'
+    );
   `);
 
   const applied = new Set(
@@ -158,6 +179,51 @@ function initSchema(): void {
           );
           CREATE INDEX IF NOT EXISTS idx_lifecycle_pending
           ON lifecycle_events(delivered_at, claimed_at, created_at);
+        `);
+      },
+    },
+    {
+      version: 5,
+      apply: () => {
+        d.exec(`
+          CREATE TABLE IF NOT EXISTS buses (
+            bus_id TEXT PRIMARY KEY,
+            company_id TEXT NOT NULL,
+            plate_number TEXT,
+            capacity INTEGER NOT NULL DEFAULT 40,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS turn_assignments (
+            assignment_id TEXT PRIMARY KEY,
+            driver_id TEXT NOT NULL,
+            bus_id TEXT NOT NULL,
+            company_id TEXT NOT NULL,
+            route_id TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            ended_at INTEGER,
+            status TEXT NOT NULL DEFAULT 'active'
+          );
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_active_assignment_bus
+          ON turn_assignments(bus_id) WHERE status = 'active';
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_active_assignment_driver
+          ON turn_assignments(driver_id) WHERE status = 'active';
+          CREATE INDEX IF NOT EXISTS idx_assignments_route
+          ON turn_assignments(route_id, status);
+          INSERT OR IGNORE INTO buses (
+            bus_id, company_id, created_at, updated_at
+          )
+          SELECT bus_id, company_id, registered_at, registered_at
+          FROM drivers
+          WHERE bus_id IS NOT NULL AND company_id IS NOT NULL;
+          INSERT OR IGNORE INTO turn_assignments (
+            assignment_id, driver_id, bus_id, company_id, route_id, started_at, status
+          )
+          SELECT 'legacy-' || phone_number, driver_id, bus_id, company_id, route_id,
+                 registered_at, 'active'
+          FROM drivers
+          WHERE bus_id IS NOT NULL AND company_id IS NOT NULL;
         `);
       },
     },

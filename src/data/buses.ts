@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { getDb } from './database';
 import { queueLifecycleEvent } from './lifecycle_events';
 
@@ -297,19 +298,44 @@ export function registerDriver(
   const busId = options.busId ?? null;
   const pinHash = options.pinHash ?? null;
 
-  db.prepare(`
-    INSERT INTO drivers (
-      phone_number, driver_id, name, route_id, company_id, bus_id, pin_hash, registered_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(phone_number) DO UPDATE SET
-      driver_id = excluded.driver_id,
-      name = excluded.name,
-      route_id = excluded.route_id,
-      company_id = excluded.company_id,
-      bus_id = excluded.bus_id,
-      pin_hash = excluded.pin_hash,
-      registered_at = excluded.registered_at
-  `).run(phoneNumber, driverId, name, routeId, companyId, busId, pinHash, now);
+  const save = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO drivers (
+        phone_number, driver_id, name, route_id, company_id, bus_id, pin_hash, registered_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(phone_number) DO UPDATE SET
+        driver_id = excluded.driver_id,
+        name = excluded.name,
+        route_id = excluded.route_id,
+        company_id = excluded.company_id,
+        bus_id = excluded.bus_id,
+        pin_hash = excluded.pin_hash,
+        registered_at = excluded.registered_at
+    `).run(phoneNumber, driverId, name, routeId, companyId, busId, pinHash, now);
+
+    if (companyId && busId) {
+      db.prepare(`
+        INSERT INTO buses (bus_id, company_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(bus_id) DO UPDATE SET
+          company_id = excluded.company_id,
+          updated_at = excluded.updated_at
+      `).run(busId, companyId, now, now);
+
+      db.prepare(`
+        UPDATE turn_assignments
+        SET status = 'ended', ended_at = ?
+        WHERE status = 'active' AND (driver_id = ? OR bus_id = ?)
+      `).run(now, driverId, busId);
+
+      db.prepare(`
+        INSERT INTO turn_assignments (
+          assignment_id, driver_id, bus_id, company_id, route_id, started_at, status
+        ) VALUES (?, ?, ?, ?, ?, ?, 'active')
+      `).run(randomUUID(), driverId, busId, companyId, routeId, now);
+    }
+  });
+  save();
   const driver = {
     driverId,
     phoneNumber,
@@ -362,4 +388,13 @@ export function getDriverById(driverId: string): DriverInfo | null {
   const row = db.prepare('SELECT phone_number FROM drivers WHERE driver_id = ?')
     .get(driverId) as { phone_number: string } | undefined;
   return row ? getDriver(row.phone_number) : null;
+}
+
+export function endAssignment(driverId: string, busId: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE turn_assignments
+    SET status = 'ended', ended_at = ?
+    WHERE driver_id = ? AND bus_id = ? AND status = 'active'
+  `).run(Date.now(), driverId, busId);
 }
