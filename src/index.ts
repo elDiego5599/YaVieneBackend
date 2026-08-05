@@ -11,14 +11,15 @@ import { closeBroker, PositionHandlingResult, startBroker } from './mqtt/broker'
 import { setupSocketServer, broadcastBusPosition, broadcastBusLeft, getIO } from './socket/handler';
 import { handleAPI } from './api/routes';
 import {
-  getDriver,
   getPositionValidationState,
+  BusPosition,
   removePositionOwned,
   sweepPositions,
   upsertPosition,
 } from './data/buses';
 import { closeDb } from './data/database';
 import { cleanupRevokedSessions } from './data/sessions';
+import { dispatchLifecycleEvents, LifecycleEvent } from './data/lifecycle_events';
 import { TokenPayload } from './auth/tokens';
 
 // ── Candado 3: Sanity check de física imposible ─────────────────────
@@ -121,20 +122,31 @@ setupSocketServer(server);
 const GHOST_MS = 30_000;
 const REMOVE_MS = 60_000;
 
+function emitLifecycleEvent(event: LifecycleEvent): void {
+  if (event.eventType === 'bus:left') {
+    broadcastBusLeft(
+      event.payload.busId as string,
+      event.routeId,
+      event.eventId,
+    );
+    return;
+  }
+
+  broadcastBusPosition({
+    ...(event.payload as unknown as BusPosition),
+    eventId: event.eventId,
+  }, true);
+}
+
 const sweepTimer = setInterval(() => {
-  const { toGhost, toRemove } = sweepPositions(GHOST_MS, REMOVE_MS);
-
-  for (const bus of toGhost) {
-    broadcastBusPosition(bus);
-    console.log(`[SWEEP] Bus ${bus.busId} marcado como ghost (>${GHOST_MS / 1000}s)`);
-  }
-
-  for (const { busId, routeId } of toRemove) {
-    broadcastBusLeft(busId, routeId);
-    console.log(`[SWEEP] Bus ${busId} removido del mapa (>${REMOVE_MS / 1000}s)`);
-  }
+  sweepPositions(GHOST_MS, REMOVE_MS);
+  dispatchLifecycleEvents(emitLifecycleEvent);
 }, 10_000);
 sweepTimer.unref();
+const lifecycleDispatchTimer = setInterval(() => {
+  dispatchLifecycleEvents(emitLifecycleEvent);
+}, 250);
+lifecycleDispatchTimer.unref();
 const sessionCleanupTimer = setInterval(() => {
   cleanupRevokedSessions();
 }, 60 * 60 * 1000);
@@ -173,19 +185,6 @@ startBroker(
 
   const positionSequence = sequence as number;
   const captureTime = capturedAt as number;
-  const driver = getDriver(auth.phoneNumber);
-
-  if (
-    !driver ||
-    driver.driverId !== auth.driverId ||
-    driver.companyId !== auth.companyId ||
-    driver.busId !== auth.busId ||
-    driver.routeId !== auth.routeId
-  ) {
-    console.warn(`[MQTT] Stale or unauthorized driver assignment: ${auth.driverId}`);
-    return { accepted: false, sequence: positionSequence, reason: 'ASSIGNMENT_REVOKED' };
-  }
-
   const lat = payload.lat as number;
   const lon = payload.lon as number;
   const speedKmh = payload.speedKmh as number | undefined;
@@ -234,6 +233,7 @@ startBroker(
     sessionId: auth.sessionId,
     capturedAt: captureTime,
     sequence: positionSequence,
+    driverValidated: true,
   });
 
   if (!updated) {
@@ -243,11 +243,8 @@ startBroker(
   return { accepted: true, sequence: positionSequence };
 },
   (_clientId: string, auth: TokenPayload) => {
-    const driver = getDriver(auth.phoneNumber);
-    if (!driver || driver.driverId !== auth.driverId) return;
     const removed = removePositionOwned(auth.busId, auth.sessionId);
     if (!removed || removed.driverPhone !== auth.phoneNumber) return;
-    broadcastBusLeft(auth.busId, removed.routeId);
     console.log(`[MQTT] Bus ${auth.busId} removido por desconexión del conductor ${auth.phoneNumber}`);
   }
 );
@@ -261,6 +258,7 @@ const shutdown = async (signal: string): Promise<void> => {
   console.log(`[Server] Shutting down from ${signal}...`);
   clearInterval(sweepTimer);
   clearInterval(sessionCleanupTimer);
+  clearInterval(lifecycleDispatchTimer);
   getIO()?.close();
   await closeBroker();
   await new Promise<void>((resolve) => {

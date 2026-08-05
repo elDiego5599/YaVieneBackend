@@ -60,8 +60,14 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
   return io;
 }
 
-export function broadcastBusPosition(busData: BusPosition): void {
+export function broadcastBusPosition(busData: BusPosition, immediate = false): void {
   if (!io) return;
+
+  if (immediate) {
+    io.to(`route:${busData.routeId}`).emit('bus:position', toPublicPosition(busData));
+    incrementMetric('socket.position.emitted');
+    return;
+  }
 
   let routePending = pendingPositions.get(busData.routeId);
   if (!routePending) {
@@ -87,10 +93,10 @@ export function broadcastBusPosition(busData: BusPosition): void {
   }, SOCKET_FLUSH_MS));
 }
 
-export function broadcastBusLeft(busId: string, routeId: string): void {
+export function broadcastBusLeft(busId: string, routeId: string, eventId?: string): void {
   if (!io) return;
   pendingPositions.get(routeId)?.delete(busId);
-  io.to(`route:${routeId}`).emit('bus:left', { busId, routeId });
+  io.to(`route:${routeId}`).emit('bus:left', { busId, routeId, eventId });
   incrementMetric('socket.bus_left.emitted');
 }
 

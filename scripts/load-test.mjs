@@ -43,6 +43,7 @@ await Promise.all(children.map((child) => new Promise((resolve) => {
     finish();
   }, 2000);
 })));
+await new Promise((resolve) => setTimeout(resolve, 1000));
 
 const response = await fetch(`${backendUrl}/api/metrics`, {
   headers: { 'x-admin-key': adminKey },

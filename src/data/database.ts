@@ -81,6 +81,19 @@ function initSchema(): void {
       version INTEGER PRIMARY KEY,
       applied_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS lifecycle_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT UNIQUE NOT NULL,
+      event_type TEXT NOT NULL,
+      route_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      claimed_at INTEGER,
+      delivered_at INTEGER,
+      last_error TEXT
+    );
   `);
 
   const applied = new Set(
@@ -124,6 +137,27 @@ function initSchema(): void {
           ON driver_sessions(bus_id, status);
           CREATE INDEX IF NOT EXISTS idx_sessions_driver_status
           ON driver_sessions(driver_id, status);
+        `);
+      },
+    },
+    {
+      version: 4,
+      apply: () => {
+        d.exec(`
+          CREATE TABLE IF NOT EXISTS lifecycle_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT UNIQUE NOT NULL,
+            event_type TEXT NOT NULL,
+            route_id TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            claimed_at INTEGER,
+            delivered_at INTEGER,
+            last_error TEXT
+          );
+          CREATE INDEX IF NOT EXISTS idx_lifecycle_pending
+          ON lifecycle_events(delivered_at, claimed_at, created_at);
         `);
       },
     },

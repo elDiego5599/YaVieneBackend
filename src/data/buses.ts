@@ -1,4 +1,5 @@
 import { getDb } from './database';
+import { queueLifecycleEvent } from './lifecycle_events';
 
 export interface BusPosition {
   busId: string;
@@ -11,6 +12,7 @@ export interface BusPosition {
   capturedAt: number;
   receivedAt: number;
   sequence: number | null;
+  eventId?: string;
   driverPhone: string;
   isGhost: boolean;
 }
@@ -40,6 +42,8 @@ interface PositionRow {
   sequence: number | null;
   is_ghost: number;
 }
+
+const driverCache = new Map<string, DriverInfo>();
 
 function rowToPosition(row: PositionRow): BusPosition {
   return {
@@ -73,35 +77,20 @@ export function upsertPosition(phoneNumber: string, data: {
   sessionId?: string;
   capturedAt?: number;
   sequence?: number;
+  driverValidated?: boolean;
 }): BusPosition | null {
   const db = getDb();
 
-  const driver = db.prepare('SELECT route_id FROM drivers WHERE phone_number = ?')
-    .get(phoneNumber) as { route_id: string } | undefined;
-  if (!driver) return null;
-
-  const previous = db.prepare('SELECT heading, sequence, session_id FROM positions WHERE bus_id = ?')
-    .get(data.busId) as {
-      heading: number;
-      sequence: number | null;
-      session_id: string | null;
-    } | undefined;
-
-  if (
-    data.sequence != null &&
-    previous?.sequence != null &&
-    previous.session_id === data.sessionId &&
-    data.sequence <= previous.sequence
-  ) {
-    return null;
-  }
+  const driver = data.driverValidated ? undefined : getDriver(phoneNumber);
+  if (!data.driverValidated && !driver) return null;
 
   const now = Date.now();
-  const routeId = data.routeId || driver.route_id;
-  const heading = data.heading ?? previous?.heading ?? 0;
+  const routeId = data.routeId || driver?.routeId;
+  if (!routeId) return null;
+  const heading = data.heading ?? 0;
   const speedKmh = data.speedKmh ?? 0;
 
-  db.prepare(`
+  const result = db.prepare(`
     INSERT INTO positions (
       bus_id, route_id, lat, lon, heading, speed_kmh, timestamp, driver_phone,
       session_id, captured_at, sequence, is_ghost
@@ -117,6 +106,9 @@ export function upsertPosition(phoneNumber: string, data: {
       captured_at = excluded.captured_at,
       sequence = excluded.sequence,
       is_ghost = 0
+    WHERE positions.session_id IS NOT excluded.session_id
+       OR positions.sequence IS NULL
+       OR excluded.sequence > positions.sequence
   `).run(
     data.busId,
     routeId,
@@ -130,6 +122,8 @@ export function upsertPosition(phoneNumber: string, data: {
     data.capturedAt ?? now,
     data.sequence ?? null,
   );
+
+  if (result.changes !== 1) return null;
 
   return {
     busId: data.busId,
@@ -163,34 +157,71 @@ export function sweepPositions(ghostMs: number, removeMs: number): {
   const removeTime = now - removeMs;
   const ghostTime = now - ghostMs;
 
-  const removed = db.prepare(
-    'DELETE FROM positions WHERE timestamp < ? RETURNING bus_id, route_id'
-  ).all(removeTime) as { bus_id: string; route_id: string }[];
+  const sweep = db.transaction(() => {
+    const removed = db.prepare(
+      'DELETE FROM positions WHERE timestamp < ? RETURNING bus_id, route_id'
+    ).all(removeTime) as { bus_id: string; route_id: string }[];
 
-  const ghostedRows = db.prepare(
-    'UPDATE positions SET is_ghost = 1 WHERE is_ghost = 0 AND timestamp < ? RETURNING *'
-  ).all(ghostTime) as PositionRow[];
+    const ghostedRows = db.prepare(
+      'UPDATE positions SET is_ghost = 1 WHERE is_ghost = 0 AND timestamp < ? AND timestamp >= ? RETURNING *'
+    ).all(ghostTime, removeTime) as PositionRow[];
 
-  return {
-    toGhost: ghostedRows.map(rowToPosition),
-    toRemove: removed.map(r => ({ busId: r.bus_id, routeId: r.route_id })),
-  };
+    for (const row of ghostedRows) {
+      const position = rowToPosition(row);
+      queueLifecycleEvent(db, 'bus:position', position.routeId, { ...position });
+    }
+    for (const row of removed) {
+      queueLifecycleEvent(db, 'bus:left', row.route_id, {
+        busId: row.bus_id,
+        routeId: row.route_id,
+      });
+    }
+
+    return {
+      toGhost: ghostedRows.map(rowToPosition),
+      toRemove: removed.map(r => ({ busId: r.bus_id, routeId: r.route_id })),
+    };
+  });
+
+  return sweep();
 }
 
 export function removePosition(busId: string): BusPosition | null {
   const db = getDb();
-  const row = db.prepare(
-    'DELETE FROM positions WHERE bus_id = ? RETURNING *'
-  ).get(busId) as PositionRow | undefined;
-  return row ? rowToPosition(row) : null;
+  const remove = db.transaction(() => {
+    const row = db.prepare(
+      'DELETE FROM positions WHERE bus_id = ? RETURNING *'
+    ).get(busId) as PositionRow | undefined;
+    if (row) {
+      const position = rowToPosition(row);
+      queueLifecycleEvent(db, 'bus:left', position.routeId, {
+        busId: position.busId,
+        routeId: position.routeId,
+      });
+      return position;
+    }
+    return null;
+  });
+  return remove();
 }
 
 export function removePositionOwned(busId: string, sessionId: string): BusPosition | null {
   const db = getDb();
-  const row = db.prepare(
-    'DELETE FROM positions WHERE bus_id = ? AND session_id = ? RETURNING *'
-  ).get(busId, sessionId) as PositionRow | undefined;
-  return row ? rowToPosition(row) : null;
+  const remove = db.transaction(() => {
+    const row = db.prepare(
+      'DELETE FROM positions WHERE bus_id = ? AND session_id = ? RETURNING *'
+    ).get(busId, sessionId) as PositionRow | undefined;
+    if (row) {
+      const position = rowToPosition(row);
+      queueLifecycleEvent(db, 'bus:left', position.routeId, {
+        busId: position.busId,
+        routeId: position.routeId,
+      });
+      return position;
+    }
+    return null;
+  });
+  return remove();
 }
 
 export function getPosition(busId: string): BusPosition | null {
@@ -279,7 +310,7 @@ export function registerDriver(
       pin_hash = excluded.pin_hash,
       registered_at = excluded.registered_at
   `).run(phoneNumber, driverId, name, routeId, companyId, busId, pinHash, now);
-  return {
+  const driver = {
     driverId,
     phoneNumber,
     name,
@@ -289,9 +320,13 @@ export function registerDriver(
     busId,
     pinHash,
   };
+  driverCache.set(phoneNumber, driver);
+  return driver;
 }
 
 export function getDriver(phoneNumber: string): DriverInfo | null {
+  const cached = driverCache.get(phoneNumber);
+  if (cached) return cached;
   const db = getDb();
   const row = db.prepare(`
     SELECT driver_id, phone_number, name, route_id, company_id, bus_id, pin_hash, registered_at
@@ -308,7 +343,7 @@ export function getDriver(phoneNumber: string): DriverInfo | null {
     registered_at: number;
   } | undefined;
   if (!row) return null;
-  return {
+  const driver = {
     driverId: row.driver_id,
     phoneNumber: row.phone_number,
     name: row.name,
@@ -318,6 +353,8 @@ export function getDriver(phoneNumber: string): DriverInfo | null {
     busId: row.bus_id,
     pinHash: row.pin_hash,
   };
+  driverCache.set(phoneNumber, driver);
+  return driver;
 }
 
 export function getDriverById(driverId: string): DriverInfo | null {

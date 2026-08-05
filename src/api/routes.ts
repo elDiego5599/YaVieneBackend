@@ -11,8 +11,7 @@ import {
 import { authenticateRequest, isAdminRequest, isDriverForBus } from '../auth/http';
 import { hashPin, verifyPin } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
-import { createDriverSession, revokeSession } from '../data/sessions';
-import { broadcastBusLeft } from '../socket/handler';
+import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
 import { getMetrics } from '../observability/metrics';
 import { adminRateLimiter, loginRateLimiter, requestKey } from '../security/rate_limiter';
 import { getDb } from '../data/database';
@@ -140,11 +139,8 @@ addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
     writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
     return;
   }
-  const removed = removePositionOwned(params.busId, auth!.sessionId);
+  removePositionOwned(params.busId, auth!.sessionId);
   revokeSession(auth!.sessionId);
-  if (removed) {
-    broadcastBusLeft(params.busId, bus.routeId);
-  }
   console.log(`[API] Bus ${params.busId} marcado offline por el conductor`);
   writeJson(res, 200, { status: 'offline', busId: params.busId });
 });
@@ -203,6 +199,7 @@ function provisionDriver(
     busId,
     pinHash: hashPin(pin),
   });
+  revokeSessionsForDriver(driver.driverId);
 
   writeJson(res, 201, {
     status: 'provisioned',

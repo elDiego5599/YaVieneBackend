@@ -14,6 +14,13 @@ export interface DriverSession {
   revokedAt: number | null;
 }
 
+interface CachedSession extends DriverSession {
+  persistedSeenAt: number;
+}
+
+const sessionCache = new Map<string, CachedSession>();
+const LAST_SEEN_FLUSH_MS = 15_000;
+
 export function createDriverSession(input: {
   sessionId: string;
   driverId: string;
@@ -51,10 +58,30 @@ export function createDriverSession(input: {
   });
 
   create();
+  sessionCache.clear();
 }
 
 export function claimSession(sessionId: string, clientId: string): boolean {
   const db = getDb();
+  const cached = sessionCache.get(sessionId);
+  if (cached && cached.status === 'active') {
+    if (cached.clientId != null && cached.clientId !== clientId) return false;
+    const now = Date.now();
+    const result = db.prepare(`
+      UPDATE driver_sessions
+      SET client_id = ?, last_seen_at = ?
+      WHERE session_id = ? AND status = 'active'
+    `).run(clientId, now, sessionId);
+    if (result.changes !== 1) {
+      sessionCache.delete(sessionId);
+      return false;
+    }
+    cached.clientId = clientId;
+    cached.lastSeenAt = now;
+    cached.persistedSeenAt = now;
+    return true;
+  }
+
   const result = db.prepare(`
     UPDATE driver_sessions
     SET client_id = ?, last_seen_at = ?
@@ -62,19 +89,41 @@ export function claimSession(sessionId: string, clientId: string): boolean {
       AND status = 'active'
       AND (client_id IS NULL OR client_id = ?)
   `).run(clientId, Date.now(), sessionId, clientId);
-  return result.changes === 1;
+  if (result.changes !== 1) return false;
+  const session = getSession(sessionId);
+  if (!session) return false;
+  sessionCache.set(sessionId, { ...session, persistedSeenAt: Date.now() });
+  return true;
 }
 
 export function isSessionAuthorized(sessionId: string, clientId: string): boolean {
   const db = getDb();
-  const result = db.prepare(`
-    UPDATE driver_sessions
-    SET last_seen_at = ?
-    WHERE session_id = ?
-      AND status = 'active'
-      AND client_id = ?
-  `).run(Date.now(), sessionId, clientId);
-  return result.changes === 1;
+  const cached = sessionCache.get(sessionId);
+  const now = Date.now();
+  if (cached && cached.status === 'active' && cached.clientId === clientId) {
+    cached.lastSeenAt = now;
+    if (now - cached.persistedSeenAt >= LAST_SEEN_FLUSH_MS) {
+      const result = db.prepare(`
+        UPDATE driver_sessions
+        SET last_seen_at = ?
+        WHERE session_id = ? AND status = 'active' AND client_id = ?
+      `).run(now, sessionId, clientId);
+      if (result.changes !== 1) {
+        sessionCache.delete(sessionId);
+        return false;
+      }
+      cached.persistedSeenAt = now;
+    }
+    return true;
+  }
+
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'active' || session.clientId !== clientId) {
+    sessionCache.delete(sessionId);
+    return false;
+  }
+  sessionCache.set(sessionId, { ...session, persistedSeenAt: now });
+  return true;
 }
 
 export function releaseSession(sessionId: string, clientId: string): boolean {
@@ -86,6 +135,7 @@ export function releaseSession(sessionId: string, clientId: string): boolean {
       AND status = 'active'
       AND client_id = ?
   `).run(Date.now(), sessionId, clientId);
+  sessionCache.delete(sessionId);
   return result.changes === 1;
 }
 
@@ -97,6 +147,7 @@ export function revokeSession(sessionId: string): boolean {
     WHERE session_id = ?
       AND status = 'active'
   `).run(Date.now(), sessionId);
+  sessionCache.delete(sessionId);
   return result.changes === 1;
 }
 
@@ -145,5 +196,19 @@ export function cleanupRevokedSessions(retentionMs = 7 * 24 * 60 * 60 * 1000): n
       AND revoked_at IS NOT NULL
       AND revoked_at < ?
   `).run(Date.now() - retentionMs);
+  for (const [sessionId, session] of sessionCache) {
+    if (session.status === 'revoked') sessionCache.delete(sessionId);
+  }
+  return result.changes;
+}
+
+export function revokeSessionsForDriver(driverId: string): number {
+  const db = getDb();
+  const result = db.prepare(`
+    UPDATE driver_sessions
+    SET status = 'revoked', revoked_at = ?, client_id = NULL
+    WHERE driver_id = ? AND status = 'active'
+  `).run(Date.now(), driverId);
+  sessionCache.clear();
   return result.changes;
 }
