@@ -5,7 +5,7 @@ interface WindowEntry {
   startedAt: number;
 }
 
-class FixedWindowRateLimiter {
+export class FixedWindowRateLimiter {
   private readonly entries = new Map<string, WindowEntry>();
 
   constructor(

@@ -2,8 +2,12 @@ import { Server as HTTPServer } from 'http';
 import { Server } from 'socket.io';
 import { WS_PATH } from '../config';
 import { getPositionsByRoute, toPublicPosition, BusPosition } from '../data/buses';
+import { incrementMetric } from '../observability/metrics';
 
 let io: Server | null = null;
+const pendingPositions = new Map<string, Map<string, BusPosition>>();
+const flushTimers = new Map<string, NodeJS.Timeout>();
+const SOCKET_FLUSH_MS = 200;
 
 export function setupSocketServer(httpServer: HTTPServer): Server {
   io = new Server(httpServer, {
@@ -58,12 +62,36 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
 
 export function broadcastBusPosition(busData: BusPosition): void {
   if (!io) return;
-  io.to(`route:${busData.routeId}`).emit('bus:position', toPublicPosition(busData));
+
+  let routePending = pendingPositions.get(busData.routeId);
+  if (!routePending) {
+    routePending = new Map<string, BusPosition>();
+    pendingPositions.set(busData.routeId, routePending);
+  }
+  if (routePending.has(busData.busId)) {
+    incrementMetric('socket.position.coalesced');
+  }
+  routePending.set(busData.busId, busData);
+
+  if (flushTimers.has(busData.routeId)) return;
+  flushTimers.set(busData.routeId, setTimeout(() => {
+    flushTimers.delete(busData.routeId);
+    const pending = pendingPositions.get(busData.routeId);
+    pendingPositions.delete(busData.routeId);
+    if (!pending || !io) return;
+
+    for (const position of pending.values()) {
+      io.to(`route:${position.routeId}`).emit('bus:position', toPublicPosition(position));
+      incrementMetric('socket.position.emitted');
+    }
+  }, SOCKET_FLUSH_MS));
 }
 
 export function broadcastBusLeft(busId: string, routeId: string): void {
   if (!io) return;
+  pendingPositions.get(routeId)?.delete(busId);
   io.to(`route:${routeId}`).emit('bus:left', { busId, routeId });
+  incrementMetric('socket.bus_left.emitted');
 }
 
 export function getIO(): Server | null {
