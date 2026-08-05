@@ -214,14 +214,15 @@ addRoute('POST', '/api/admin/drivers', provisionDriver);
 addRoute('POST', '/api/drivers/register', provisionDriver);
 
 addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
-  if (!loginRateLimiter.allow(requestKey(req, 'login'))) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
-    return;
-  }
   const phoneNumber = typeof body?.phoneNumber === 'string' ? body.phoneNumber : '';
   const pin = typeof body?.pin === 'string' ? body.pin : '';
   const requestedBusId = typeof body?.busId === 'string' ? body.busId : null;
   const requestedRouteId = typeof body?.routeId === 'string' ? body.routeId : null;
+
+  if (!loginRateLimiter.allow(requestKey(req, `login:${phoneNumber || 'unknown'}`))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
+    return;
+  }
 
   if (!phoneNumber || !pin) {
     writeError(res, 400, 'CREDENTIALS_REQUIRED', 'phoneNumber and pin are required');

@@ -29,9 +29,19 @@ for (let index = 0; index < count; index += 1) {
 }
 
 await new Promise((resolve) => setTimeout(resolve, durationMs));
-for (const child of children) child.kill('SIGTERM');
 await Promise.all(children.map((child) => new Promise((resolve) => {
-  child.once('exit', resolve);
+  let settled = false;
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    resolve();
+  };
+  child.once('exit', finish);
+  child.kill('SIGTERM');
+  setTimeout(() => {
+    child.kill('SIGKILL');
+    finish();
+  }, 2000);
 })));
 
 const response = await fetch(`${backendUrl}/api/metrics`, {
