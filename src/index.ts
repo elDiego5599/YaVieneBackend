@@ -1,5 +1,12 @@
 import http from 'http';
-import { HTTP_PORT, BUS_TIMEOUT_MS } from './config';
+import https from 'https';
+import fs from 'fs';
+import {
+  HTTP_PORT,
+  HTTP_TLS_CERT_PATH,
+  HTTP_TLS_KEY_PATH,
+  BUS_TIMEOUT_MS,
+} from './config';
 import { PositionHandlingResult, startBroker } from './mqtt/broker';
 import { setupSocketServer, broadcastBusPosition, broadcastBusLeft } from './socket/handler';
 import { handleAPI } from './api/routes';
@@ -83,7 +90,7 @@ function sanityCheck(
 }
 // ─────────────────────────────────────────────────────────────────────
 
-const server = http.createServer((req, res) => {
+const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 
@@ -97,7 +104,14 @@ const server = http.createServer((req, res) => {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
   }
-});
+};
+
+const server = HTTP_TLS_CERT_PATH && HTTP_TLS_KEY_PATH
+  ? https.createServer({
+      cert: fs.readFileSync(HTTP_TLS_CERT_PATH),
+      key: fs.readFileSync(HTTP_TLS_KEY_PATH),
+    }, requestHandler)
+  : http.createServer(requestHandler);
 
 setupSocketServer(server);
 
@@ -232,7 +246,8 @@ startBroker(
 );
 
 server.listen(HTTP_PORT, '0.0.0.0', () => {
-  console.log(`[HTTP] Server listening on http://0.0.0.0:${HTTP_PORT}`);
+  const scheme = HTTP_TLS_CERT_PATH && HTTP_TLS_KEY_PATH ? 'https' : 'http';
+  console.log(`[HTTP] Server listening on ${scheme}://0.0.0.0:${HTTP_PORT}`);
 });
 
 process.on('SIGTERM', () => {

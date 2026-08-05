@@ -13,6 +13,10 @@ import { hashPin, verifyPin } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
 import { createDriverSession, revokeSession } from '../data/sessions';
 import { broadcastBusLeft } from '../socket/handler';
+import { getMetrics } from '../observability/metrics';
+import { adminRateLimiter, loginRateLimiter, requestKey } from '../security/rate_limiter';
+import { getDb } from '../data/database';
+import { isBrokerReady } from '../mqtt/broker';
 
 interface RouteHandler {
   method: string;
@@ -61,6 +65,27 @@ function addRoute(method: string, path: string, handler: RouteHandler['handler']
 
 addRoute('GET', '/api/health', (_req, res) => {
   writeJson(res, 200, { status: 'ok', uptime: process.uptime() });
+});
+
+addRoute('GET', '/api/metrics', (req, res) => {
+  if (!isAdminRequest(req)) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
+    return;
+  }
+  writeJson(res, 200, getMetrics());
+});
+
+addRoute('GET', '/api/ready', (_req, res) => {
+  try {
+    getDb().prepare('SELECT 1').get();
+    if (!isBrokerReady()) {
+      writeError(res, 503, 'BROKER_NOT_READY', 'MQTT broker is not ready');
+      return;
+    }
+    writeJson(res, 200, { status: 'ready' });
+  } catch {
+    writeError(res, 503, 'DATABASE_NOT_READY', 'Database is not ready');
+  }
 });
 
 addRoute('GET', '/api/companies', (_req, res) => {
@@ -153,6 +178,10 @@ function provisionDriver(
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
     return;
   }
+  if (!adminRateLimiter.allow(requestKey(req, 'provision'))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many provisioning attempts');
+    return;
+  }
 
   const phoneNumber = typeof body?.phoneNumber === 'string' ? body.phoneNumber : '';
   const name = typeof body?.name === 'string' ? body.name : phoneNumber;
@@ -184,7 +213,11 @@ function provisionDriver(
 addRoute('POST', '/api/admin/drivers', provisionDriver);
 addRoute('POST', '/api/drivers/register', provisionDriver);
 
-addRoute('POST', '/api/auth/login', (_req, res, _params, body) => {
+addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
+  if (!loginRateLimiter.allow(requestKey(req, 'login'))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
+    return;
+  }
   const phoneNumber = typeof body?.phoneNumber === 'string' ? body.phoneNumber : '';
   const pin = typeof body?.pin === 'string' ? body.pin : '';
   const requestedBusId = typeof body?.busId === 'string' ? body.busId : null;
