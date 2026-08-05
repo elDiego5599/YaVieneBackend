@@ -22,6 +22,11 @@ export function getDb(): Database.Database {
   return db;
 }
 
+export function closeDb(): void {
+  db?.close();
+  db = null;
+}
+
 function initSchema(): void {
   const d = getDb();
   d.exec(`
@@ -71,31 +76,69 @@ function initSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_positions_route_id ON positions(route_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_bus_status ON driver_sessions(bus_id, status);
     CREATE INDEX IF NOT EXISTS idx_sessions_driver_status ON driver_sessions(driver_id, status);
+
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    );
   `);
 
-  ensureColumn(d, 'drivers', 'driver_id', 'TEXT');
-  ensureColumn(d, 'drivers', 'company_id', 'TEXT');
-  ensureColumn(d, 'drivers', 'bus_id', 'TEXT');
-  ensureColumn(d, 'drivers', 'pin_hash', 'TEXT');
-  ensureColumn(d, 'positions', 'session_id', 'TEXT');
-  ensureColumn(d, 'positions', 'captured_at', 'INTEGER');
-  ensureColumn(d, 'positions', 'sequence', 'INTEGER');
+  const applied = new Set(
+    (d.prepare('SELECT version FROM schema_migrations').all() as { version: number }[])
+      .map((row) => row.version),
+  );
+  const migrations: { version: number; apply: () => void }[] = [
+    {
+      version: 1,
+      apply: () => {
+        ensureColumn(d, 'drivers', 'driver_id', 'TEXT');
+        ensureColumn(d, 'drivers', 'company_id', 'TEXT');
+        ensureColumn(d, 'drivers', 'bus_id', 'TEXT');
+        ensureColumn(d, 'drivers', 'pin_hash', 'TEXT');
+        d.exec(`
+          UPDATE drivers SET driver_id = phone_number WHERE driver_id IS NULL;
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_driver_id
+          ON drivers(driver_id) WHERE driver_id IS NOT NULL;
+        `);
+      },
+    },
+    {
+      version: 2,
+      apply: () => {
+        ensureColumn(d, 'positions', 'session_id', 'TEXT');
+        ensureColumn(d, 'positions', 'captured_at', 'INTEGER');
+        ensureColumn(d, 'positions', 'sequence', 'INTEGER');
+        d.exec(`
+          CREATE INDEX IF NOT EXISTS idx_positions_session_id
+          ON positions(session_id);
+          CREATE INDEX IF NOT EXISTS idx_positions_sequence
+          ON positions(bus_id, sequence);
+        `);
+      },
+    },
+    {
+      version: 3,
+      apply: () => {
+        d.exec(`
+          CREATE INDEX IF NOT EXISTS idx_sessions_bus_status
+          ON driver_sessions(bus_id, status);
+          CREATE INDEX IF NOT EXISTS idx_sessions_driver_status
+          ON driver_sessions(driver_id, status);
+        `);
+      },
+    },
+  ];
 
-  d.exec(`
-    UPDATE drivers
-    SET driver_id = phone_number
-    WHERE driver_id IS NULL;
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_driver_id
-    ON drivers(driver_id)
-    WHERE driver_id IS NOT NULL;
-
-    CREATE INDEX IF NOT EXISTS idx_positions_session_id
-    ON positions(session_id);
-
-    CREATE INDEX IF NOT EXISTS idx_positions_sequence
-    ON positions(bus_id, sequence);
-  `);
+  for (const migration of migrations) {
+    if (applied.has(migration.version)) continue;
+    const applyMigration = d.transaction(() => {
+      migration.apply();
+      d.prepare(
+        'INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)',
+      ).run(migration.version, Date.now());
+    });
+    applyMigration();
+  }
 }
 
 function ensureColumn(

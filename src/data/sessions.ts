@@ -136,3 +136,14 @@ export function getSession(sessionId: string): DriverSession | null {
     revokedAt: row.revoked_at,
   };
 }
+
+export function cleanupRevokedSessions(retentionMs = 7 * 24 * 60 * 60 * 1000): number {
+  const db = getDb();
+  const result = db.prepare(`
+    DELETE FROM driver_sessions
+    WHERE status = 'revoked'
+      AND revoked_at IS NOT NULL
+      AND revoked_at < ?
+  `).run(Date.now() - retentionMs);
+  return result.changes;
+}

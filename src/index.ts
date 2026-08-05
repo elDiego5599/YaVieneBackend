@@ -7,8 +7,8 @@ import {
   HTTP_TLS_KEY_PATH,
   BUS_TIMEOUT_MS,
 } from './config';
-import { PositionHandlingResult, startBroker } from './mqtt/broker';
-import { setupSocketServer, broadcastBusPosition, broadcastBusLeft } from './socket/handler';
+import { closeBroker, PositionHandlingResult, startBroker } from './mqtt/broker';
+import { setupSocketServer, broadcastBusPosition, broadcastBusLeft, getIO } from './socket/handler';
 import { handleAPI } from './api/routes';
 import {
   getDriver,
@@ -17,6 +17,8 @@ import {
   sweepPositions,
   upsertPosition,
 } from './data/buses';
+import { closeDb } from './data/database';
+import { cleanupRevokedSessions } from './data/sessions';
 import { TokenPayload } from './auth/tokens';
 
 // ── Candado 3: Sanity check de física imposible ─────────────────────
@@ -119,7 +121,7 @@ setupSocketServer(server);
 const GHOST_MS = 30_000;
 const REMOVE_MS = 60_000;
 
-setInterval(() => {
+const sweepTimer = setInterval(() => {
   const { toGhost, toRemove } = sweepPositions(GHOST_MS, REMOVE_MS);
 
   for (const bus of toGhost) {
@@ -132,6 +134,11 @@ setInterval(() => {
     console.log(`[SWEEP] Bus ${busId} removido del mapa (>${REMOVE_MS / 1000}s)`);
   }
 }, 10_000);
+sweepTimer.unref();
+const sessionCleanupTimer = setInterval(() => {
+  cleanupRevokedSessions();
+}, 60 * 60 * 1000);
+sessionCleanupTimer.unref();
 
 startBroker(
   (_clientId: string, auth: TokenPayload, topic, payload): PositionHandlingResult | void => {
@@ -250,7 +257,22 @@ server.listen(HTTP_PORT, '0.0.0.0', () => {
   console.log(`[HTTP] Server listening on ${scheme}://0.0.0.0:${HTTP_PORT}`);
 });
 
-process.on('SIGTERM', () => {
-  console.log('[Server] Shutting down...');
+const shutdown = async (signal: string): Promise<void> => {
+  console.log(`[Server] Shutting down from ${signal}...`);
+  clearInterval(sweepTimer);
+  clearInterval(sessionCleanupTimer);
+  getIO()?.close();
+  await closeBroker();
+  await new Promise<void>((resolve) => {
+    if (!server.listening) {
+      resolve();
+      return;
+    }
+    server.close(() => resolve());
+  });
+  closeDb();
   process.exit(0);
-});
+};
+
+process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
+process.once('SIGINT', () => { void shutdown('SIGINT'); });

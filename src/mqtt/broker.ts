@@ -13,9 +13,17 @@ import { claimSession, isSessionAuthorized, releaseSession } from '../data/sessi
 import { incrementMetric } from '../observability/metrics';
 
 let brokerReady = false;
+let brokerServer: Server | null = null;
 
 export function isBrokerReady(): boolean {
   return brokerReady;
+}
+
+export function closeBroker(): Promise<void> {
+  if (!brokerServer) return Promise.resolve();
+  const server = brokerServer;
+  brokerServer = null;
+  return new Promise((resolve) => server.close(() => resolve()));
 }
 
 export interface PositionHandlingResult {
@@ -37,7 +45,7 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
   const debugLogs = process.env.MQTT_DEBUG_LOGS === 'true';
 
   // ── Candado 1: JWT authentication ──────────────────────────────────
-  broker.authenticate = (client: any, username: string | undefined, password: Buffer | undefined, callback: (err: Error | null, success: boolean | null) => void) => {
+  broker.authenticate = (client: any, username: string | undefined, password: Buffer | undefined, callback: any) => {
     if (!password) {
       incrementMetric('mqtt.auth.rejected');
       return callback(null, false);
@@ -65,7 +73,7 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
   };
 
   // ── Candado 1: Authorize publish — solo su propio topic ────────────
-  broker.authorizePublish = (client: any, packet: any, callback: (err: Error | null, success: boolean | null) => void) => {
+  broker.authorizePublish = (client: any, packet: any, callback: any) => {
     const payload: any = (client as any).authPayload;
     const topic = packet.topic;
 
@@ -95,7 +103,7 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
     callback(null, true);
   };
 
-  broker.authorizeSubscribe = (client: any, subscription: any, callback: (err: Error | null, subscription?: any) => void) => {
+  broker.authorizeSubscribe = (client: any, subscription: any, callback: any) => {
     const payload = (client as any).authPayload as TokenPayload | undefined;
     const expectedTopic = payload
       ? `empresa/${payload.companyId}/bus/${payload.busId}/ack`
@@ -182,6 +190,7 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
         key: fs.readFileSync(MQTT_TLS_KEY_PATH),
       }, broker.handle)
     : createNetServer(broker.handle);
+  brokerServer = server;
   server.on('error', (error) => {
     brokerReady = false;
     console.error('[MQTT] Broker server error:', error.message);
