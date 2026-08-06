@@ -23,6 +23,8 @@ export interface FleetBus {
   busId: string;
   companyId: string;
   routeId: string | null;
+  placa: string;
+  driverName: string | null;
   visible: boolean;
   online: boolean;
   lat: number | null;
@@ -134,17 +136,21 @@ export function getBusVisibility(busId: string): boolean {
 export function getFleetPositions(companyId: string): FleetBus[] {
   const db = getDb();
   const rows = db.prepare(`
-    SELECT b.bus_id, b.company_id, b.visible,
+    SELECT b.bus_id, b.company_id, b.visible, b.plate_number, b.route_id AS bus_route_id,
            p.route_id, p.lat, p.lon, p.heading, p.speed_kmh,
-           p.timestamp, p.captured_at, p.sequence, p.is_ghost
+           p.timestamp, p.captured_at, p.sequence, p.is_ghost,
+           d.name AS driver_name
     FROM buses b
     LEFT JOIN positions p ON p.bus_id = b.bus_id
+    LEFT JOIN drivers d ON d.phone_number = p.driver_phone
     WHERE b.company_id = ?
     ORDER BY b.bus_id ASC
   `).all(companyId) as {
     bus_id: string;
     company_id: string;
     visible: number;
+    plate_number: string | null;
+    bus_route_id: string | null;
     route_id: string | null;
     lat: number | null;
     lon: number | null;
@@ -154,12 +160,15 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     captured_at: number | null;
     sequence: number | null;
     is_ghost: number | null;
+    driver_name: string | null;
   }[];
 
   return rows.map((row) => ({
     busId: row.bus_id,
     companyId: row.company_id,
-    routeId: row.route_id,
+    routeId: row.route_id ?? row.bus_route_id,
+    placa: row.plate_number ?? row.bus_id,
+    driverName: row.driver_name,
     visible: row.visible === 1,
     online: row.timestamp != null,
     lat: row.lat,
@@ -171,6 +180,155 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     sequence: row.sequence,
     isGhost: row.is_ghost === 1,
   }));
+}
+
+export function createBus(
+  companyId: string,
+  placa: string,
+  routeId: string,
+): FleetBus | null {
+  const normalized = normalizePlaca(placa);
+  if (!normalized) return null;
+  const busId = busIdFromPlaca(normalized);
+  const now = Date.now();
+  const db = getDb();
+  const insert = db.prepare(`
+    INSERT INTO buses (bus_id, company_id, plate_number, route_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(bus_id) DO UPDATE SET
+      company_id = excluded.company_id,
+      plate_number = excluded.plate_number,
+      route_id = excluded.route_id,
+      updated_at = excluded.updated_at
+  `);
+  insert.run(busId, companyId, normalized, routeId || null, now, now);
+  busCompanyCache.set(busId, companyId);
+  return {
+    busId,
+    companyId,
+    routeId: routeId || null,
+    placa: normalized,
+    driverName: null,
+    visible: true,
+    online: false,
+    lat: null,
+    lon: null,
+    heading: 0,
+    speedKmh: 0,
+    capturedAt: null,
+    receivedAt: null,
+    sequence: null,
+    isGhost: false,
+  };
+}
+
+export function updateBus(
+  busId: string,
+  changes: { placa?: string; routeId?: string | null },
+): FleetBus | null {
+  const companyId = getBusCompanyId(busId);
+  if (!companyId) return null;
+  const db = getDb();
+
+  let newPlaca: string | null = null;
+  if (changes.placa !== undefined) {
+    newPlaca = normalizePlaca(changes.placa);
+    if (!newPlaca) return null;
+  }
+  const routeId = changes.routeId !== undefined ? changes.routeId : null;
+
+  const dbUpdate = db.transaction(() => {
+    if (newPlaca) {
+      db.prepare('UPDATE buses SET plate_number = ?, updated_at = ? WHERE bus_id = ?')
+        .run(newPlaca, Date.now(), busId);
+    }
+    if (routeId !== null) {
+      db.prepare('UPDATE buses SET route_id = ?, updated_at = ? WHERE bus_id = ?')
+        .run(routeId || null, Date.now(), busId);
+    }
+  });
+  dbUpdate();
+
+  const updated = getFleetPositions(companyId).find((b) => b.busId === busId);
+  return updated ?? null;
+}
+
+export function deleteBus(busId: string): { busId: string; routeId: string | null } | null {
+  const companyId = getBusCompanyId(busId);
+  if (!companyId) return null;
+  const db = getDb();
+
+  const remove = db.transaction(() => {
+    const position = db.prepare(
+      'SELECT route_id FROM positions WHERE bus_id = ?'
+    ).get(busId) as { route_id: string } | undefined;
+
+    const routeId = position?.route_id
+      ?? (db.prepare('SELECT route_id FROM buses WHERE bus_id = ?').get(busId) as { route_id: string | null } | undefined)?.route_id
+      ?? null;
+
+    db.prepare('DELETE FROM turn_assignments WHERE bus_id = ?').run(busId);
+    db.prepare('DELETE FROM positions WHERE bus_id = ?').run(busId);
+    db.prepare('DELETE FROM buses WHERE bus_id = ?').run(busId);
+
+    if (routeId) {
+      queueLifecycleEvent(db, 'bus:removed', routeId, { busId, routeId });
+    }
+    return routeId;
+  });
+  const routeId = remove();
+
+  busCompanyCache.delete(busId);
+  visibilityCache.delete(busId);
+  return { busId, routeId };
+}
+
+export function normalizePlaca(placa: string): string | null {
+  const cleaned = placa.trim().toUpperCase().replace(/\s+/g, '');
+  if (!/^[A-Z0-9]{4,10}$/.test(cleaned)) return null;
+  return cleaned;
+}
+
+export function busIdFromPlaca(placa: string): string {
+  return 'BUS-' + placa.replace(/[^A-Z0-9]/g, '');
+}
+
+const routeNameMap: Record<string, string> = {
+  'R-101': 'Ruta 1 · Centro – Soledad',
+  'R-102': 'Ruta 2 · Murillo – Terminal',
+  'R-103': 'Ruta 3 · La Playa – Portal',
+  '101': 'Ruta 1 · Centro – Soledad',
+  '102': 'Ruta 2 · Murillo – Terminal',
+  '103': 'Ruta 3 · La Playa – Portal',
+};
+
+export function getCompanyRoutes(companyId: string): {
+  routeId: string;
+  name: string;
+  total: number;
+  online: number;
+}[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT COALESCE(p.route_id, b.route_id) AS route_id,
+           COUNT(DISTINCT b.bus_id) AS total,
+           SUM(CASE WHEN p.bus_id IS NOT NULL THEN 1 ELSE 0 END) AS online
+    FROM buses b
+    LEFT JOIN positions p ON p.bus_id = b.bus_id
+    WHERE b.company_id = ?
+    GROUP BY COALESCE(p.route_id, b.route_id)
+    HAVING COALESCE(p.route_id, b.route_id) IS NOT NULL
+    ORDER BY route_id ASC
+  `).all(companyId) as { route_id: string | null; total: number; online: number }[];
+
+  return rows
+    .filter((r) => r.route_id !== null)
+    .map((r) => ({
+      routeId: r.route_id as string,
+      name: routeNameMap[r.route_id as string] ?? `Ruta ${r.route_id}`,
+      total: r.total,
+      online: r.online ?? 0,
+    }));
 }
 
 export function setBusVisibility(

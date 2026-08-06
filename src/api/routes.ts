@@ -11,6 +11,10 @@ import {
   getFleetPositions,
   getBusCompanyId,
   setBusVisibility,
+  createBus,
+  updateBus,
+  deleteBus,
+  getCompanyRoutes,
 } from '../data/buses';
 import { authenticateRequest, isAdminRequest, isDriverForBus, authenticateCompanyAdmin } from '../auth/http';
 import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords';
@@ -386,6 +390,88 @@ addRoute('POST', '/api/fleet/buses/:busId/visibility', (req, res, params, body) 
   writeJson(res, 200, result);
 });
 
+addRoute('GET', '/api/fleet/routes', (req, res) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+  writeJson(res, 200, {
+    companyId: auth.companyId,
+    routes: getCompanyRoutes(auth.companyId),
+  });
+});
+
+addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+  if (!adminRateLimiter.allow(requestKey(req, 'bus:create'))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many bus creation attempts');
+    return;
+  }
+
+  const placa = typeof body?.placa === 'string' ? body.placa : '';
+  const routeId = typeof body?.routeId === 'string' ? body.routeId : '';
+
+  const bus = createBus(auth.companyId, placa, routeId);
+  if (!bus) {
+    writeError(res, 400, 'INVALID_BUS_PLACA', 'placa must be a valid plate number (e.g. ABC123)');
+    return;
+  }
+  console.log(`[API] Bus ${bus.busId} creado (placa ${bus.placa}, ruta ${bus.routeId ?? '-'}) por ${auth.companyId}`);
+  writeJson(res, 201, bus);
+});
+
+addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+
+  const companyId = getBusCompanyId(params.busId);
+  if (!companyId || companyId !== auth.companyId) {
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found in this company');
+    return;
+  }
+
+  const placa = typeof body?.placa === 'string' ? body.placa : undefined;
+  const routeId = typeof body?.routeId === 'string' ? body.routeId : undefined;
+
+  const bus = updateBus(params.busId, { placa, routeId });
+  if (!bus) {
+    writeError(res, 400, 'INVALID_BUS_PLACA', 'placa must be a valid plate number (e.g. ABC123)');
+    return;
+  }
+  console.log(`[API] Bus ${bus.busId} actualizado (placa ${bus.placa}, ruta ${bus.routeId ?? '-'})`);
+  writeJson(res, 200, bus);
+});
+
+addRoute('DELETE', '/api/fleet/buses/:busId', (req, res, params) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+
+  const companyId = getBusCompanyId(params.busId);
+  if (!companyId || companyId !== auth.companyId) {
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found in this company');
+    return;
+  }
+
+  const result = deleteBus(params.busId);
+  if (!result) {
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
+    return;
+  }
+  console.log(`[API] Bus ${params.busId} eliminado del catálogo (empresa ${auth.companyId})`);
+  writeJson(res, 200, { status: 'deleted', ...result });
+});
+
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
   const url = req.url?.split('?')[0] || '';
 
@@ -399,7 +485,18 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
       params[name] = match[i + 1];
     });
 
-    if (req.method === 'POST') {
+    const runHandler = (parsedBody?: Record<string, unknown>): void => {
+      try {
+        h.handler(req, res, params, parsedBody);
+      } catch (error) {
+        console.error('[HTTP] Handler error:', error);
+        if (!res.headersSent) {
+          writeError(res, 500, 'INTERNAL_ERROR', 'Internal server error');
+        }
+      }
+    };
+
+    if (req.method === 'POST' || req.method === 'PATCH' || req.method === 'PUT') {
       let body = '';
       let bodyBytes = 0;
       let tooLarge = false;
@@ -425,18 +522,10 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
           writeError(res, 400, 'INVALID_JSON', 'Request body must be valid JSON');
           return;
         }
-
-        try {
-          h.handler(req, res, params, parsedBody);
-        } catch (error) {
-          console.error('[HTTP] Handler error:', error);
-          if (!res.headersSent) {
-            writeError(res, 500, 'INTERNAL_ERROR', 'Internal server error');
-          }
-        }
+        runHandler(parsedBody);
       });
     } else {
-      h.handler(req, res, params);
+      runHandler();
     }
     return true;
   }

@@ -27,6 +27,7 @@ import {
   setupSocketServer,
   broadcastBusPosition,
   broadcastBusLeft,
+  broadcastBusRemoved,
   broadcastBusHidden,
   broadcastBusVisible,
   getIO,
@@ -133,6 +134,15 @@ const GHOST_MS = 30_000;
 const REMOVE_MS = 60_000;
 
 function emitLifecycleEvent(event: LifecycleEvent): void {
+  if (event.eventType === 'bus:removed') {
+    broadcastBusRemoved(
+      event.payload.busId as string,
+      event.routeId,
+      event.eventId,
+    );
+    return;
+  }
+
   if (event.eventType === 'bus:left') {
     broadcastBusLeft(
       event.payload.busId as string,

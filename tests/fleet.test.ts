@@ -9,11 +9,11 @@ const MQTT_PORT = 8891;
 const ADMIN_API_KEY = 'e2e-admin-key';
 const JWT_SECRET = 'e2e-jwt-secret';
 
-async function waitForReady(): Promise<void> {
+async function waitForReady(port = HTTP_PORT): Promise<void> {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/ready`);
+      const response = await fetch(`http://127.0.0.1:${port}/api/ready`);
       if (response.status === 200) return;
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -82,8 +82,8 @@ async function waitForSilence(
   });
 }
 
-function connectSocket(extraAuth: Record<string, unknown> = {}): Socket {
-  const socket = io(`http://127.0.0.1:${HTTP_PORT}`, {
+function connectSocket(extraAuth: Record<string, unknown> = {}, port = HTTP_PORT): Socket {
+  const socket = io(`http://127.0.0.1:${port}`, {
     path: '/ws',
     transports: ['websocket'],
     autoConnect: false,
@@ -291,6 +291,136 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
   } finally {
     for (const socket of sockets) socket.close();
     await stopProcess(simulator);
+    await stopProcess(backend);
+  }
+});
+
+test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de ruta)', { timeout: 90_000 }, async () => {
+  let backend: ChildProcess | undefined;
+  const sockets: Socket[] = [];
+  const HTTP_PORT = 3131;
+  const MQTT_PORT = 8892;
+
+  try {
+    backend = spawn(process.execPath, ['dist/index.js'], {
+      env: {
+        ...process.env,
+        HTTP_PORT: String(HTTP_PORT),
+        MQTT_PORT: String(MQTT_PORT),
+        ADMIN_API_KEY,
+        JWT_SECRET,
+        YA_VIENE_DB_PATH: `/tmp/yaviene-test-fleet2-${Date.now()}.db`,
+        ALLOWED_ORIGINS: '*',
+      },
+      stdio: 'ignore',
+    });
+    await waitForReady(HTTP_PORT);
+
+    const company = 'EMP-CRUD';
+    const createAdmin = async (username: string) => {
+      const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/empresas/${company}/admin`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
+        body: JSON.stringify({ username, password: 'secret123' }),
+      });
+      assert.equal(res.status, 201);
+    };
+    await createAdmin('crudboss');
+    const login = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'crudboss', password: 'secret123' }),
+    });
+    assert.equal(login.status, 200);
+    const { token } = (await login.json()) as { token: string };
+    const auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+    const fleet = async (): Promise<{ buses: any[] }> => {
+      const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/positions`, { headers: auth });
+      assert.equal(res.status, 200);
+      return res.json() as Promise<{ buses: any[] }>;
+    };
+
+    // Crear bus con placa y ruta
+    const created = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ placa: 'abc 123', routeId: 'R-101' }),
+    });
+    assert.equal(created.status, 201);
+    const newBus = (await created.json()) as any;
+    assert.equal(newBus.busId, 'BUS-ABC123', 'busId deriva de la placa');
+    assert.equal(newBus.placa, 'ABC123', 'placa normalizada a mayúsculas');
+
+    // Placa inválida → 400
+    const bad = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ placa: '!!', routeId: 'R-101' }),
+    });
+    assert.equal(bad.status, 400);
+
+    // Aparece en la flota (offline, sin posición)
+    const fleet1 = await fleet();
+    const listed = fleet1.buses.find((b) => b.busId === 'BUS-ABC123');
+    assert.ok(listed, 'el bus creado aparece en la flota');
+    assert.equal(listed.placa, 'ABC123');
+    assert.equal(listed.routeId, 'R-101');
+    assert.equal(listed.online, false);
+
+    // Rutas: el catálogo incluye la ruta del bus
+    const routesRes = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/routes`, { headers: auth });
+    assert.equal(routesRes.status, 200);
+    const { routes } = (await routesRes.json()) as { routes: any[] };
+    assert.ok(routes.some((r) => r.routeId === 'R-101'), 'catálogo incluye R-101');
+    const r101 = routes.find((r) => r.routeId === 'R-101');
+    assert.equal(r101.name, 'Ruta 1 · Centro – Soledad');
+    assert.ok(r101.total >= 1);
+
+    // Editar placa y ruta
+    const patched = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses/BUS-ABC123`, {
+      method: 'PATCH',
+      headers: auth,
+      body: JSON.stringify({ placa: 'XYZ987', routeId: 'R-102' }),
+    });
+    assert.equal(patched.status, 200);
+    const updated = (await patched.json()) as any;
+    assert.equal(updated.placa, 'XYZ987');
+    assert.equal(updated.routeId, 'R-102');
+
+    // Pasajero suscrito a R-102 (ruta final del bus) recibe bus:removed al borrarlo
+    const passenger = connectSocket({}, HTTP_PORT);
+    sockets.push(passenger);
+    await waitForConnection(passenger);
+    passenger.emit('subscribe:route', 'R-102');
+    const removed = waitForSocketEvent(passenger, 'bus:removed', (p) => p?.busId === 'BUS-ABC123');
+    const deleted = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses/BUS-ABC123`, {
+      method: 'DELETE',
+      headers: auth,
+    });
+    assert.equal(deleted.status, 200);
+    const removedEvent = await removed;
+    assert.equal(removedEvent.routeId, 'R-102');
+
+    // Ya no está en la flota
+    const fleet2 = await fleet();
+    assert.equal(fleet2.buses.some((b) => b.busId === 'BUS-ABC123'), false);
+
+    // Borrar bus inexistente / de otra empresa → 404
+    const gone = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses/BUS-ABC123`, {
+      method: 'DELETE',
+      headers: auth,
+    });
+    assert.equal(gone.status, 404);
+    const noAuth = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ placa: 'QWE456', routeId: 'R-101' }),
+    });
+    assert.equal(noAuth.status, 401);
+
+  } finally {
+    for (const socket of sockets) socket.close();
     await stopProcess(backend);
   }
 });

@@ -257,6 +257,36 @@ function initSchema(): void {
         `).run(now, now, now, now);
       },
     },
+    {
+      version: 7,
+      apply: () => {
+        ensureColumn(d, 'buses', 'route_id', 'TEXT');
+        const plates = [
+          'SFA-482', 'TUH-513', 'LKA-794', 'RQT-106', 'DMV-238',
+          'WNP-659', 'JCB-871', 'PGX-340', 'HLF-925', 'XRD-617',
+          'MNP-083', 'TKG-462', 'VLC-579', 'BDR-214', 'QWF-731',
+        ];
+        d.exec(`
+          UPDATE buses SET route_id = (
+            SELECT route_id FROM turn_assignments ta
+            WHERE ta.bus_id = buses.bus_id AND ta.status = 'active'
+            LIMIT 1
+          ) WHERE route_id IS NULL;
+          UPDATE buses SET route_id = (
+            SELECT route_id FROM positions p
+            WHERE p.bus_id = buses.bus_id
+            LIMIT 1
+          ) WHERE route_id IS NULL;
+        `);
+        const rows = d.prepare('SELECT bus_id FROM buses WHERE plate_number IS NULL OR plate_number = \'\'').all() as { bus_id: string }[];
+        const assign = d.prepare('UPDATE buses SET plate_number = ?, updated_at = ? WHERE bus_id = ?');
+        let i = 0;
+        for (const row of rows) {
+          assign.run(plates[i % plates.length], Date.now(), row.bus_id);
+          i += 1;
+        }
+      },
+    },
   ];
 
   for (const migration of migrations) {

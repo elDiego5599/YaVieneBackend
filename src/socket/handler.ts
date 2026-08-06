@@ -143,6 +143,16 @@ export function broadcastBusLeft(busId: string, routeId: string, eventId?: strin
   incrementMetric('socket.bus_left.emitted');
 }
 
+export function broadcastBusRemoved(busId: string, routeId: string, eventId?: string, companyId?: string): void {
+  if (!io) return;
+  pendingPositions.get(routeId)?.delete(busId);
+  const payload = { busId, routeId, eventId };
+  io.to(`route:${routeId}`).emit('bus:removed', payload);
+  const resolvedCompanyId = companyId || getBusCompanyId(busId) || '';
+  if (resolvedCompanyId) io.to(`admin:${resolvedCompanyId}`).emit('bus:removed', payload);
+  incrementMetric('socket.bus_removed.emitted');
+}
+
 export function broadcastBusHidden(busId: string, routeId: string, eventId?: string, companyId?: string): void {
   if (!io) return;
   pendingPositions.get(routeId)?.delete(busId);
