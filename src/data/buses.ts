@@ -187,13 +187,11 @@ export function setBusVisibility(
 
     const position = getPosition(busId);
     const routeId = position?.routeId ?? '';
-    if (routeId) {
-      queueLifecycleEvent(db, visible ? 'bus:visible' : 'bus:hidden', routeId, {
-        busId,
-        routeId,
-        ...(visible && position ? { position: { ...position, visible } } : {}),
-      });
-    }
+    queueLifecycleEvent(db, visible ? 'bus:visible' : 'bus:hidden', routeId, {
+      busId,
+      routeId,
+      ...(visible && position ? { position: { ...position, visible } } : {}),
+    });
   });
   update();
 
