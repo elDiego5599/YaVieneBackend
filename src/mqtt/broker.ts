@@ -8,7 +8,7 @@ import {
   MQTT_TLS_CERT_PATH,
   MQTT_TLS_KEY_PATH,
 } from '../config';
-import { TokenPayload, verifyToken } from '../auth/tokens';
+import { DriverTokenPayload, verifyToken } from '../auth/tokens';
 import { claimSession, isSessionAuthorized, releaseSession } from '../data/sessions';
 import { incrementMetric } from '../observability/metrics';
 
@@ -34,11 +34,11 @@ export interface PositionHandlingResult {
 
 type MessageHandler = (
   clientId: string,
-  auth: TokenPayload,
+  auth: DriverTokenPayload,
   topic: string,
   payload: Record<string, unknown>,
 ) => PositionHandlingResult | void;
-type DisconnectHandler = (clientId: string, auth: TokenPayload) => void;
+type DisconnectHandler = (clientId: string, auth: DriverTokenPayload) => void;
 
 export function startBroker(onMessage: MessageHandler, onDisconnect?: DisconnectHandler): Promise<Server> {
   const broker: any = new aedes();
@@ -59,16 +59,17 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
       console.warn(`[MQTT] Auth rejected for client ${client.id}: invalid JWT`);
       return callback(null, false);
     }
+    const driverPayload = payload as DriverTokenPayload;
 
-    if (!claimSession(payload.sessionId, client.id)) {
+    if (!claimSession(driverPayload.sessionId, client.id)) {
       incrementMetric('mqtt.auth.rejected_session');
       console.warn(`[MQTT] Session rejected for client ${client.id}: already owned or revoked`);
       return callback(null, false);
     }
 
-    (client as any).authPayload = payload;
+    (client as any).authPayload = driverPayload;
     incrementMetric('mqtt.auth.accepted');
-    console.log(`[MQTT] Auth OK: ${payload.phoneNumber} (bus ${payload.busId})`);
+    console.log(`[MQTT] Auth OK: ${driverPayload.phoneNumber} (bus ${driverPayload.busId})`);
     callback(null, true);
   };
 
@@ -104,7 +105,7 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
   };
 
   broker.authorizeSubscribe = (client: any, subscription: any, callback: any) => {
-    const payload = (client as any).authPayload as TokenPayload | undefined;
+    const payload = (client as any).authPayload as DriverTokenPayload | undefined;
     const expectedTopic = payload
       ? `empresa/${payload.companyId}/bus/${payload.busId}/ack`
       : null;
@@ -118,7 +119,7 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
     callback(null, subscription);
   };
 
-  function publishAck(auth: TokenPayload, result: PositionHandlingResult): void {
+  function publishAck(auth: DriverTokenPayload, result: PositionHandlingResult): void {
     if (result.sequence == null) return;
     const topic = `empresa/${auth.companyId}/bus/${auth.busId}/ack`;
     const payload = Buffer.from(JSON.stringify({
@@ -161,7 +162,7 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
     if (matchesNew || matchesOld) {
       incrementMetric('mqtt.messages.received');
       try {
-        const authPayload = (client as any).authPayload as TokenPayload | undefined;
+        const authPayload = (client as any).authPayload as DriverTokenPayload | undefined;
         if (!authPayload) return;
         const payload = JSON.parse(packet.payload.toString());
         const result = onMessage(client.id, authPayload, topic, payload);
@@ -176,7 +177,7 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
   });
 
   broker.on('clientDisconnect', (client: any) => {
-    const authPayload = client.authPayload as TokenPayload | undefined;
+    const authPayload = client.authPayload as DriverTokenPayload | undefined;
     if (authPayload && onDisconnect) {
       if (!releaseSession(authPayload.sessionId, client.id as string)) return;
       console.log(`[MQTT] Disconnect: ${authPayload.phoneNumber} (bus ${authPayload.busId})`);

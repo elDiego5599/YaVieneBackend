@@ -9,7 +9,7 @@ const JWT_SECRET = configuredSecret || 'ya-viene-local-development-secret';
 const JWT_ISSUER = 'ya-viene-backend';
 const JWT_AUDIENCE = 'ya-viene-mqtt';
 
-export interface TokenPayload {
+export interface DriverTokenPayload {
   sub: string;
   driverId: string;
   phoneNumber: string;
@@ -19,6 +19,15 @@ export interface TokenPayload {
   routeId: string;
   sessionId: string;
 }
+
+export interface AdminTokenPayload {
+  sub: string;
+  role: 'admin';
+  companyId: string;
+  username: string;
+}
+
+export type TokenPayload = DriverTokenPayload | AdminTokenPayload;
 
 export function signToken(payload: TokenPayload): string {
   return jwt.sign(payload, JWT_SECRET, {
@@ -37,6 +46,14 @@ export function verifyToken(token: string): TokenPayload | null {
 
     if (!decoded || typeof decoded !== 'object') return null;
 
+    if (decoded.role === 'admin') {
+      const required = ['sub', 'companyId', 'username'];
+      if (!required.every((key) => typeof decoded[key] === 'string' && decoded[key])) {
+        return null;
+      }
+      return decoded as AdminTokenPayload;
+    }
+
     const requiredStrings = [
       'sub',
       'driverId',
@@ -51,7 +68,7 @@ export function verifyToken(token: string): TokenPayload | null {
     }
     if (decoded.role !== 'driver') return null;
 
-    return decoded as TokenPayload;
+    return decoded as DriverTokenPayload;
   } catch {
     return null;
   }

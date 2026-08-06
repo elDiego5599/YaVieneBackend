@@ -8,7 +8,6 @@ import {
   BUS_TIMEOUT_MS,
 } from './config';
 import { closeBroker, PositionHandlingResult, startBroker } from './mqtt/broker';
-import { setupSocketServer, broadcastBusPosition, broadcastBusLeft, getIO } from './socket/handler';
 import { handleAPI } from './api/routes';
 import {
   getPositionValidationState,
@@ -16,11 +15,22 @@ import {
   removePositionOwned,
   sweepPositions,
   upsertPosition,
+  getBusVisibility,
+  loadBusCompanyCache,
+  loadVisibilityCache,
 } from './data/buses';
 import { closeDb } from './data/database';
 import { cleanupRevokedSessions } from './data/sessions';
 import { dispatchLifecycleEvents, LifecycleEvent } from './data/lifecycle_events';
-import { TokenPayload } from './auth/tokens';
+import { DriverTokenPayload } from './auth/tokens';
+import {
+  setupSocketServer,
+  broadcastBusPosition,
+  broadcastBusLeft,
+  broadcastBusHidden,
+  broadcastBusVisible,
+  getIO,
+} from './socket/handler';
 
 // ── Candado 3: Sanity check de física imposible ─────────────────────
 const MAX_SPEED_KMH = 120;
@@ -132,6 +142,28 @@ function emitLifecycleEvent(event: LifecycleEvent): void {
     return;
   }
 
+  if (event.eventType === 'bus:hidden') {
+    broadcastBusHidden(
+      event.payload.busId as string,
+      event.routeId,
+      event.eventId,
+    );
+    return;
+  }
+
+  if (event.eventType === 'bus:visible') {
+    const payload = event.payload as { busId: string; position?: BusPosition };
+    broadcastBusVisible(
+      payload.busId,
+      event.routeId,
+      event.eventId,
+      payload.position,
+    );
+    return;
+  }
+
+  if (!getBusVisibility(event.payload.busId as string)) return;
+
   broadcastBusPosition({
     ...(event.payload as unknown as BusPosition),
     eventId: event.eventId,
@@ -153,7 +185,7 @@ const sessionCleanupTimer = setInterval(() => {
 sessionCleanupTimer.unref();
 
 startBroker(
-  (_clientId: string, auth: TokenPayload, topic, payload): PositionHandlingResult | void => {
+  (_clientId: string, auth: DriverTokenPayload, topic, payload): PositionHandlingResult | void => {
   const match = topic.match(/^empresa\/([^/]+)\/bus\/([^/]+)\/posicion$/);
   if (!match) {
     console.warn(`[MQTT] Topic rejected after authorization: ${topic}`);
@@ -234,15 +266,20 @@ startBroker(
     capturedAt: captureTime,
     sequence: positionSequence,
     driverValidated: true,
+    companyId: auth.companyId,
   });
 
   if (!updated) {
     return { accepted: true, sequence: positionSequence, reason: 'DUPLICATE' };
   }
-  broadcastBusPosition(updated);
+  if (!getBusVisibility(auth.busId)) {
+    console.log(`[FLEET] Bus ${auth.busId} oculto — posición guardada sin difundir`);
+  } else {
+    broadcastBusPosition(updated);
+  }
   return { accepted: true, sequence: positionSequence };
 },
-  (_clientId: string, auth: TokenPayload) => {
+  (_clientId: string, auth: DriverTokenPayload) => {
     const removed = removePositionOwned(auth.busId, auth.sessionId);
     if (!removed || removed.driverPhone !== auth.phoneNumber) return;
     console.log(`[MQTT] Bus ${auth.busId} removido por desconexión del conductor ${auth.phoneNumber}`);
@@ -253,6 +290,9 @@ server.listen(HTTP_PORT, '0.0.0.0', () => {
   const scheme = HTTP_TLS_CERT_PATH && HTTP_TLS_KEY_PATH ? 'https' : 'http';
   console.log(`[HTTP] Server listening on ${scheme}://0.0.0.0:${HTTP_PORT}`);
 });
+
+loadVisibilityCache();
+loadBusCompanyCache();
 
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[Server] Shutting down from ${signal}...`);

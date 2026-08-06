@@ -5,7 +5,7 @@ import { getDb } from './database';
 export interface LifecycleEvent {
   id: number;
   eventId: string;
-  eventType: 'bus:position' | 'bus:left';
+  eventType: 'bus:position' | 'bus:left' | 'bus:hidden' | 'bus:visible';
   routeId: string;
   payload: Record<string, unknown>;
   createdAt: number;

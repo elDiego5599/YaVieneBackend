@@ -8,15 +8,24 @@ import {
   registerDriver,
   removePositionOwned,
   toPublicPosition,
+  getFleetPositions,
+  getBusCompanyId,
+  setBusVisibility,
 } from '../data/buses';
-import { authenticateRequest, isAdminRequest, isDriverForBus } from '../auth/http';
-import { hashPin, verifyPin } from '../auth/passwords';
+import { authenticateRequest, isAdminRequest, isDriverForBus, authenticateCompanyAdmin } from '../auth/http';
+import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
 import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
 import { getMetrics } from '../observability/metrics';
 import { adminRateLimiter, loginRateLimiter, requestKey } from '../security/rate_limiter';
 import { getDb } from '../data/database';
 import { isBrokerReady } from '../mqtt/broker';
+import {
+  getEmpresa,
+  ensureEmpresa,
+  createOrUpdateCompanyAdmin,
+  getCompanyAdminByUsername,
+} from '../data/empresas';
 
 interface RouteHandler {
   method: string;
@@ -130,7 +139,7 @@ addRoute('GET', '/api/buses/:busId', (_req, res, params) => {
 
 addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
   const auth = authenticateRequest(req);
-  if (!isDriverForBus(auth, params.busId)) {
+  if (auth?.role !== 'driver' || !isDriverForBus(auth, params.busId)) {
     writeError(res, 403, 'BUS_FORBIDDEN', 'The token cannot control this bus');
     return;
   }
@@ -140,9 +149,9 @@ addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
     writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
     return;
   }
-  removePositionOwned(params.busId, auth!.sessionId);
-  revokeSession(auth!.sessionId);
-  endAssignment(auth!.driverId, params.busId);
+  removePositionOwned(params.busId, auth.sessionId);
+  revokeSession(auth.sessionId);
+  endAssignment(auth.driverId, params.busId);
   console.log(`[API] Bus ${params.busId} marcado offline por el conductor`);
   writeJson(res, 200, { status: 'offline', busId: params.busId });
 });
@@ -155,7 +164,7 @@ addRoute('GET', '/api/drivers/:phone', (req, res, params) => {
   }
 
   const auth = authenticateRequest(req);
-  if (!isAdminRequest(req) && auth?.driverId !== driver.driverId) {
+  if (auth?.role !== 'driver' || (!isAdminRequest(req) && auth.driverId !== driver.driverId)) {
     writeError(res, 403, 'DRIVER_FORBIDDEN', 'The token cannot read this driver');
     return;
   }
@@ -268,6 +277,113 @@ addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
     driver: publicDriver(driver),
     token,
   });
+});
+
+addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
+  const username = typeof body?.username === 'string'
+    ? body.username.trim().toLowerCase() : '';
+  const password = typeof body?.password === 'string' ? body.password : '';
+
+  if (!loginRateLimiter.allow(requestKey(req, `adminlogin:${username || 'unknown'}`))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
+    return;
+  }
+
+  if (!username || !password) {
+    writeError(res, 400, 'CREDENTIALS_REQUIRED', 'username and password are required');
+    return;
+  }
+
+  const admin = getCompanyAdminByUsername(username);
+  if (!admin || !verifySecret(password, admin.passwordHash)) {
+    writeError(res, 401, 'INVALID_CREDENTIALS', 'Invalid admin credentials');
+    return;
+  }
+
+  const token = signToken({
+    sub: admin.adminId,
+    role: 'admin',
+    companyId: admin.companyId,
+    username: admin.username,
+  });
+
+  writeJson(res, 200, {
+    token,
+    company: {
+      companyId: admin.companyId,
+      name: getEmpresa(admin.companyId)?.name ?? admin.companyId,
+    },
+  });
+});
+
+addRoute('POST', '/api/admin/empresas/:companyId/admin', (req, res, params, body) => {
+  if (!isAdminRequest(req)) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
+    return;
+  }
+  if (!adminRateLimiter.allow(requestKey(req, `companyadmin:${params.companyId}`))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many attempts');
+    return;
+  }
+
+  const username = typeof body?.username === 'string'
+    ? body.username.trim().toLowerCase() : '';
+  const password = typeof body?.password === 'string' ? body.password : '';
+
+  if (!username || password.length < 8) {
+    writeError(res, 400, 'INVALID_ADMIN_CREDENTIALS', 'username and a password of at least 8 characters are required');
+    return;
+  }
+
+  ensureEmpresa(params.companyId);
+  const admin = createOrUpdateCompanyAdmin(params.companyId, username, hashSecret(password));
+  console.log(`[API] Admin ${admin.username} creado/actualizado para empresa ${params.companyId}`);
+
+  writeJson(res, 201, {
+    status: 'created',
+    companyId: params.companyId,
+    username: admin.username,
+  });
+});
+
+addRoute('GET', '/api/fleet/positions', (req, res) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+  writeJson(res, 200, {
+    companyId: auth.companyId,
+    buses: getFleetPositions(auth.companyId),
+  });
+});
+
+addRoute('POST', '/api/fleet/buses/:busId/visibility', (req, res, params, body) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+
+  const companyId = getBusCompanyId(params.busId);
+  if (!companyId || companyId !== auth.companyId) {
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found in this company');
+    return;
+  }
+
+  const visible = body?.visible;
+  if (typeof visible !== 'boolean') {
+    writeError(res, 400, 'INVALID_VISIBILITY', 'visible must be a boolean');
+    return;
+  }
+
+  const result = setBusVisibility(params.busId, visible);
+  if (!result) {
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
+    return;
+  }
+  console.log(`[API] Bus ${params.busId} ${result.visible ? 'visible' : 'oculto'} (empresa ${auth.companyId})`);
+  writeJson(res, 200, result);
 });
 
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {

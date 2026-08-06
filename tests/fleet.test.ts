@@ -1,0 +1,296 @@
+import assert from 'node:assert/strict';
+import { ChildProcess, spawn } from 'node:child_process';
+import test from 'node:test';
+
+import { io, Socket } from 'socket.io-client';
+
+const HTTP_PORT = 3130;
+const MQTT_PORT = 8891;
+const ADMIN_API_KEY = 'e2e-admin-key';
+const JWT_SECRET = 'e2e-jwt-secret';
+
+async function waitForReady(): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/ready`);
+      if (response.status === 200) return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error('Backend did not become ready');
+}
+
+function stopProcess(child: ChildProcess | undefined): Promise<void> {
+  if (!child || child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    child.once('exit', finish);
+    child.kill('SIGTERM');
+    setTimeout(() => {
+      child.kill('SIGKILL');
+      finish();
+    }, 3000);
+  });
+}
+
+function waitForSocketEvent(
+  socket: Socket,
+  event: string,
+  predicate: (payload: any) => boolean,
+  timeoutMs = 15_000,
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.off(event, listener);
+      reject(new Error(`Timed out waiting for Socket.io event ${event}`));
+    }, timeoutMs);
+
+    const listener = (payload: any) => {
+      if (!predicate(payload)) return;
+      clearTimeout(timer);
+      socket.off(event, listener);
+      resolve(payload);
+    };
+    socket.on(event, listener);
+  });
+}
+
+async function waitForSilence(
+  socket: Socket,
+  event: string,
+  predicate: (payload: any) => boolean,
+  ms: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onEvent = (payload: any) => {
+      if (!predicate(payload)) return;
+      clearTimeout(timer);
+      socket.off(event, onEvent);
+      reject(new Error(`Unexpected ${event} while expecting silence`));
+    };
+    const timer = setTimeout(() => {
+      socket.off(event, onEvent);
+      resolve();
+    }, ms);
+    socket.on(event, onEvent);
+  });
+}
+
+function connectSocket(extraAuth: Record<string, unknown> = {}): Socket {
+  const socket = io(`http://127.0.0.1:${HTTP_PORT}`, {
+    path: '/ws',
+    transports: ['websocket'],
+    autoConnect: false,
+    auth: extraAuth,
+  });
+  const connected = new Promise<void>((resolve, reject) => {
+    socket.once('connect', () => resolve());
+    socket.once('connect_error', reject);
+  });
+  socket.connect();
+  return socket;
+}
+
+async function waitForConnection(socket: Socket): Promise<void> {
+  if (socket.connected) return;
+  await new Promise<void>((resolve, reject) => {
+    socket.once('connect', () => resolve());
+    socket.once('connect_error', (err) => reject(err));
+  });
+}
+
+test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { timeout: 90_000 }, async () => {
+  const suffix = Date.now().toString().slice(-6);
+  const phone1 = `3001${suffix}`;
+  const phone2 = `3002${suffix}`;
+  const bus1 = `F1-${suffix}`;
+  const bus2 = `F2-${suffix}`;
+  const company1 = `EMP-A-${suffix}`;
+  const company2 = `EMP-B-${suffix}`;
+
+  const backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+    env: {
+      ...process.env,
+      HTTP_PORT: String(HTTP_PORT),
+      MQTT_PORT: String(MQTT_PORT),
+      JWT_SECRET,
+      ADMIN_API_KEY,
+      MQTT_DEBUG_LOGS: 'false',
+      YA_VIENE_DB_PATH: `/tmp/yaviene-fleet-${process.pid}.db`,
+    },
+    stdio: 'ignore',
+  });
+  let simulator: ChildProcess | undefined;
+  const sockets: Socket[] = [];
+
+  try {
+    await waitForReady();
+
+    async function provisionDriver(phone: string, busId: string, companyId: string) {
+      const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/drivers`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
+        body: JSON.stringify({
+          phoneNumber: phone,
+          name: 'Fleet Driver',
+          pin: '2468',
+          companyId,
+          busId,
+          routeId: 'R-101',
+        }),
+      });
+      assert.equal(res.status, 201);
+    }
+
+    async function createAdmin(companyId: string, username: string) {
+      const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/empresas/${companyId}/admin`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
+        body: JSON.stringify({ username, password: 'secret123' }),
+      });
+      assert.equal(res.status, 201);
+    }
+
+    async function adminLogin(username: string): Promise<{ token: string; companyId: string }> {
+      const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password: 'secret123' }),
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { token: string; company: { companyId: string } };
+      return { token: body.token, companyId: body.company.companyId };
+    }
+
+    async function toggleVisibility(token: string, busId: string, visible: boolean): Promise<number> {
+      const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses/${busId}/visibility`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ visible }),
+      });
+      return res.status;
+    }
+
+    async function fleetPositions(token: string): Promise<{ buses: any[] }> {
+      const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/positions`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      assert.equal(res.status, 200);
+      return res.json() as Promise<{ buses: any[] }>;
+    }
+
+    await provisionDriver(phone1, bus1, company1);
+    await provisionDriver(phone2, bus2, company2);
+    await createAdmin(company1, 'boss1');
+    await createAdmin(company2, 'boss2');
+    const admin1 = await adminLogin('boss1');
+    const admin2 = await adminLogin('boss2');
+
+    // Flota scoped: cada admin solo ve su empresa
+    const fleet1 = await fleetPositions(admin1.token);
+    assert.equal(fleet1.buses.length, 1);
+    assert.equal(fleet1.buses[0].busId, bus1);
+    assert.equal(fleet1.buses[0].visible, true);
+    const fleet2 = await fleetPositions(admin2.token);
+    assert.equal(fleet2.buses.length, 1);
+    assert.equal(fleet2.buses[0].busId, bus2);
+
+    // Aislamiento: admin de EMP-02 no puede togglear bus de EMP-01
+    assert.equal(await toggleVisibility(admin2.token, bus1, false), 404);
+
+    // Pasajero: se suscribe a R-101
+    const passenger = connectSocket();
+    sockets.push(passenger);
+    await waitForConnection(passenger);
+    const firstPosition = waitForSocketEvent(passenger, 'bus:position', (p) => p?.busId === bus1);
+    passenger.emit('subscribe:route', 'R-101');
+
+    // Conductor empieza a transmitir
+    simulator = spawn(process.execPath, ['scripts/simulate-bus.mjs'], {
+      env: {
+        ...process.env,
+        BACKEND_URL: `http://127.0.0.1:${HTTP_PORT}`,
+        MQTT_PORT: String(MQTT_PORT),
+        ADMIN_API_KEY,
+        PHONE: phone1,
+        PIN: '2468',
+        BUS_ID: bus1,
+        ROUTE_ID: 'R-101',
+        EMPRESA_ID: company1,
+        CAPTURE_INTERVAL_MS: '10000',
+        CAPTURE_BASE_LAG_MS: '60000',
+      },
+      stdio: 'ignore',
+    });
+
+    const position1 = await firstPosition;
+    assert.equal(position1.busId, bus1);
+
+    // Ocultar: el pasajero recibe bus:hidden y deja de recibir posiciones
+    const hiddenEvent = waitForSocketEvent(passenger, 'bus:hidden', (p) => p?.busId === bus1);
+    assert.equal(await toggleVisibility(admin1.token, bus1, false), 200);
+    const hidden = await hiddenEvent;
+    assert.equal(typeof hidden.eventId, 'string');
+    assert.equal(hidden.busId, bus1);
+
+    // Ventana que cubre la siguiente publicación del simulador (10s): debe quedar retenida
+    await waitForSilence(passenger, 'bus:position', (p) => p?.busId === bus1, 12_000);
+
+    // Carga inicial filtrada: re-suscribir ya no trae el bus oculto
+    const batch2 = new Promise<any>((resolve) => {
+      passenger.once('positions:batch', resolve);
+    });
+    passenger.emit('subscribe:route', 'R-101');
+    const batch = await batch2;
+    assert.equal(batch.buses.some((b: any) => b.busId === bus1), false);
+
+    // Mostrar: el pasajero recibe bus:visible con posición y vuelven las posiciones
+    const visibleEvent = waitForSocketEvent(passenger, 'bus:visible', (p) => p?.busId === bus1);
+    assert.equal(await toggleVisibility(admin1.token, bus1, true), 200);
+    const visible = await visibleEvent;
+    assert.equal(typeof visible.eventId, 'string');
+    assert.ok(visible.position?.busId === bus1, 'bus:visible debe incluir la posición');
+
+    const position2 = waitForSocketEvent(passenger, 'bus:position', (p) => p?.busId === bus1);
+    const revived = await position2;
+    assert.equal(revived.busId, bus1);
+
+    // Panel admin: sala admin recibe flota y cambios de visibilidad
+    const adminSocket = connectSocket({ token: admin1.token });
+    sockets.push(adminSocket);
+    await waitForConnection(adminSocket);
+    const fleetBatch = new Promise<any>((resolve) => {
+      adminSocket.once('fleet:batch', resolve);
+    });
+    adminSocket.emit('subscribe:fleet');
+    const fleet = await fleetBatch;
+    assert.equal(fleet.companyId, company1);
+    assert.ok(fleet.buses.some((b: any) => b.busId === bus1 && b.visible === true));
+
+    const adminHidden = waitForSocketEvent(adminSocket, 'bus:hidden', (p) => p?.busId === bus1);
+    assert.equal(await toggleVisibility(admin1.token, bus1, false), 200);
+    await adminHidden;
+
+    // Sin token de admin no se puede entrar a la sala de flota
+    const rogue = connectSocket();
+    sockets.push(rogue);
+    await waitForConnection(rogue);
+    rogue.emit('subscribe:fleet');
+    await new Promise<void>((resolve) => {
+      rogue.once('disconnect', () => resolve());
+      setTimeout(() => resolve(), 3000);
+    });
+    assert.equal(rogue.connected, false, 'cliente sin token de admin debe ser desconectado');
+
+  } finally {
+    for (const socket of sockets) socket.close();
+    await stopProcess(simulator);
+    await stopProcess(backend);
+  }
+});

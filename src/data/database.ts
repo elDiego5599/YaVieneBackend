@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 
 const DB_DIR = path.join(__dirname, '..', '..', 'data');
-const DB_PATH = path.join(DB_DIR, 'yaviene.db');
+const DB_PATH = process.env.YA_VIENE_DB_PATH || path.join(DB_DIR, 'yaviene.db');
 
 let db: Database.Database | null = null;
 
@@ -225,6 +225,36 @@ function initSchema(): void {
           FROM drivers
           WHERE bus_id IS NOT NULL AND company_id IS NOT NULL;
         `);
+      },
+    },
+    {
+      version: 6,
+      apply: () => {
+        ensureColumn(d, 'buses', 'visible', 'INTEGER NOT NULL DEFAULT 1');
+        d.exec(`
+          CREATE TABLE IF NOT EXISTS empresas (
+            company_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS empresa_admins (
+            admin_id TEXT PRIMARY KEY,
+            company_id TEXT NOT NULL,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (company_id) REFERENCES empresas(company_id)
+          );
+        `);
+        const now = Date.now();
+        d.prepare(`
+          INSERT OR IGNORE INTO empresas (company_id, name, created_at)
+          SELECT DISTINCT company_id, ? AS name, ? AS created_at
+          FROM buses WHERE company_id IS NOT NULL
+          UNION
+          SELECT DISTINCT company_id, ? AS name, ? AS created_at
+          FROM drivers WHERE company_id IS NOT NULL
+        `).run(now, now, now, now);
       },
     },
   ];

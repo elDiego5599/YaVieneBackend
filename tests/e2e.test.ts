@@ -72,6 +72,7 @@ test('conductor -> MQTT -> backend -> Socket.io -> bus:left', { timeout: 45_000 
       JWT_SECRET,
       ADMIN_API_KEY,
       MQTT_DEBUG_LOGS: 'false',
+      YA_VIENE_DB_PATH: `/tmp/yaviene-e2e-${process.pid}.db`,
     },
     stdio: 'ignore',
   });

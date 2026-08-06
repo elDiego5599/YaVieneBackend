@@ -1,5 +1,5 @@
 import { IncomingMessage } from 'http';
-import { TokenPayload, verifyToken } from './tokens';
+import { TokenPayload, verifyToken, AdminTokenPayload } from './tokens';
 import { getSession } from '../data/sessions';
 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
@@ -11,6 +11,11 @@ export function authenticateRequest(req: IncomingMessage): TokenPayload | null {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return null;
   return verifyToken(header.slice('Bearer '.length).trim());
+}
+
+export function authenticateCompanyAdmin(req: IncomingMessage): AdminTokenPayload | null {
+  const auth = authenticateRequest(req);
+  return auth?.role === 'admin' ? auth : null;
 }
 
 export function isAdminRequest(req: IncomingMessage): boolean {

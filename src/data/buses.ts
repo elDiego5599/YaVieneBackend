@@ -15,6 +15,23 @@ export interface BusPosition {
   sequence: number | null;
   eventId?: string;
   driverPhone: string;
+  companyId: string;
+  isGhost: boolean;
+}
+
+export interface FleetBus {
+  busId: string;
+  companyId: string;
+  routeId: string | null;
+  visible: boolean;
+  online: boolean;
+  lat: number | null;
+  lon: number | null;
+  heading: number | null;
+  speedKmh: number | null;
+  capturedAt: number | null;
+  receivedAt: number | null;
+  sequence: number | null;
   isGhost: boolean;
 }
 
@@ -42,9 +59,12 @@ interface PositionRow {
   captured_at: number | null;
   sequence: number | null;
   is_ghost: number;
+  bus_company_id?: string | null;
 }
 
 const driverCache = new Map<string, DriverInfo>();
+const visibilityCache = new Map<string, boolean>();
+const busCompanyCache = new Map<string, string>();
 
 function rowToPosition(row: PositionRow): BusPosition {
   return {
@@ -59,13 +79,127 @@ function rowToPosition(row: PositionRow): BusPosition {
     receivedAt: row.timestamp,
     sequence: row.sequence,
     driverPhone: row.driver_phone,
+    companyId: row.bus_company_id ?? '',
     isGhost: row.is_ghost === 1,
   };
 }
 
-export function toPublicPosition(position: BusPosition): Omit<BusPosition, 'driverPhone'> {
-  const { driverPhone: _driverPhone, ...publicPosition } = position;
+export function toPublicPosition(position: BusPosition): Omit<BusPosition, 'driverPhone' | 'companyId'> {
+  const { driverPhone: _driverPhone, companyId: _companyId, ...publicPosition } = position;
   return publicPosition;
+}
+
+export function loadVisibilityCache(): void {
+  const rows = getDb().prepare('SELECT bus_id, visible FROM buses').all() as {
+    bus_id: string;
+    visible: number;
+  }[];
+  visibilityCache.clear();
+  for (const row of rows) {
+    visibilityCache.set(row.bus_id, row.visible === 1);
+  }
+}
+
+export function loadBusCompanyCache(): void {
+  const rows = getDb().prepare('SELECT bus_id, company_id FROM buses').all() as {
+    bus_id: string;
+    company_id: string;
+  }[];
+  busCompanyCache.clear();
+  for (const row of rows) {
+    busCompanyCache.set(row.bus_id, row.company_id);
+  }
+}
+
+export function getBusCompanyId(busId: string): string | null {
+  const cached = busCompanyCache.get(busId);
+  if (cached !== undefined) return cached || null;
+  const row = getDb().prepare('SELECT company_id FROM buses WHERE bus_id = ?')
+    .get(busId) as { company_id: string } | undefined;
+  const value = row?.company_id ?? '';
+  busCompanyCache.set(busId, value);
+  return value || null;
+}
+
+export function getBusVisibility(busId: string): boolean {
+  const cached = visibilityCache.get(busId);
+  if (cached !== undefined) return cached;
+  const row = getDb().prepare('SELECT visible FROM buses WHERE bus_id = ?')
+    .get(busId) as { visible: number } | undefined;
+  const value = row?.visible !== 0;
+  visibilityCache.set(busId, value);
+  return value;
+}
+
+export function getFleetPositions(companyId: string): FleetBus[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT b.bus_id, b.company_id, b.visible,
+           p.route_id, p.lat, p.lon, p.heading, p.speed_kmh,
+           p.timestamp, p.captured_at, p.sequence, p.is_ghost
+    FROM buses b
+    LEFT JOIN positions p ON p.bus_id = b.bus_id
+    WHERE b.company_id = ?
+    ORDER BY b.bus_id ASC
+  `).all(companyId) as {
+    bus_id: string;
+    company_id: string;
+    visible: number;
+    route_id: string | null;
+    lat: number | null;
+    lon: number | null;
+    heading: number | null;
+    speed_kmh: number | null;
+    timestamp: number | null;
+    captured_at: number | null;
+    sequence: number | null;
+    is_ghost: number | null;
+  }[];
+
+  return rows.map((row) => ({
+    busId: row.bus_id,
+    companyId: row.company_id,
+    routeId: row.route_id,
+    visible: row.visible === 1,
+    online: row.timestamp != null,
+    lat: row.lat,
+    lon: row.lon,
+    heading: row.heading ?? 0,
+    speedKmh: row.speed_kmh ?? 0,
+    capturedAt: row.captured_at ?? row.timestamp,
+    receivedAt: row.timestamp,
+    sequence: row.sequence,
+    isGhost: row.is_ghost === 1,
+  }));
+}
+
+export function setBusVisibility(
+  busId: string,
+  visible: boolean,
+): { busId: string; routeId: string; visible: boolean } | null {
+  const companyId = getBusCompanyId(busId);
+  if (!companyId) return null;
+
+  const db = getDb();
+  const update = db.transaction(() => {
+    db.prepare('UPDATE buses SET visible = ?, updated_at = ? WHERE bus_id = ?')
+      .run(visible ? 1 : 0, Date.now(), busId);
+
+    const position = getPosition(busId);
+    const routeId = position?.routeId ?? '';
+    if (routeId) {
+      queueLifecycleEvent(db, visible ? 'bus:visible' : 'bus:hidden', routeId, {
+        busId,
+        routeId,
+        ...(visible && position ? { position: { ...position, visible } } : {}),
+      });
+    }
+  });
+  update();
+
+  visibilityCache.set(busId, visible);
+  busCompanyCache.set(busId, companyId);
+  return { busId, routeId: getPosition(busId)?.routeId ?? '', visible };
 }
 
 export function upsertPosition(phoneNumber: string, data: {
@@ -79,6 +213,7 @@ export function upsertPosition(phoneNumber: string, data: {
   capturedAt?: number;
   sequence?: number;
   driverValidated?: boolean;
+  companyId?: string;
 }): BusPosition | null {
   const db = getDb();
 
@@ -90,6 +225,7 @@ export function upsertPosition(phoneNumber: string, data: {
   if (!routeId) return null;
   const heading = data.heading ?? 0;
   const speedKmh = data.speedKmh ?? 0;
+  const companyId = data.companyId || driver?.companyId || '';
 
   const result = db.prepare(`
     INSERT INTO positions (
@@ -138,14 +274,19 @@ export function upsertPosition(phoneNumber: string, data: {
     receivedAt: now,
     sequence: data.sequence ?? null,
     driverPhone: phoneNumber,
+    companyId,
     isGhost: false,
   };
 }
 
 export function getPositionsByRoute(routeId: string): BusPosition[] {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM positions WHERE route_id = ?')
-    .all(routeId) as PositionRow[];
+  const rows = db.prepare(`
+    SELECT p.*, b.company_id AS bus_company_id
+    FROM positions p
+    LEFT JOIN buses b ON b.bus_id = p.bus_id
+    WHERE p.route_id = ? AND (b.visible = 1 OR b.visible IS NULL)
+  `).all(routeId) as PositionRow[];
   return rows.map(rowToPosition);
 }
 
@@ -227,8 +368,12 @@ export function removePositionOwned(busId: string, sessionId: string): BusPositi
 
 export function getPosition(busId: string): BusPosition | null {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM positions WHERE bus_id = ?')
-    .get(busId) as PositionRow | undefined;
+  const row = db.prepare(`
+    SELECT p.*, b.company_id AS bus_company_id
+    FROM positions p
+    LEFT JOIN buses b ON b.bus_id = p.bus_id
+    WHERE p.bus_id = ?
+  `).get(busId) as PositionRow | undefined;
   return row ? rowToPosition(row) : null;
 }
 
@@ -276,7 +421,11 @@ export function getPositionValidationState(busId: string): PositionValidationSta
 
 export function getAllPositions(): BusPosition[] {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM positions').all() as PositionRow[];
+  const rows = db.prepare(`
+    SELECT p.*, b.company_id AS bus_company_id
+    FROM positions p
+    LEFT JOIN buses b ON b.bus_id = p.bus_id
+  `).all() as PositionRow[];
   return rows.map(rowToPosition);
 }
 
