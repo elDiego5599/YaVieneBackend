@@ -140,6 +140,9 @@ setupSocketServer(server);
 // ── Sweep de ciclo de vida de buses (cada 10s) ──────────────────────
 const GHOST_MS = 30_000;
 const REMOVE_MS = 60_000;
+// En DEMO_MODE el sweep de ghost/removal está desactivado: durante las
+// pruebas los buses no se ponen grises ni desaparecen por inactividad.
+const DEMO_MODE = process.env.DEMO_MODE === '1';
 
 function emitLifecycleEvent(event: LifecycleEvent): void {
   if (event.eventType === 'bus:removed') {
@@ -189,7 +192,9 @@ function emitLifecycleEvent(event: LifecycleEvent): void {
 }
 
 const sweepTimer = setInterval(() => {
-  sweepPositions(GHOST_MS, REMOVE_MS);
+  if (!DEMO_MODE) {
+    sweepPositions(GHOST_MS, REMOVE_MS);
+  }
   dispatchLifecycleEvents(emitLifecycleEvent);
 }, 10_000);
 sweepTimer.unref();
