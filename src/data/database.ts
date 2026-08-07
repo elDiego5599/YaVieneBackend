@@ -249,12 +249,12 @@ function initSchema(): void {
         const now = Date.now();
         d.prepare(`
           INSERT OR IGNORE INTO empresas (company_id, name, created_at)
-          SELECT DISTINCT company_id, ? AS name, ? AS created_at
+          SELECT DISTINCT company_id, 'Terminal Central' AS name, ? AS created_at
           FROM buses WHERE company_id IS NOT NULL
           UNION
-          SELECT DISTINCT company_id, ? AS name, ? AS created_at
+          SELECT DISTINCT company_id, 'Terminal Central' AS name, ? AS created_at
           FROM drivers WHERE company_id IS NOT NULL
-        `).run(now, now, now, now);
+        `).run(now, now);
       },
     },
     {
@@ -284,6 +284,107 @@ function initSchema(): void {
         for (const row of rows) {
           assign.run(plates[i % plates.length], Date.now(), row.bus_id);
           i += 1;
+        }
+      },
+    },
+    {
+      version: 8,
+      apply: () => {
+        ensureColumn(d, 'buses', 'interno', 'TEXT');
+        d.exec(`
+          CREATE TABLE IF NOT EXISTS company_routes (
+            company_id TEXT NOT NULL,
+            route_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (company_id, route_id)
+          );
+        `);
+        const routeNames: Record<string, string> = {
+          'R-101': 'Tcherassi',
+          'R-102': 'Carrera 14 - Silencio',
+          'R-103': 'Vivero Paraíso',
+          'R-104': 'Carrera 50 - Paraiso',
+          'R-105': 'Carrera 54 - Uninorte',
+          'R-106': 'Calle 72 - Uninorte',
+          '101': 'Tcherassi',
+          '102': 'Carrera 14 - Silencio',
+          '103': 'Vivero Paraíso',
+        };
+        const derived = d.prepare(`
+          SELECT b.company_id AS company_id, COALESCE(p.route_id, b.route_id) AS route_id
+          FROM buses b
+          LEFT JOIN positions p ON p.bus_id = b.bus_id
+          WHERE COALESCE(p.route_id, b.route_id) IS NOT NULL
+        `).all() as { company_id: string; route_id: string }[];
+        const insertRoute = d.prepare(`
+          INSERT OR IGNORE INTO company_routes (company_id, route_id, name, created_at)
+          VALUES (?, ?, ?, ?)
+        `);
+        const now = Date.now();
+        for (const row of derived) {
+          insertRoute.run(
+            row.company_id,
+            row.route_id,
+            routeNames[row.route_id] ?? `Ruta ${row.route_id}`,
+            now,
+          );
+        }
+        const setCompanyName = d.prepare(
+          'UPDATE empresas SET name = ? WHERE company_id = ? AND (name IS NULL OR name GLOB \'[0-9]*\')',
+        );
+        setCompanyName.run('Terminal Central', 'EMP-01');
+        const buses = d.prepare('SELECT bus_id, company_id FROM buses ORDER BY bus_id ASC')
+          .all() as { bus_id: string; company_id: string }[];
+        const counters = new Map<string, number>();
+        const setInterno = d.prepare(
+          'UPDATE buses SET interno = ?, updated_at = ? WHERE bus_id = ?',
+        );
+        for (const bus of buses) {
+          const next = (counters.get(bus.company_id) ?? 0) + 1;
+          counters.set(bus.company_id, next);
+          setInterno.run(String(next).padStart(3, '0'), Date.now(), bus.bus_id);
+        }
+      },
+    },
+    {
+      version: 9,
+      apply: () => {
+        const sobusaRoutes: [string, string][] = [
+          ['R-101', 'Tcherassi'],
+          ['R-102', 'Carrera 14 - Silencio'],
+          ['R-103', 'Vivero Paraíso'],
+          ['R-104', 'Carrera 50 - Paraiso'],
+          ['R-105', 'Carrera 54 - Uninorte'],
+          ['R-106', 'Calle 72 - Uninorte'],
+        ];
+        const now = Date.now();
+        d.prepare('DELETE FROM company_routes WHERE company_id = \'EMP-01\'').run();
+        const insert = d.prepare(
+          'INSERT INTO company_routes (company_id, route_id, name, created_at) VALUES (?, ?, ?, ?)',
+        );
+        for (const [routeId, name] of sobusaRoutes) {
+          insert.run('EMP-01', routeId, name, now);
+        }
+      },
+    },
+    {
+      version: 10,
+      apply: () => {
+        const companies = d.prepare(
+          'SELECT DISTINCT company_id FROM buses WHERE route_id IS NULL OR route_id = \'\'',
+        ).all() as { company_id: string }[];
+        const firstRoute = d.prepare(
+          'SELECT route_id FROM company_routes WHERE company_id = ? ORDER BY route_id ASC LIMIT 1',
+        );
+        const assign = d.prepare(
+          'UPDATE buses SET route_id = ?, updated_at = ? WHERE company_id = ? AND (route_id IS NULL OR route_id = \'\')',
+        );
+        for (const company of companies) {
+          const row = firstRoute.get(company.company_id) as { route_id: string } | undefined;
+          if (row) {
+            assign.run(row.route_id, Date.now(), company.company_id);
+          }
         }
       },
     },

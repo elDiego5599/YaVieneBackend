@@ -15,6 +15,10 @@ import {
   updateBus,
   deleteBus,
   getCompanyRoutes,
+  addCompanyRoute,
+  removeCompanyRoute,
+  deleteAllBuses,
+  routeNameExists,
 } from '../data/buses';
 import { authenticateRequest, isAdminRequest, isDriverForBus, authenticateCompanyAdmin } from '../auth/http';
 import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords';
@@ -402,6 +406,60 @@ addRoute('GET', '/api/fleet/routes', (req, res) => {
   });
 });
 
+addRoute('POST', '/api/fleet/routes', (req, res, _params, body) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+  if (!adminRateLimiter.allow(requestKey(req, 'route:create'))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many route creation attempts');
+    return;
+  }
+
+  const routeId = typeof body?.routeId === 'string' ? body.routeId : '';
+  const name = typeof body?.name === 'string' ? body.name : '';
+
+  if (routeNameExists(auth.companyId, name)) {
+    writeError(res, 400, 'DUPLICATE_ROUTE', 'Ya existe una ruta con ese nombre');
+    return;
+  }
+
+  const route = addCompanyRoute(auth.companyId, routeId, name);
+  if (!route) {
+    writeError(res, 400, 'INVALID_ROUTE', 'routeId (ej. R-104) y name son obligatorios');
+    return;
+  }
+  console.log(`[API] Ruta ${route.routeId} creada para ${auth.companyId}: ${route.name}`);
+  writeJson(res, 201, { ...route, total: 0, online: 0 });
+});
+
+addRoute('DELETE', '/api/fleet/routes/:routeId', (req, res, params) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+  const removed = removeCompanyRoute(auth.companyId, params.routeId);
+  if (!removed) {
+    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found in this company');
+    return;
+  }
+  console.log(`[API] Ruta ${params.routeId} eliminada del catálogo de ${auth.companyId}`);
+  writeJson(res, 200, { status: 'deleted', routeId: params.routeId });
+});
+
+addRoute('DELETE', '/api/fleet/buses', (req, res) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+  const count = deleteAllBuses(auth.companyId);
+  console.log(`[API] Debug: todos los buses (${count}) de ${auth.companyId} eliminados`);
+  writeJson(res, 200, { status: 'deleted', count });
+});
+
 addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
@@ -415,10 +473,11 @@ addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
 
   const placa = typeof body?.placa === 'string' ? body.placa : '';
   const routeId = typeof body?.routeId === 'string' ? body.routeId : '';
+  const interno = typeof body?.interno === 'string' ? body.interno : '';
 
-  const bus = createBus(auth.companyId, placa, routeId);
+  const bus = createBus(auth.companyId, placa, routeId, interno);
   if (!bus) {
-    writeError(res, 400, 'INVALID_BUS_PLACA', 'placa must be a valid plate number (e.g. ABC123)');
+    writeError(res, 400, 'INVALID_BUS', 'Placa inválida o falta la ruta (ej. ABC123 + R-101)');
     return;
   }
   console.log(`[API] Bus ${bus.busId} creado (placa ${bus.placa}, ruta ${bus.routeId ?? '-'}) por ${auth.companyId}`);
@@ -440,8 +499,9 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
 
   const placa = typeof body?.placa === 'string' ? body.placa : undefined;
   const routeId = typeof body?.routeId === 'string' ? body.routeId : undefined;
+  const interno = typeof body?.interno === 'string' ? body.interno : undefined;
 
-  const bus = updateBus(params.busId, { placa, routeId });
+  const bus = updateBus(params.busId, { placa, routeId, interno });
   if (!bus) {
     writeError(res, 400, 'INVALID_BUS_PLACA', 'placa must be a valid plate number (e.g. ABC123)');
     return;

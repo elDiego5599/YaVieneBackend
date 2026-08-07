@@ -24,6 +24,7 @@ export interface FleetBus {
   companyId: string;
   routeId: string | null;
   placa: string;
+  interno: string;
   driverName: string | null;
   visible: boolean;
   online: boolean;
@@ -136,7 +137,7 @@ export function getBusVisibility(busId: string): boolean {
 export function getFleetPositions(companyId: string): FleetBus[] {
   const db = getDb();
   const rows = db.prepare(`
-    SELECT b.bus_id, b.company_id, b.visible, b.plate_number, b.route_id AS bus_route_id,
+    SELECT b.bus_id, b.company_id, b.visible, b.plate_number, b.interno, b.route_id AS bus_route_id,
            p.route_id, p.lat, p.lon, p.heading, p.speed_kmh,
            p.timestamp, p.captured_at, p.sequence, p.is_ghost,
            d.name AS driver_name
@@ -150,6 +151,7 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     company_id: string;
     visible: number;
     plate_number: string | null;
+    interno: string | null;
     bus_route_id: string | null;
     route_id: string | null;
     lat: number | null;
@@ -168,6 +170,7 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     companyId: row.company_id,
     routeId: row.route_id ?? row.bus_route_id,
     placa: row.plate_number ?? row.bus_id,
+    interno: row.interno ?? '',
     driverName: row.driver_name,
     visible: row.visible === 1,
     online: row.timestamp != null,
@@ -186,28 +189,40 @@ export function createBus(
   companyId: string,
   placa: string,
   routeId: string,
+  interno?: string,
 ): FleetBus | null {
   const normalized = normalizePlaca(placa);
   if (!normalized) return null;
+  if (!routeId || !routeId.trim()) return null;
   const busId = busIdFromPlaca(normalized);
   const now = Date.now();
   const db = getDb();
+
+  const existing = db.prepare('SELECT interno FROM buses WHERE bus_id = ?')
+    .get(busId) as { interno: string | null } | undefined;
+  const resolvedInterno = (interno ?? '').trim()
+    || existing?.interno
+    || String((db.prepare('SELECT COUNT(*) AS c FROM buses WHERE company_id = ?')
+        .get(companyId) as { c: number }).c + 1).padStart(3, '0');
+
   const insert = db.prepare(`
-    INSERT INTO buses (bus_id, company_id, plate_number, route_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO buses (bus_id, company_id, plate_number, route_id, interno, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(bus_id) DO UPDATE SET
       company_id = excluded.company_id,
       plate_number = excluded.plate_number,
       route_id = excluded.route_id,
+      interno = excluded.interno,
       updated_at = excluded.updated_at
   `);
-  insert.run(busId, companyId, normalized, routeId || null, now, now);
+  insert.run(busId, companyId, normalized, routeId || null, resolvedInterno, now, now);
   busCompanyCache.set(busId, companyId);
   return {
     busId,
     companyId,
     routeId: routeId || null,
     placa: normalized,
+    interno: resolvedInterno,
     driverName: null,
     visible: true,
     online: false,
@@ -224,7 +239,7 @@ export function createBus(
 
 export function updateBus(
   busId: string,
-  changes: { placa?: string; routeId?: string | null },
+  changes: { placa?: string; routeId?: string | null; interno?: string },
 ): FleetBus | null {
   const companyId = getBusCompanyId(busId);
   if (!companyId) return null;
@@ -236,6 +251,7 @@ export function updateBus(
     if (!newPlaca) return null;
   }
   const routeId = changes.routeId !== undefined ? changes.routeId : null;
+  const interno = changes.interno !== undefined ? changes.interno.trim() : null;
 
   const dbUpdate = db.transaction(() => {
     if (newPlaca) {
@@ -245,6 +261,10 @@ export function updateBus(
     if (routeId !== null) {
       db.prepare('UPDATE buses SET route_id = ?, updated_at = ? WHERE bus_id = ?')
         .run(routeId || null, Date.now(), busId);
+    }
+    if (interno !== null) {
+      db.prepare('UPDATE buses SET interno = ?, updated_at = ? WHERE bus_id = ?')
+        .run(interno, Date.now(), busId);
     }
   });
   dbUpdate();
@@ -283,6 +303,43 @@ export function deleteBus(busId: string): { busId: string; routeId: string | nul
   return { busId, routeId };
 }
 
+export function deleteAllBuses(companyId: string): number {
+  const db = getDb();
+  const remove = db.transaction(() => {
+    const buses = db.prepare('SELECT bus_id FROM buses WHERE company_id = ?')
+      .all(companyId) as { bus_id: string }[];
+    for (const bus of buses) {
+      const pos = db.prepare(
+        'SELECT route_id FROM positions WHERE bus_id = ? LIMIT 1',
+      ).get(bus.bus_id) as { route_id: string } | undefined;
+      const busRow = db.prepare(
+        'SELECT route_id FROM buses WHERE bus_id = ?',
+      ).get(bus.bus_id) as { route_id: string | null } | undefined;
+      const routeId = pos?.route_id ?? busRow?.route_id ?? null;
+      if (routeId) {
+        queueLifecycleEvent(db, 'bus:removed', routeId, {
+          busId: bus.bus_id,
+          routeId,
+        });
+      }
+    }
+    db.prepare('DELETE FROM positions WHERE bus_id IN (SELECT bus_id FROM buses WHERE company_id = ?)').run(companyId);
+    db.prepare('DELETE FROM turn_assignments WHERE bus_id IN (SELECT bus_id FROM buses WHERE company_id = ?)').run(companyId);
+    db.prepare('DELETE FROM buses WHERE company_id = ?').run(companyId);
+    return buses.length;
+  });
+  const count = remove();
+
+  const toClear = [...busCompanyCache.entries()]
+    .filter(([, c]) => c === companyId)
+    .map(([busId]) => busId);
+  for (const busId of toClear) {
+    busCompanyCache.delete(busId);
+    visibilityCache.delete(busId);
+  }
+  return count;
+}
+
 export function normalizePlaca(placa: string): string | null {
   const cleaned = placa.trim().toUpperCase().replace(/\s+/g, '');
   if (!/^[A-Z0-9]{4,10}$/.test(cleaned)) return null;
@@ -294,12 +351,12 @@ export function busIdFromPlaca(placa: string): string {
 }
 
 const routeNameMap: Record<string, string> = {
-  'R-101': 'Ruta 1 · Centro – Soledad',
-  'R-102': 'Ruta 2 · Murillo – Terminal',
-  'R-103': 'Ruta 3 · La Playa – Portal',
-  '101': 'Ruta 1 · Centro – Soledad',
-  '102': 'Ruta 2 · Murillo – Terminal',
-  '103': 'Ruta 3 · La Playa – Portal',
+  'R-101': 'Tcherassi',
+  'R-102': 'Carrera 14 - Silencio',
+  'R-103': 'Vivero Paraíso',
+  'R-104': 'Carrera 50 - Paraiso',
+  'R-105': 'Carrera 54 - Uninorte',
+  'R-106': 'Calle 72 - Uninorte',
 };
 
 export function getCompanyRoutes(companyId: string): {
@@ -309,26 +366,122 @@ export function getCompanyRoutes(companyId: string): {
   online: number;
 }[] {
   const db = getDb();
-  const rows = db.prepare(`
+  const derived = db.prepare(`
     SELECT COALESCE(p.route_id, b.route_id) AS route_id,
            COUNT(DISTINCT b.bus_id) AS total,
            SUM(CASE WHEN p.bus_id IS NOT NULL THEN 1 ELSE 0 END) AS online
     FROM buses b
     LEFT JOIN positions p ON p.bus_id = b.bus_id
-    WHERE b.company_id = ?
+    WHERE b.company_id = ? AND COALESCE(p.route_id, b.route_id) IS NOT NULL
     GROUP BY COALESCE(p.route_id, b.route_id)
-    HAVING COALESCE(p.route_id, b.route_id) IS NOT NULL
+  `).all(companyId) as { route_id: string; total: number; online: number }[];
+  const catalog = db.prepare(`
+    SELECT route_id, name FROM company_routes
+    WHERE company_id = ?
     ORDER BY route_id ASC
-  `).all(companyId) as { route_id: string | null; total: number; online: number }[];
+  `).all(companyId) as { route_id: string; name: string }[];
 
-  return rows
-    .filter((r) => r.route_id !== null)
-    .map((r) => ({
-      routeId: r.route_id as string,
-      name: routeNameMap[r.route_id as string] ?? `Ruta ${r.route_id}`,
-      total: r.total,
-      online: r.online ?? 0,
-    }));
+  const totals = new Map(derived.map((r) => [r.route_id, r]));
+  const byId = new Map(catalog.map((r) => [r.route_id, r.name]));
+  const seen = new Set<string>();
+  const merged: { routeId: string; name: string; total: number; online: number }[] = [];
+
+  for (const route of catalog) {
+    seen.add(route.route_id);
+    merged.push({
+      routeId: route.route_id,
+      name: route.name,
+      total: totals.get(route.route_id)?.total ?? 0,
+      online: totals.get(route.route_id)?.online ?? 0,
+    });
+  }
+  for (const row of derived) {
+    if (seen.has(row.route_id)) continue;
+    merged.push({
+      routeId: row.route_id,
+      name: byId.get(row.route_id) ?? routeNameMap[row.route_id] ?? `Ruta ${row.route_id}`,
+      total: row.total,
+      online: row.online ?? 0,
+    });
+  }
+  return merged;
+}
+
+export function routeNameExists(companyId: string, name: string): boolean {
+  const db = getDb();
+  const cleaned = name.trim().toLowerCase();
+  if (!cleaned) return false;
+  const inCatalog = db.prepare(
+    'SELECT 1 FROM company_routes WHERE company_id = ? AND LOWER(name) = ? LIMIT 1',
+  ).get(companyId, cleaned);
+  if (inCatalog) return true;
+  const derived = db.prepare(`
+    SELECT COALESCE(p.route_id, b.route_id) AS route_id
+    FROM buses b
+    LEFT JOIN positions p ON p.bus_id = b.bus_id
+    WHERE b.company_id = ? AND COALESCE(p.route_id, b.route_id) IS NOT NULL
+  `).all(companyId) as { route_id: string }[];
+  return derived.some((r) => {
+    const fallback = routeNameMap[r.route_id] ?? `Ruta ${r.route_id}`;
+    return fallback.toLowerCase() === cleaned;
+  });
+}
+
+export function addCompanyRoute(
+  companyId: string,
+  routeId: string,
+  name: string,
+): { routeId: string; name: string } | null {
+  const cleanedName = name.trim();
+  if (!cleanedName) return null;
+  let cleanedId = routeId.trim().toUpperCase();
+  if (!cleanedId) {
+    const last = getDb().prepare(
+      'SELECT route_id FROM company_routes WHERE company_id = ? ORDER BY route_id DESC LIMIT 1',
+    ).get(companyId) as { route_id: string } | undefined;
+    const match = last?.route_id.match(/^R-(\d+)$/);
+    const next = match ? parseInt(match[1], 10) + 1 : 1;
+    cleanedId = `R-${String(next).padStart(3, '0')}`;
+  }
+  if (!/^[A-Z0-9-]{2,20}$/.test(cleanedId)) return null;
+  getDb().prepare(`
+    INSERT INTO company_routes (company_id, route_id, name, created_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(company_id, route_id) DO UPDATE SET name = excluded.name
+  `).run(companyId, cleanedId, cleanedName, Date.now());
+  return { routeId: cleanedId, name: cleanedName };
+}
+
+export function removeCompanyRoute(companyId: string, routeId: string): boolean {
+  const db = getDb();
+  const remove = db.transaction(() => {
+    const result = db.prepare(
+      'DELETE FROM company_routes WHERE company_id = ? AND route_id = ?',
+    ).run(companyId, routeId);
+    if (result.changes === 0) return false;
+
+    const busIds = (db.prepare(
+      'SELECT bus_id FROM buses WHERE company_id = ? AND route_id = ?',
+    ).all(companyId, routeId) as { bus_id: string }[]).map((r) => r.bus_id);
+
+    if (busIds.length > 0) {
+      const fallback = db.prepare(
+        'SELECT route_id FROM company_routes WHERE company_id = ? ORDER BY route_id ASC LIMIT 1',
+      ).get(companyId) as { route_id: string } | undefined;
+      const fallbackId = fallback?.route_id ?? 'R-101';
+      db.prepare(
+        'UPDATE buses SET route_id = ?, updated_at = ? WHERE company_id = ? AND route_id = ?',
+      ).run(fallbackId, Date.now(), companyId, routeId);
+      const setPositionRoute = db.prepare(
+        'UPDATE positions SET route_id = ? WHERE bus_id = ?',
+      );
+      for (const busId of busIds) {
+        setPositionRoute.run(fallbackId, busId);
+      }
+    }
+    return true;
+  });
+  return remove();
 }
 
 export function setBusVisibility(
