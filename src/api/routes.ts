@@ -20,6 +20,7 @@ import {
   removeCompanyRoute,
   deleteAllBuses,
   routeNameExists,
+  getCompanyBuses,
 } from '../data/buses';
 import { authenticateRequest, isAdminRequest, isDriverForBus, authenticateCompanyAdmin } from '../auth/http';
 import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords';
@@ -116,20 +117,18 @@ addRoute('GET', '/api/companies', (_req, res) => {
 });
 
 addRoute('GET', '/api/companies/:id/routes', (_req, res, params) => {
-  const allRoutes: Record<string, { id: string; name: string; companyId: string }[]> = {
-    '1': [
-      { id: '101', name: 'Ruta 1 - Centro/Soledad', companyId: '1' },
-      { id: '102', name: 'Ruta 2 - Murillo/Terminal', companyId: '1' },
-    ],
-    '2': [
-      { id: '201', name: 'Ruta 5 - Riomar/Abello', companyId: '2' },
-    ],
-    '3': [
-      { id: '301', name: 'Troncal - Portal/Caribe', companyId: '3' },
-    ],
-  };
-  const routes = allRoutes[params.id] ?? [];
+  const routes = getCompanyRoutes(params.id).map((route) => ({
+    id: route.routeId,
+    name: route.name,
+    companyId: params.id,
+    total: route.total,
+    online: route.online,
+  }));
   writeJson(res, 200, routes);
+});
+
+addRoute('GET', '/api/companies/:id/buses', (_req, res, params) => {
+  writeJson(res, 200, getCompanyBuses(params.id));
 });
 
 addRoute('GET', '/api/routes/:routeId/positions', (_req, res, params) => {
@@ -288,11 +287,77 @@ addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
   });
 });
 
+const DEMO_MODE = process.env.DEMO_MODE === '1';
+
+addRoute('POST', '/api/demo/session', (req, res, _params, body) => {
+  if (!DEMO_MODE) {
+    writeError(res, 404, 'NOT_FOUND', 'Endpoint not found');
+    return;
+  }
+  if (!adminRateLimiter.allow(requestKey(req, 'demo-session'))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many demo session requests');
+    return;
+  }
+
+  const companyId = typeof body?.companyId === 'string' ? body.companyId : '';
+  const busId = typeof body?.busId === 'string' ? body.busId : '';
+  const routeId = typeof body?.routeId === 'string' ? body.routeId : '';
+
+  if (!companyId || !busId || !routeId) {
+    writeError(res, 400, 'INVALID_DEMO_SESSION', 'companyId, busId and routeId are required');
+    return;
+  }
+
+  const busCompany = getBusCompanyId(busId);
+  if (!busCompany || busCompany !== companyId) {
+    writeError(res, 403, 'BUS_FORBIDDEN', 'The bus does not belong to this company');
+    return;
+  }
+  const route = getCompanyRoutes(companyId).find((r) => r.routeId === routeId);
+  if (!route) {
+    writeError(res, 404, 'ROUTE_NOT_FOUND', 'The route does not belong to this company');
+    return;
+  }
+
+  const phoneNumber = `demo:${busId}`;
+  const driver = registerDriver(phoneNumber, 'Demo Sobusa', routeId, {
+    companyId,
+    busId,
+    pinHash: hashPin('1234'),
+  });
+  revokeSessionsForDriver(driver.driverId);
+
+  const sessionId = randomUUID();
+  const token = signToken({
+    sub: driver.driverId,
+    driverId: driver.driverId,
+    phoneNumber,
+    role: 'driver',
+    companyId,
+    busId,
+    routeId,
+    sessionId,
+  });
+
+  createDriverSession({
+    sessionId,
+    driverId: driver.driverId,
+    phoneNumber,
+    companyId,
+    busId,
+    routeId,
+  });
+
+  writeJson(res, 200, {
+    driver: publicDriver(driver),
+    token,
+  });
+});
+
 addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
   const username = typeof body?.username === 'string'
     ? body.username.trim().toLowerCase() : '';
   const password = typeof body?.password === 'string' ? body.password : '';
-
   if (!loginRateLimiter.allow(requestKey(req, `adminlogin:${username || 'unknown'}`))) {
     writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
     return;
@@ -504,7 +569,7 @@ addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
 
   const bus = createBus(auth.companyId, placa, routeId, interno);
   if (!bus) {
-    writeError(res, 400, 'INVALID_BUS', 'Placa inválida o falta la ruta (ej. ABC123 + R-101)');
+    writeError(res, 400, 'INVALID_BUS', 'Placa inválida (3 letras + 3 números, ej. ABC123) o falta la ruta (ej. R-101)');
     return;
   }
   console.log(`[API] Bus ${bus.busId} creado (placa ${bus.placa}, ruta ${bus.routeId ?? '-'}) por ${auth.companyId}`);
@@ -530,7 +595,7 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
 
   const bus = updateBus(params.busId, { placa, routeId, interno });
   if (!bus) {
-    writeError(res, 400, 'INVALID_BUS_PLACA', 'placa must be a valid plate number (e.g. ABC123)');
+    writeError(res, 400, 'INVALID_BUS_PLACA', 'placa must be 3 letters followed by 3 numbers (e.g. ABC123)');
     return;
   }
   console.log(`[API] Bus ${bus.busId} actualizado (placa ${bus.placa}, ruta ${bus.routeId ?? '-'})`);

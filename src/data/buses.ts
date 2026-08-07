@@ -206,8 +206,8 @@ export function createBus(
         .get(companyId) as { c: number }).c + 1).padStart(3, '0');
 
   const insert = db.prepare(`
-    INSERT INTO buses (bus_id, company_id, plate_number, route_id, interno, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO buses (bus_id, company_id, plate_number, route_id, interno, visible, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?)
     ON CONFLICT(bus_id) DO UPDATE SET
       company_id = excluded.company_id,
       plate_number = excluded.plate_number,
@@ -224,7 +224,7 @@ export function createBus(
     placa: normalized,
     interno: resolvedInterno,
     driverName: null,
-    visible: true,
+    visible: false,
     online: false,
     lat: null,
     lon: null,
@@ -342,7 +342,7 @@ export function deleteAllBuses(companyId: string): number {
 
 export function normalizePlaca(placa: string): string | null {
   const cleaned = placa.trim().toUpperCase().replace(/\s+/g, '');
-  if (!/^[A-Z0-9]{4,10}$/.test(cleaned)) return null;
+  if (!/^[A-Z]{3}[0-9]{3}$/.test(cleaned)) return null;
   return cleaned;
 }
 
@@ -405,6 +405,35 @@ export function getCompanyRoutes(companyId: string): {
     });
   }
   return merged;
+}
+
+export function getCompanyBuses(companyId: string): {
+  busId: string;
+  placa: string;
+  routeId: string | null;
+  interno: string;
+  visible: boolean;
+}[] {
+  const rows = getDb().prepare(`
+    SELECT bus_id, plate_number, route_id, interno, visible
+    FROM buses
+    WHERE company_id = ?
+    ORDER BY interno ASC, bus_id ASC
+  `).all(companyId) as {
+    bus_id: string;
+    plate_number: string | null;
+    route_id: string | null;
+    interno: string | null;
+    visible: number;
+  }[];
+
+  return rows.map((row) => ({
+    busId: row.bus_id,
+    placa: row.plate_number ?? row.bus_id,
+    routeId: row.route_id,
+    interno: row.interno ?? '',
+    visible: row.visible === 1,
+  }));
 }
 
 export function routeNameExists(companyId: string, name: string, excludeRouteId?: string): boolean {
