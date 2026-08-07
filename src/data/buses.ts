@@ -569,6 +569,16 @@ export function setBusVisibility(
   return { busId, routeId: getPosition(busId)?.routeId ?? '', visible };
 }
 
+export function setAllBusVisibility(companyId: string, visible: boolean): number {
+  const db = getDb();
+  const buses = db.prepare('SELECT bus_id FROM buses WHERE company_id = ?')
+    .all(companyId) as { bus_id: string }[];
+  for (const bus of buses) {
+    setBusVisibility(bus.bus_id, visible);
+  }
+  return buses.length;
+}
+
 export function upsertPosition(phoneNumber: string, data: {
   busId: string;
   routeId?: string;

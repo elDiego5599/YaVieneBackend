@@ -11,6 +11,7 @@ import {
   getFleetPositions,
   getBusCompanyId,
   setBusVisibility,
+  setAllBusVisibility,
   createBus,
   updateBus,
   deleteBus,
@@ -460,6 +461,24 @@ addRoute('POST', '/api/fleet/buses/:busId/visibility', (req, res, params, body) 
   }
   console.log(`[API] Bus ${params.busId} ${result.visible ? 'visible' : 'oculto'} (empresa ${auth.companyId})`);
   writeJson(res, 200, result);
+});
+
+addRoute('POST', '/api/fleet/buses/visibility', (req, res, _params, body) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+
+  const visible = body?.visible;
+  if (typeof visible !== 'boolean') {
+    writeError(res, 400, 'INVALID_VISIBILITY', 'visible must be a boolean');
+    return;
+  }
+
+  const count = setAllBusVisibility(auth.companyId, visible);
+  console.log(`[API] ${count} buses ${visible ? 'visibles' : 'ocultos'} (empresa ${auth.companyId})`);
+  writeJson(res, 200, { count });
 });
 
 addRoute('GET', '/api/fleet/routes', (req, res) => {
