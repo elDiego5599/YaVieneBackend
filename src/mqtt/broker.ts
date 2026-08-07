@@ -9,7 +9,7 @@ import {
   MQTT_TLS_KEY_PATH,
 } from '../config';
 import { DriverTokenPayload, verifyToken } from '../auth/tokens';
-import { claimSession, isSessionAuthorized, releaseSession } from '../data/sessions';
+import { claimSession, getSession, isSessionAuthorized, releaseSession } from '../data/sessions';
 import { incrementMetric } from '../observability/metrics';
 
 // ── Patch anti-desbordamiento de pila: mqemitter drena su cola de forma
@@ -102,6 +102,23 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
     const driverPayload = payload as DriverTokenPayload;
 
     if (!claimSession(driverPayload.sessionId, client.id)) {
+      // La sesión está "reclamada" por otro cliente. Si ese dueño ya está
+      // cerrado (conexión muerta que aedes aún no depuró), robamos el claim
+      // para que el reconexión del conductor sea inmediata en vez de esperar
+      // el timeout de keepalive (~15s de rechazos).
+      const ownedBy = getSession(driverPayload.sessionId)?.clientId ?? null;
+      if (ownedBy) {
+        const owner = (broker.clients as Record<string, any> | undefined)?.[ownedBy];
+        if (!owner || owner.closed) {
+          releaseSession(driverPayload.sessionId, ownedBy);
+          if (claimSession(driverPayload.sessionId, client.id)) {
+            (client as any).authPayload = driverPayload;
+            incrementMetric('mqtt.auth.accepted');
+            console.log(`[MQTT] Auth OK (claim robado): ${driverPayload.phoneNumber} (bus ${driverPayload.busId})`);
+            return callback(null, true);
+          }
+        }
+      }
       incrementMetric('mqtt.auth.rejected_session');
       console.warn(`[MQTT] Session rejected for client ${client.id}: already owned or revoked`);
       return callback(null, false);
