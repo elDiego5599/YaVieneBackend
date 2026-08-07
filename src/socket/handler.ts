@@ -14,7 +14,25 @@ import { incrementMetric } from '../observability/metrics';
 let io: Server | null = null;
 const pendingPositions = new Map<string, Map<string, BusPosition>>();
 const flushTimers = new Map<string, NodeJS.Timeout>();
-const SOCKET_FLUSH_MS = 200;
+const SOCKET_FLUSH_MS = 100;
+const latencySamples: number[] = [];
+let lastLatencyReport = Date.now();
+const LATENCY_REPORT_MS = 10_000;
+
+function sampleEmitLatency(position: BusPosition): void {
+  const delay = Date.now() - position.receivedAt;
+  if (delay >= 0) latencySamples.push(delay);
+  if (Date.now() - lastLatencyReport >= LATENCY_REPORT_MS && latencySamples.length) {
+    const sorted = [...latencySamples].sort((a, b) => a - b);
+    const avg = latencySamples.reduce((a, b) => a + b, 0) / latencySamples.length;
+    console.log(
+      `[LATENCY] n=${latencySamples.length} avg=${avg.toFixed(0)}ms p50=${sorted[Math.floor(sorted.length * 0.5)]}ms ` +
+      `p95=${sorted[Math.floor(sorted.length * 0.95)]}ms max=${sorted[sorted.length - 1]}ms`,
+    );
+    latencySamples.length = 0;
+    lastLatencyReport = Date.now();
+  }
+}
 
 function adminFromHandshake(auth: unknown): AdminTokenPayload | null {
   const token = (auth as { token?: string } | undefined)?.token;
@@ -124,7 +142,23 @@ export function broadcastBusPosition(busData: BusPosition, immediate = false): v
     pendingPositions.delete(busData.routeId);
     if (!pending || !io) return;
 
+    if (pending.size > 1) {
+      const positions = [...pending.values()].map(toPublicPosition);
+      io.to(`route:${busData.routeId}`).emit('positions:update', {
+        routeId: busData.routeId,
+        buses: positions,
+      });
+      for (const position of pending.values()) {
+        sampleEmitLatency(position);
+        const posCompanyId = position.companyId || getBusCompanyId(position.busId) || '';
+        if (posCompanyId) io.to(`admin:${posCompanyId}`).emit('bus:position', position);
+      }
+      incrementMetric('socket.position.batched');
+      return;
+    }
+
     for (const position of pending.values()) {
+      sampleEmitLatency(position);
       io.to(`route:${position.routeId}`).emit('bus:position', toPublicPosition(position));
       const posCompanyId = position.companyId || getBusCompanyId(position.busId) || '';
       if (posCompanyId) io.to(`admin:${posCompanyId}`).emit('bus:position', position);

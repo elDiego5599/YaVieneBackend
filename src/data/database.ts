@@ -17,6 +17,9 @@ export function getDb(): Database.Database {
     db.pragma('foreign_keys = ON');
     db.pragma('busy_timeout = 5000');
     initSchema();
+    db.prepare(`
+      UPDATE driver_sessions SET client_id = NULL WHERE status = 'active'
+    `).run();
     console.log(`[DB] SQLite abierta en ${DB_PATH} (WAL mode)`);
   }
   return db;

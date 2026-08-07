@@ -14,16 +14,33 @@ import { incrementMetric } from '../observability/metrics';
 
 let brokerReady = false;
 let brokerServer: Server | null = null;
+let sessionSweepTimer: NodeJS.Timeout | null = null;
+const SESSION_SWEEP_MS = 5_000;
 
 export function isBrokerReady(): boolean {
   return brokerReady;
 }
 
 export function closeBroker(): Promise<void> {
+  if (sessionSweepTimer) {
+    clearInterval(sessionSweepTimer);
+    sessionSweepTimer = null;
+  }
   if (!brokerServer) return Promise.resolve();
   const server = brokerServer;
   brokerServer = null;
   return new Promise((resolve) => server.close(() => resolve()));
+}
+
+function forceCloseClient(broker: any, client: any, reason: string): void {
+  try {
+    if (client && !client.closed) {
+      console.warn(`[MQTT] Closing client ${client.id}: ${reason}`);
+      client.close(() => {});
+    }
+  } catch (err) {
+    console.warn(`[MQTT] Failed to close client ${client?.id}: ${(err as Error).message}`);
+  }
 }
 
 export interface PositionHandlingResult {
@@ -81,12 +98,14 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
     if (!payload) {
       incrementMetric('mqtt.publish.rejected_no_auth');
       console.warn(`[MQTT] authorizePublish: no authPayload for client ${client.id}`);
+      forceCloseClient(broker, client, 'publish sin authPayload');
       return callback(null, false);
     }
 
     if (!isSessionAuthorized(payload.sessionId, client.id)) {
       incrementMetric('mqtt.publish.rejected_session');
       console.warn(`[MQTT] Session no longer authorized for client ${client.id}`);
+      forceCloseClient(broker, client, 'sesión revocada o reclamada por otro dispositivo');
       return callback(null, false);
     }
 
@@ -96,7 +115,8 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
     }
     if (topic !== expectedTopic) {
       incrementMetric('mqtt.publish.rejected_topic');
-      console.warn(`[MQTT] Unauthorized publish by ${payload.phoneNumber} to ${topic} (expected ${expectedTopic})`);
+      console.warn(`[MQTT] TOPIC HIJACKING: ${payload.phoneNumber} (bus ${payload.busId}) intentó publicar a ${topic}`);
+      forceCloseClient(broker, client, `topic hijacking: ${topic}`);
       return callback(null, false);
     }
 
@@ -184,6 +204,22 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
       onDisconnect(client.id as string, authPayload);
     }
   });
+
+  // ── Sweep de sesiones: cierra clientes cuya sesión fue revocada (2º celular) ──
+  sessionSweepTimer = setInterval(() => {
+    for (const client of Object.values(broker.clients as Record<string, any>)) {
+      const payload = client?.authPayload as DriverTokenPayload | undefined;
+      if (!payload) continue;
+      if (client.closed) continue;
+      if (!isSessionAuthorized(payload.sessionId, client.id)) {
+        forceCloseClient(
+          broker,
+          client,
+          `sesión revocada (${payload.phoneNumber} inició en otro dispositivo o fue expulsada)`,
+        );
+      }
+    }
+  }, SESSION_SWEEP_MS);
 
   const server = MQTT_TLS_CERT_PATH && MQTT_TLS_KEY_PATH
     ? createTlsServer({
