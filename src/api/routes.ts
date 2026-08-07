@@ -22,6 +22,7 @@ import {
   routeNameExists,
   getCompanyBuses,
 } from '../data/buses';
+import { getEmpresas } from '../data/empresas';
 import { authenticateRequest, isAdminRequest, isDriverForBus, authenticateCompanyAdmin } from '../auth/http';
 import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
@@ -108,11 +109,10 @@ addRoute('GET', '/api/ready', (_req, res) => {
 });
 
 addRoute('GET', '/api/companies', (_req, res) => {
-  const companies = [
-    { id: '1', name: 'Coolitoral S.A.' },
-    { id: '2', name: 'Metrocaribe Ltda.' },
-    { id: '3', name: 'Transcaribe S.A.S.' },
-  ];
+  const companies = getEmpresas().map((company) => ({
+    id: company.companyId,
+    name: company.name,
+  }));
   writeJson(res, 200, companies);
 });
 
@@ -121,6 +121,8 @@ addRoute('GET', '/api/companies/:id/routes', (_req, res, params) => {
     id: route.routeId,
     name: route.name,
     companyId: params.id,
+    terminalA: route.terminalA,
+    terminalB: route.terminalB,
     total: route.total,
     online: route.online,
   }));

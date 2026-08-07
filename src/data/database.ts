@@ -391,6 +391,30 @@ function initSchema(): void {
         }
       },
     },
+    {
+      version: 11,
+      apply: () => {
+        ensureColumn(d, 'company_routes', 'terminal_a', 'TEXT');
+        ensureColumn(d, 'company_routes', 'terminal_b', 'TEXT');
+        const endpoints: Record<string, [string, string]> = {
+          'R-101': ['Terminal Central', 'Tcherassi'],
+          'R-102': ['Carrera 14', 'Silencio'],
+          'R-103': ['Terminal Central', 'Vivero Paraíso'],
+          'R-104': ['Carrera 50', 'Paraiso'],
+          'R-105': ['Carrera 54', 'Uninorte'],
+          'R-106': ['Calle 72', 'Uninorte'],
+        };
+        const now = Date.now();
+        d.prepare('UPDATE empresas SET name = \'Sobusa\', created_at = ? WHERE company_id = \'EMP-01\' AND name = \'Terminal Central\'').run(now);
+        const setEndpoints = d.prepare(
+          'UPDATE company_routes SET terminal_a = ?, terminal_b = ? WHERE company_id = ? AND route_id = ?',
+        );
+        for (const [routeId, [terminalA, terminalB]] of Object.entries(endpoints)) {
+          setEndpoints.run(terminalA, terminalB, 'EMP-01', routeId);
+        }
+        setEndpoints.run('Centro', 'Soledad', 'EMP-02', 'R-101');
+      },
+    },
   ];
 
   for (const migration of migrations) {

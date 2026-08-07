@@ -27,6 +27,13 @@ export function getEmpresa(companyId: string): Empresa | null {
   return row ? { companyId: row.company_id, name: row.name } : null;
 }
 
+export function getEmpresas(): Empresa[] {
+  const rows = getDb().prepare(
+    'SELECT company_id, name FROM empresas ORDER BY name ASC',
+  ).all() as { company_id: string; name: string }[];
+  return rows.map((row) => ({ companyId: row.company_id, name: row.name }));
+}
+
 export function ensureEmpresa(companyId: string, name?: string): void {
   getDb().prepare(`
     INSERT OR IGNORE INTO empresas (company_id, name, created_at)

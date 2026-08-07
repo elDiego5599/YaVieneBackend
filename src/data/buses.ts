@@ -362,6 +362,8 @@ const routeNameMap: Record<string, string> = {
 export function getCompanyRoutes(companyId: string): {
   routeId: string;
   name: string;
+  terminalA: string | null;
+  terminalB: string | null;
   total: number;
   online: number;
 }[] {
@@ -376,21 +378,30 @@ export function getCompanyRoutes(companyId: string): {
     GROUP BY COALESCE(p.route_id, b.route_id)
   `).all(companyId) as { route_id: string; total: number; online: number }[];
   const catalog = db.prepare(`
-    SELECT route_id, name FROM company_routes
+    SELECT route_id, name, terminal_a, terminal_b FROM company_routes
     WHERE company_id = ?
     ORDER BY route_id ASC
-  `).all(companyId) as { route_id: string; name: string }[];
+  `).all(companyId) as { route_id: string; name: string; terminal_a: string | null; terminal_b: string | null }[];
 
   const totals = new Map(derived.map((r) => [r.route_id, r]));
   const byId = new Map(catalog.map((r) => [r.route_id, r.name]));
   const seen = new Set<string>();
-  const merged: { routeId: string; name: string; total: number; online: number }[] = [];
+  const merged: {
+    routeId: string;
+    name: string;
+    terminalA: string | null;
+    terminalB: string | null;
+    total: number;
+    online: number;
+  }[] = [];
 
   for (const route of catalog) {
     seen.add(route.route_id);
     merged.push({
       routeId: route.route_id,
       name: route.name,
+      terminalA: route.terminal_a,
+      terminalB: route.terminal_b,
       total: totals.get(route.route_id)?.total ?? 0,
       online: totals.get(route.route_id)?.online ?? 0,
     });
@@ -400,6 +411,8 @@ export function getCompanyRoutes(companyId: string): {
     merged.push({
       routeId: row.route_id,
       name: byId.get(row.route_id) ?? routeNameMap[row.route_id] ?? `Ruta ${row.route_id}`,
+      terminalA: null,
+      terminalB: null,
       total: row.total,
       online: row.online ?? 0,
     });
