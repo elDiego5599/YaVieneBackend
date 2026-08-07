@@ -12,6 +12,29 @@ import { DriverTokenPayload, verifyToken } from '../auth/tokens';
 import { claimSession, isSessionAuthorized, releaseSession } from '../data/sessions';
 import { incrementMetric } from '../observability/metrics';
 
+// ── Patch anti-desbordamiento de pila: mqemitter drena su cola de forma
+//    síncrona (un _do() por mensaje encolado). Una ráfaga masiva de MQTT
+//    (ej. 5,000 buses saliendo de un túnel) llena la cola y la recursión
+//    revienta la pila (RangeError). Diferimos cada paso a un tick distinto:
+//    profundidad = 1, orden FIFO intacto. ────────────────────────────────
+const mqemitterModule = require('mqemitter');
+const MQEmitterClass = mqemitterModule.MQEmitter ?? mqemitterModule;
+const originalMqDo = MQEmitterClass.prototype._do as (
+  message: unknown,
+  callback: (...args: any[]) => void,
+) => unknown;
+MQEmitterClass.prototype._do = function patchedDo(
+  message: unknown,
+  callback: (...args: any[]) => void,
+): unknown {
+  (this as { _doing: boolean })._doing = true;
+  const self = this;
+  setImmediate(() => {
+    originalMqDo.call(self, message, callback);
+  });
+  return this;
+};
+
 let brokerReady = false;
 let brokerServer: Server | null = null;
 let sessionSweepTimer: NodeJS.Timeout | null = null;

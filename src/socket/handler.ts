@@ -15,9 +15,43 @@ let io: Server | null = null;
 const pendingPositions = new Map<string, Map<string, BusPosition>>();
 const flushTimers = new Map<string, NodeJS.Timeout>();
 const SOCKET_FLUSH_MS = 100;
+const SLOW_CONSUMER_BUFFER_BYTES = 1024 * 1024;
+let slowConsumerTimer: NodeJS.Timeout | null = null;
 const latencySamples: number[] = [];
 let lastLatencyReport = Date.now();
 const LATENCY_REPORT_MS = 10_000;
+
+// ── Guard anti-Slowloris: clientes que no consumen el socket se acumulan
+//    en el búfer de ws (bufferedAmount). Superado el umbral → terminate. ──
+function startSlowConsumerGuard(): void {
+  slowConsumerTimer = setInterval(() => {
+    if (!io) return;
+    for (const socket of io.sockets.sockets.values()) {
+      try {
+        const transport = socket.conn?.transport;
+        if (!transport || transport.name !== 'websocket') continue;
+        const ws = (transport as { socket?: { bufferedAmount?: number } }).socket;
+        // ws.bufferedAmount se estanca en el búfer del kernel (~64KB): la
+        // presión real está en la cola de paquetes de engine.io (writeBuffer),
+        // que crece sin límite si el peer no consume.
+        let pendingBytes = ws?.bufferedAmount ?? 0;
+        const writeBuffer = (socket.conn as unknown as { writeBuffer?: Array<{ data?: string }> }).writeBuffer;
+        if (Array.isArray(writeBuffer)) {
+          for (const packet of writeBuffer) {
+            pendingBytes += typeof packet?.data === 'string' ? packet.data.length : 0;
+          }
+        }
+        if (pendingBytes > SLOW_CONSUMER_BUFFER_BYTES) {
+          console.warn(`[WS] Slow consumer detected: socket ${socket.id} con ${(pendingBytes / 1024).toFixed(0)}KB pendientes (${writeBuffer?.length ?? 0} paquetes) — cerrando`);
+          socket.disconnect(true);
+        }
+      } catch {
+        // socket ya cerrado o en transición
+      }
+    }
+  }, 5_000);
+  slowConsumerTimer.unref();
+}
 
 function sampleEmitLatency(position: BusPosition): void {
   const delay = Date.now() - position.receivedAt;
@@ -110,6 +144,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
     });
   });
 
+  startSlowConsumerGuard();
   return io;
 }
 
