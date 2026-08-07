@@ -407,13 +407,14 @@ export function getCompanyRoutes(companyId: string): {
   return merged;
 }
 
-export function routeNameExists(companyId: string, name: string): boolean {
+export function routeNameExists(companyId: string, name: string, excludeRouteId?: string): boolean {
   const db = getDb();
   const cleaned = name.trim().toLowerCase();
   if (!cleaned) return false;
+  const excluded = excludeRouteId ?? '';
   const inCatalog = db.prepare(
-    'SELECT 1 FROM company_routes WHERE company_id = ? AND LOWER(name) = ? LIMIT 1',
-  ).get(companyId, cleaned);
+    'SELECT 1 FROM company_routes WHERE company_id = ? AND LOWER(name) = ? AND route_id != ? LIMIT 1',
+  ).get(companyId, cleaned, excluded);
   if (inCatalog) return true;
   const derived = db.prepare(`
     SELECT COALESCE(p.route_id, b.route_id) AS route_id
@@ -422,6 +423,7 @@ export function routeNameExists(companyId: string, name: string): boolean {
     WHERE b.company_id = ? AND COALESCE(p.route_id, b.route_id) IS NOT NULL
   `).all(companyId) as { route_id: string }[];
   return derived.some((r) => {
+    if (r.route_id === excluded) return false;
     const fallback = routeNameMap[r.route_id] ?? `Ruta ${r.route_id}`;
     return fallback.toLowerCase() === cleaned;
   });
@@ -450,6 +452,20 @@ export function addCompanyRoute(
     ON CONFLICT(company_id, route_id) DO UPDATE SET name = excluded.name
   `).run(companyId, cleanedId, cleanedName, Date.now());
   return { routeId: cleanedId, name: cleanedName };
+}
+
+export function renameCompanyRoute(
+  companyId: string,
+  routeId: string,
+  name: string,
+): { routeId: string; name: string } | null {
+  const cleanedName = name.trim();
+  if (!cleanedName) return null;
+  const result = getDb().prepare(
+    'UPDATE company_routes SET name = ? WHERE company_id = ? AND route_id = ?',
+  ).run(cleanedName, companyId, routeId);
+  if (result.changes === 0) return null;
+  return { routeId, name: cleanedName };
 }
 
 export function removeCompanyRoute(companyId: string, routeId: string): boolean {

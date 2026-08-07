@@ -16,6 +16,7 @@ import {
   deleteBus,
   getCompanyRoutes,
   addCompanyRoute,
+  renameCompanyRoute,
   removeCompanyRoute,
   deleteAllBuses,
   routeNameExists,
@@ -432,6 +433,32 @@ addRoute('POST', '/api/fleet/routes', (req, res, _params, body) => {
   }
   console.log(`[API] Ruta ${route.routeId} creada para ${auth.companyId}: ${route.name}`);
   writeJson(res, 201, { ...route, total: 0, online: 0 });
+});
+
+addRoute('PATCH', '/api/fleet/routes/:routeId', (req, res, params, body) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+  if (!adminRateLimiter.allow(requestKey(req, 'route:rename'))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many route rename attempts');
+    return;
+  }
+
+  const name = typeof body?.name === 'string' ? body.name : '';
+  if (routeNameExists(auth.companyId, name, params.routeId)) {
+    writeError(res, 400, 'DUPLICATE_ROUTE', 'Ya existe una ruta con ese nombre');
+    return;
+  }
+
+  const route = renameCompanyRoute(auth.companyId, params.routeId, name);
+  if (!route) {
+    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found in this company');
+    return;
+  }
+  console.log(`[API] Ruta ${route.routeId} renombrada en ${auth.companyId}: ${route.name}`);
+  writeJson(res, 200, { ...route, total: 0, online: 0 });
 });
 
 addRoute('DELETE', '/api/fleet/routes/:routeId', (req, res, params) => {
