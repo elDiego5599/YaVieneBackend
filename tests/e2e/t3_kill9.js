@@ -104,21 +104,31 @@ for (let i = 1; i <= N_BUSES; i++) {
   record('T3.2c: conductores vivos reconectados automáticamente y aceptando posiciones',
     aliveReconnected === N_BUSES / 2, `reconectados=${aliveReconnected}/${N_BUSES / 2} ACKs tras reinicio=${ackCount}`);
 
-  // b) outbox: tras 60s, los 10 muertos se remueven y el dispatcher emite bus:left (delivered_at set)
+  // b) outbox: tras 60s, los 10 muertos pasan a "sin señal" (is_ghost)
+  //    y el dispatcher emite su posición ghost (delivered_at set).
+  //    Los buses NO desaparecen: su posición se conserva.
   await sleep(62000);
   const outbox = db.prepare(`
     SELECT event_type, payload, delivered_at, created_at
     FROM lifecycle_events
     WHERE payload LIKE '%KILL-%' AND created_at > ?
   `).all(now);
-  const leftEvents = outbox.filter((e) => e.event_type === 'bus:left' && e.delivered_at != null);
+  const ghostEvents = outbox.filter((e) => e.event_type === 'bus:position'
+    && e.delivered_at != null && (JSON.parse(e.payload || '{}')).isGhost === true);
   const deadBusIds = new Set(clients.slice(0, N_BUSES / 2).map((_, i) => `KILL-${String(i + 1).padStart(3, '0')}`));
-  const uniqueDeadDelivered = new Set(
-    leftEvents.map((e) => (JSON.parse(e.payload) || {}).busId),
+  const uniqueDeadGhosted = new Set(
+    ghostEvents.map((e) => (JSON.parse(e.payload) || {}).busId),
   );
-  const covered = [...uniqueDeadDelivered].filter((b) => deadBusIds.has(b)).length;
-  record('T3.2b: outbox emitió bus:left (delivered) de los buses que murieron a mitad de camino',
-    covered >= N_BUSES / 2, `buses muertos con bus:left entregado: ${covered}/${N_BUSES / 2}`);
+  const covered = [...uniqueDeadGhosted].filter((b) => deadBusIds.has(b)).length;
+  record('T3.2b: buses muertos pasan a "sin señal" (is_ghost) sin desaparecer',
+    covered >= N_BUSES / 2, `buses muertos en ghost: ${covered}/${N_BUSES / 2}`);
+
+  // d) las posiciones de los buses muertos siguen existiendo (no se borran)
+  const remainingPositions = db.prepare(
+    'SELECT COUNT(*) AS c FROM positions WHERE bus_id LIKE "KILL-%"'
+  ).get();
+  record('T3.2d: las posiciones de los buses muertos se conservan',
+    remainingPositions.c >= N_BUSES / 2, `posiciones conservadas: ${remainingPositions.c}/${N_BUSES / 2}`);
 
   clearInterval(iv);
   db.prepare("DELETE FROM driver_sessions WHERE session_id LIKE 'kill-%'").run();

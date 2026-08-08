@@ -667,39 +667,24 @@ export function getPositionsByRoute(routeId: string): BusPosition[] {
   return rows.map(rowToPosition);
 }
 
-export function sweepPositions(ghostMs: number, removeMs: number): {
+export function sweepPositions(ghostMs: number): {
   toGhost: BusPosition[];
-  toRemove: { busId: string; routeId: string }[];
 } {
   const db = getDb();
   const now = Date.now();
-  const removeTime = now - removeMs;
   const ghostTime = now - ghostMs;
 
   const sweep = db.transaction(() => {
-    const removed = db.prepare(
-      'DELETE FROM positions WHERE timestamp < ? RETURNING bus_id, route_id'
-    ).all(removeTime) as { bus_id: string; route_id: string }[];
-
     const ghostedRows = db.prepare(
-      'UPDATE positions SET is_ghost = 1 WHERE is_ghost = 0 AND timestamp < ? AND timestamp >= ? RETURNING *'
-    ).all(ghostTime, removeTime) as PositionRow[];
+      'UPDATE positions SET is_ghost = 1 WHERE is_ghost = 0 AND timestamp < ? RETURNING *'
+    ).all(ghostTime) as PositionRow[];
 
     for (const row of ghostedRows) {
       const position = rowToPosition(row);
       queueLifecycleEvent(db, 'bus:position', position.routeId, { ...position });
     }
-    for (const row of removed) {
-      queueLifecycleEvent(db, 'bus:left', row.route_id, {
-        busId: row.bus_id,
-        routeId: row.route_id,
-      });
-    }
 
-    return {
-      toGhost: ghostedRows.map(rowToPosition),
-      toRemove: removed.map(r => ({ busId: r.bus_id, routeId: r.route_id })),
-    };
+    return { toGhost: ghostedRows.map(rowToPosition) };
   });
 
   return sweep();

@@ -43,12 +43,13 @@ function waitForSocketEvent(
   socket: Socket,
   event: string,
   predicate: (payload: any) => boolean,
+  timeoutMs = 15_000,
 ): Promise<any> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       socket.off(event, listener);
       reject(new Error(`Timed out waiting for Socket.io event ${event}`));
-    }, 15_000);
+    }, timeoutMs);
 
     const listener = (payload: any) => {
       if (!predicate(payload)) return;
@@ -60,7 +61,7 @@ function waitForSocketEvent(
   });
 }
 
-test('conductor -> MQTT -> backend -> Socket.io -> bus:left', { timeout: 45_000 }, async () => {
+test('conductor -> MQTT -> backend -> Socket.io -> bus queda "sin señal" (is_ghost) sin desaparecer', { timeout: 90_000 }, async () => {
   const suffix = Date.now().toString().slice(-6);
   const phone = `300${suffix}`;
   const busId = `E2E-${suffix}`;
@@ -118,8 +119,9 @@ test('conductor -> MQTT -> backend -> Socket.io -> bus:left', { timeout: 45_000 
     );
     const leftEvent = waitForSocketEvent(
       socket,
-      'bus:left',
-      (payload) => payload?.busId === busId,
+      'bus:position',
+      (payload) => payload?.busId === busId && payload?.isGhost === true,
+      60_000,
     );
     socket.emit('subscribe:route', 'R-101');
 
@@ -152,6 +154,7 @@ test('conductor -> MQTT -> backend -> Socket.io -> bus:left', { timeout: 45_000 
     const left = await leftEvent;
     assert.equal(left.busId, busId);
     assert.equal(left.routeId, 'R-101');
+    assert.equal(left.isGhost, true);
   } finally {
     socket?.close();
     await stopProcess(simulator);

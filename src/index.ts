@@ -12,7 +12,6 @@ import { handleAPI } from './api/routes';
 import {
   getPositionValidationState,
   BusPosition,
-  removePositionOwned,
   sweepPositions,
   upsertPosition,
   getBusVisibility,
@@ -138,11 +137,10 @@ const server = HTTP_TLS_CERT_PATH && HTTP_TLS_KEY_PATH
 setupSocketServer(server);
 
 // ── Sweep de ciclo de vida de buses (cada 10s) ──────────────────────
+// Un bus sin publicar por GHOST_MS pasa a estado "sin señal" (is_ghost=1)
+// pero su posición se conserva: los buses NO desaparecen del mapa, solo se
+// marcan como stale hasta que vuelvan a publicar.
 const GHOST_MS = 30_000;
-const REMOVE_MS = 60_000;
-// En DEMO_MODE el sweep de ghost/removal está desactivado: durante las
-// pruebas los buses no se ponen grises ni desaparecen por inactividad.
-const DEMO_MODE = process.env.DEMO_MODE === '1';
 
 function emitLifecycleEvent(event: LifecycleEvent): void {
   if (event.eventType === 'bus:removed') {
@@ -192,9 +190,7 @@ function emitLifecycleEvent(event: LifecycleEvent): void {
 }
 
 const sweepTimer = setInterval(() => {
-  if (!DEMO_MODE) {
-    sweepPositions(GHOST_MS, REMOVE_MS);
-  }
+  sweepPositions(GHOST_MS);
   dispatchLifecycleEvents(emitLifecycleEvent);
 }, 10_000);
 sweepTimer.unref();
@@ -303,9 +299,11 @@ startBroker(
   return { accepted: true, sequence: positionSequence };
 },
   (_clientId: string, auth: DriverTokenPayload) => {
-    const removed = removePositionOwned(auth.busId, auth.sessionId);
-    if (!removed || removed.driverPhone !== auth.phoneNumber) return;
-    console.log(`[MQTT] Bus ${auth.busId} removido por desconexión del conductor ${auth.phoneNumber}`);
+    // Desconexión MQTT: NO se borra la posición. El bus conserva su última
+    // ubicación y pasa a "sin señal" (is_ghost) tras GHOST_MS via sweep.
+    console.log(
+      `[MQTT] Conductor ${auth.phoneNumber} desconectado — bus ${auth.busId} pasa a sin señal en ${GHOST_MS / 1000}s`,
+    );
   },
   server,
 );
