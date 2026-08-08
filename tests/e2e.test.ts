@@ -74,6 +74,7 @@ test('conductor -> MQTT -> backend -> Socket.io -> bus queda "sin señal" (is_gh
       ADMIN_API_KEY,
       MQTT_DEBUG_LOGS: 'false',
       YA_VIENE_DB_PATH: `/tmp/yaviene-e2e-${process.pid}.db`,
+      YA_VIENE_GHOST_MS: '2000',
     },
     stdio: 'ignore',
   });

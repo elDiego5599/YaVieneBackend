@@ -140,7 +140,10 @@ setupSocketServer(server);
 // Un bus sin publicar por GHOST_MS pasa a estado "sin señal" (is_ghost=1)
 // pero su posición se conserva: los buses NO desaparecen del mapa, solo se
 // marcan como stale hasta que vuelvan a publicar.
-const GHOST_MS = 30_000;
+// Un bus quieto (semáforo, trancón) no publica posiciones nuevas porque el
+// GPS no cruza el distanceFilter: solo se marca sin señal tras 5 min sin
+// publicar nada. Sobrescribible con YA_VIENE_GHOST_MS (tests).
+const GHOST_MS = Number(process.env.YA_VIENE_GHOST_MS ?? 5 * 60 * 1000);
 
 function emitLifecycleEvent(event: LifecycleEvent): void {
   if (event.eventType === 'bus:removed') {
