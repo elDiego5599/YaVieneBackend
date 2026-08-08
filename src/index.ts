@@ -306,7 +306,8 @@ startBroker(
     const removed = removePositionOwned(auth.busId, auth.sessionId);
     if (!removed || removed.driverPhone !== auth.phoneNumber) return;
     console.log(`[MQTT] Bus ${auth.busId} removido por desconexión del conductor ${auth.phoneNumber}`);
-  }
+  },
+  server,
 );
 
 server.listen(HTTP_PORT, '0.0.0.0', () => {

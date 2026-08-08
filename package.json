@@ -22,7 +22,8 @@
     "aedes": "^0.51.3",
     "better-sqlite3": "^13.0.2",
     "jsonwebtoken": "^9.0.3",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

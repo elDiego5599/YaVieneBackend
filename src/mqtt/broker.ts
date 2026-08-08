@@ -1,7 +1,9 @@
 import aedes from 'aedes';
 import { createServer as createNetServer, Server } from 'net';
 import { createServer as createTlsServer } from 'tls';
+import http from 'http';
 import fs from 'fs';
+import { WebSocketServer, createWebSocketStream } from 'ws';
 import {
   MQTT_PORT,
   MQTT_HOST,
@@ -37,6 +39,7 @@ MQEmitterClass.prototype._do = function patchedDo(
 
 let brokerReady = false;
 let brokerServer: Server | null = null;
+let brokerWs: WebSocketServer | null = null;
 let sessionSweepTimer: NodeJS.Timeout | null = null;
 const SESSION_SWEEP_MS = 5_000;
 
@@ -48,6 +51,10 @@ export function closeBroker(): Promise<void> {
   if (sessionSweepTimer) {
     clearInterval(sessionSweepTimer);
     sessionSweepTimer = null;
+  }
+  if (brokerWs) {
+    brokerWs.close();
+    brokerWs = null;
   }
   if (!brokerServer) return Promise.resolve();
   const server = brokerServer;
@@ -80,7 +87,12 @@ type MessageHandler = (
 ) => PositionHandlingResult | void;
 type DisconnectHandler = (clientId: string, auth: DriverTokenPayload) => void;
 
-export function startBroker(onMessage: MessageHandler, onDisconnect?: DisconnectHandler): Promise<Server> {
+export function startBroker(
+  onMessage: MessageHandler,
+  onDisconnect?: DisconnectHandler,
+  httpServer?: http.Server,
+  wsPath = '/mqtt',
+): Promise<Server> {
   const broker: any = new aedes();
   const debugLogs = process.env.MQTT_DEBUG_LOGS === 'true';
 
@@ -261,6 +273,24 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
     }
   }, SESSION_SWEEP_MS);
 
+  // ── MQTT por WebSocket: misma vía que el HTTP, ruta /mqtt ─────────
+  //    Es el canal público (el túnel entrega TLS). aedes consume el
+  //    stream duplex que crea `ws` a partir del socket WebSocket.
+  if (httpServer) {
+    const wss = new WebSocketServer({
+      noServer: true,
+      maxPayload: 256 * 1024,
+    });
+    brokerWs = wss;
+    httpServer.on('upgrade', (req, socket, head) => {
+      const { pathname } = new URL(req.url ?? '/', 'http://localhost');
+      if (pathname !== wsPath) return;
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        broker.handle(createWebSocketStream(ws), req);
+      });
+    });
+  }
+
   const server = MQTT_TLS_CERT_PATH && MQTT_TLS_KEY_PATH
     ? createTlsServer({
         cert: fs.readFileSync(MQTT_TLS_CERT_PATH),
@@ -281,6 +311,9 @@ export function startBroker(onMessage: MessageHandler, onDisconnect?: Disconnect
       brokerReady = true;
       const scheme = MQTT_TLS_CERT_PATH && MQTT_TLS_KEY_PATH ? 'mqtts' : 'mqtt';
       console.log(`[MQTT] Broker listening on ${scheme}://${MQTT_HOST}:${MQTT_PORT}`);
+      if (httpServer) {
+        console.log(`[MQTT] Broker WebSocket en ${wsPath} (mismo servidor HTTP, TLS por túnel)`);
+      }
       resolve(server);
     });
   });
