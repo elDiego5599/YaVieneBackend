@@ -1,13 +1,16 @@
 import jwt from 'jsonwebtoken';
 
-const configuredSecret = process.env.JWT_SECRET;
-if (!configuredSecret && process.env.NODE_ENV === 'production') {
-  throw new Error('JWT_SECRET is required in production');
-}
-
-const JWT_SECRET = configuredSecret || 'ya-viene-local-development-secret';
+// Se lee en cada uso para que tests/entornos puedan fijarlo antes; la
+// guardia de arranque (index.ts) impide arrancar sin JWT_SECRET para que
+// nunca se roten tokens en silencio (apps con "sesión expiró").
 const JWT_ISSUER = 'ya-viene-backend';
 const JWT_AUDIENCE = 'ya-viene-mqtt';
+
+function jwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET no configurado');
+  return secret;
+}
 
 export interface DriverTokenPayload {
   sub: string;
@@ -30,7 +33,7 @@ export interface AdminTokenPayload {
 export type TokenPayload = DriverTokenPayload | AdminTokenPayload;
 
 export function signToken(payload: TokenPayload): string {
-  return jwt.sign(payload, JWT_SECRET, {
+  return jwt.sign(payload, jwtSecret(), {
     expiresIn: '24h',
     issuer: JWT_ISSUER,
     audience: JWT_AUDIENCE,
@@ -39,7 +42,7 @@ export function signToken(payload: TokenPayload): string {
 
 export function verifyToken(token: string): TokenPayload | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET, {
+    const decoded = jwt.verify(token, jwtSecret(), {
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
     });

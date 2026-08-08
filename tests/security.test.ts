@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+process.env.JWT_SECRET = 'test-jwt-secret';
+process.env.ADMIN_API_KEY = 'test-admin-key';
+
 import { hashPin, verifyPin } from '../src/auth/passwords';
 import { signToken, verifyToken } from '../src/auth/tokens';
 import { FixedWindowRateLimiter } from '../src/security/rate_limiter';

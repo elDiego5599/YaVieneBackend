@@ -32,6 +32,16 @@ import {
   getIO,
 } from './socket/handler';
 
+// ── Guardia de arranque ──────────────────────────────────────────────
+// Sin JWT_SECRET el backend arranca con un secret por defecto y rota todos
+// los tokens en silencio: las apps quedan con "sesión expiró" en loop.
+// Arrancar siempre con local.env cargado (start-test.sh lo hace).
+if (!process.env.JWT_SECRET) {
+  throw new Error(
+    'JWT_SECRET es obligatorio: arranca con start-test.sh o con local.env cargado',
+  );
+}
+
 // ── Candado 3: Sanity check de física imposible ─────────────────────
 const MAX_SPEED_KMH = 120;
 const EARTH_RADIUS_KM = 6371;
