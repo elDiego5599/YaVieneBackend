@@ -441,6 +441,15 @@ function initSchema(): void {
         }
       },
     },
+    {
+      version: 13,
+      apply: () => {
+        // Sentido de marcha reportado por el bus ("ida"/"venida"): la app lo
+        // usa para el ETA sin adivinar por el rumbo (rutas con subida/giro
+        // confunden el heading). Null = dispositivo antiguo, se asume ida.
+        ensureColumn(d, 'positions', 'sentido', 'TEXT');
+      },
+    },
   ];
 
   for (const migration of migrations) {

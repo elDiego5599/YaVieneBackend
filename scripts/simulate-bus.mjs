@@ -29,6 +29,11 @@ const EMPRESA_ID = process.env.EMPRESA_ID || 'EMP-01';
 const ROUTE_ID = process.env.ROUTE_ID || 'R-101';
 const CAPTURE_INTERVAL_MS = parseInt(process.env.CAPTURE_INTERVAL_MS || '2000', 10);
 const CAPTURE_BASE_LAG_MS = parseInt(process.env.CAPTURE_BASE_LAG_MS || '0', 10);
+// Demo: arrancar en un punto del recorrido y en un sentido dados.
+//   START_FRACTION=0..1 → posición inicial (0 = inicio, 1 = fin del recorrido)
+//   SENTIDO=ida|venida  → sentido inicial (la variable cambia en los giros)
+const START_FRACTION = Math.min(1, Math.max(0, parseFloat(process.env.START_FRACTION || '0')));
+const INITIAL_SENTIDO = process.env.SENTIDO === 'venida' ? 'venida' : 'ida';
 
 // Fallback (recorrido por la Calle 30) si no está rutas.json
 const FALLBACK_WAYPOINTS = [
@@ -74,12 +79,12 @@ function haversineMeters(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-// Longitud de cada tramo entre waypoints consecutivos (para interpolar el
-// movimiento a velocidad realista, sin que el anti-fraude lo rechace).
+// Longitud de cada tramo real del recorrido (sin el segmento artificial de
+// cierre último→primero). En ida el bus "da la vuelta" saltando del final al
+// inicio; en venida recorre los mismos tramos en sentido contrario.
 const SEG_LENGTHS = [];
-for (let i = 0; i < WAYPOINTS.length; i++) {
-  const next = WAYPOINTS[(i + 1) % WAYPOINTS.length];
-  SEG_LENGTHS.push(haversineMeters(WAYPOINTS[i], next));
+for (let i = 0; i < WAYPOINTS.length - 1; i++) {
+  SEG_LENGTHS.push(haversineMeters(WAYPOINTS[i], WAYPOINTS[i + 1]));
 }
 const TOTAL_LENGTH_M = SEG_LENGTHS.reduce((acc, len) => acc + len, 0);
 
@@ -338,7 +343,7 @@ async function connectMQTTWithAuth() {
   });
 }
 
-async function publishPositionWithAuth(lat, lon, heading, speedKmh) {
+async function publishPositionWithAuth(lat, lon, heading, speedKmh, sentido) {
   if (!mqttClient) return;
 
   const topic = `empresa/${EMPRESA_ID}/bus/${BUS_ID}/posicion`;
@@ -348,6 +353,7 @@ async function publishPositionWithAuth(lat, lon, heading, speedKmh) {
     lon,
     heading,
     speedKmh,
+    sentido,
     capturedAt: simulatedCapturedAt,
     sequence: ++sequence,
   });
@@ -394,29 +400,46 @@ async function run() {
 
     // 3. Publicar posiciones interpolando sobre la geometría real
     console.log(`\n[LOOP] ${BUS_ID} recorriendo ${ROUTE_NAME} (${ROUTE_ID}, ${(TOTAL_LENGTH_M / 1000).toFixed(1)} km) cada ${CAPTURE_INTERVAL_MS} ms...\n`);
-    let posM = 0;
+    // La variable `sentido` cambia en los puntos de giro (terminales): el bus
+    // hace el recorrido de ida, gira en el final y regresa de venida; al
+    // volver al inicio gira de nuevo. Esa variable viaja en cada posición.
+    let sentido = INITIAL_SENTIDO;
+    let progress = START_FRACTION * TOTAL_LENGTH_M;
+    // Si arranca de venida, queda "bajando" desde su fracción de inicio.
+    if (sentido === 'venida') progress = TOTAL_LENGTH_M - progress;
     setInterval(async () => {
       const dt = CAPTURE_INTERVAL_MS / 1000;
       const speedKmh = 30 + 15 * Math.abs(Math.sin(step / 12));
-      posM = (posM + (speedKmh / 3.6) * dt) % TOTAL_LENGTH_M;
+      const distM = (speedKmh / 3.6) * dt;
+      progress += sentido === 'ida' ? distM : -distM;
+      if (progress >= TOTAL_LENGTH_M) {
+        progress = 2 * TOTAL_LENGTH_M - progress;
+        sentido = 'venida';
+      } else if (progress <= 0) {
+        progress = -progress;
+        sentido = 'ida';
+      }
 
       let acc = 0;
       let seg = 0;
-      while (acc + SEG_LENGTHS[seg] <= posM) {
+      while (acc + SEG_LENGTHS[seg] <= progress) {
         acc += SEG_LENGTHS[seg];
         seg++;
       }
-      const t = (posM - acc) / SEG_LENGTHS[seg];
+      const t = (progress - acc) / SEG_LENGTHS[seg];
       const a = WAYPOINTS[seg];
-      const b = WAYPOINTS[(seg + 1) % WAYPOINTS.length];
+      const b = WAYPOINTS[seg + 1];
       const lat = a.lat + (b.lat - a.lat) * t + (Math.random() - 0.5) * 0.00004;
       const lon = a.lon + (b.lon - a.lon) * t + (Math.random() - 0.5) * 0.00004;
-      const heading = headingBetween(a, b);
+      // De venida el bus se mueve de b hacia a: el rumbo se invierte.
+      const heading = sentido === 'venida'
+        ? headingBetween(b, a)
+        : headingBetween(a, b);
 
-      await publishPositionWithAuth(lat, lon, heading, speedKmh);
+      await publishPositionWithAuth(lat, lon, heading, speedKmh, sentido);
 
       const now = new Date().toLocaleTimeString();
-      console.log(`[${now}] ${BUS_ID} → (${lat.toFixed(5)}, ${lon.toFixed(5)}) ${speedKmh.toFixed(0)} km/h rumbo ${heading.toFixed(0)}°`);
+      console.log(`[${now}] ${BUS_ID} → (${lat.toFixed(5)}, ${lon.toFixed(5)}) ${speedKmh.toFixed(0)} km/h rumbo ${heading.toFixed(0)}° · ${sentido.toUpperCase()}`);
 
       step++;
     }, CAPTURE_INTERVAL_MS);

@@ -294,6 +294,9 @@ startBroker(
     lon,
     heading: payload.heading as number | undefined,
     speedKmh: speedKmh,
+    sentido: payload.sentido === 'ida' || payload.sentido === 'venida'
+      ? payload.sentido
+      : undefined,
     sessionId: auth.sessionId,
     capturedAt: captureTime,
     sequence: positionSequence,

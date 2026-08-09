@@ -9,6 +9,8 @@ export interface BusPosition {
   lon: number;
   heading: number;
   speedKmh: number;
+  /** Sentido de marcha reportado por el bus: 'ida' | 'venida' | null. */
+  sentido: 'ida' | 'venida' | null;
   timestamp: string;
   capturedAt: number;
   receivedAt: number;
@@ -32,6 +34,7 @@ export interface FleetBus {
   lon: number | null;
   heading: number | null;
   speedKmh: number | null;
+  sentido: 'ida' | 'venida' | null;
   capturedAt: number | null;
   receivedAt: number | null;
   sequence: number | null;
@@ -56,6 +59,7 @@ interface PositionRow {
   lon: number;
   heading: number;
   speed_kmh: number;
+  sentido: string | null;
   timestamp: number;
   driver_phone: string;
   session_id: string | null;
@@ -63,6 +67,11 @@ interface PositionRow {
   sequence: number | null;
   is_ghost: number;
   bus_company_id?: string | null;
+}
+
+function normalizeSentido(raw: string | null | undefined): 'ida' | 'venida' | null {
+  if (raw === 'ida' || raw === 'venida') return raw;
+  return null;
 }
 
 const driverCache = new Map<string, DriverInfo>();
@@ -77,6 +86,7 @@ function rowToPosition(row: PositionRow): BusPosition {
     lon: row.lon,
     heading: row.heading,
     speedKmh: row.speed_kmh,
+    sentido: normalizeSentido(row.sentido),
     timestamp: new Date(row.timestamp).toISOString(),
     capturedAt: row.captured_at ?? row.timestamp,
     receivedAt: row.timestamp,
@@ -138,7 +148,7 @@ export function getFleetPositions(companyId: string): FleetBus[] {
   const db = getDb();
   const rows = db.prepare(`
     SELECT b.bus_id, b.company_id, b.visible, b.plate_number, b.interno, b.route_id AS bus_route_id,
-           p.route_id, p.lat, p.lon, p.heading, p.speed_kmh,
+           p.route_id, p.lat, p.lon, p.heading, p.speed_kmh, p.sentido,
            p.timestamp, p.captured_at, p.sequence, p.is_ghost,
            d.name AS driver_name
     FROM buses b
@@ -158,6 +168,7 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     lon: number | null;
     heading: number | null;
     speed_kmh: number | null;
+    sentido: string | null;
     timestamp: number | null;
     captured_at: number | null;
     sequence: number | null;
@@ -178,6 +189,7 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     lon: row.lon,
     heading: row.heading ?? 0,
     speedKmh: row.speed_kmh ?? 0,
+    sentido: normalizeSentido(row.sentido),
     capturedAt: row.captured_at ?? row.timestamp,
     receivedAt: row.timestamp,
     sequence: row.sequence,
@@ -230,6 +242,7 @@ export function createBus(
     lon: null,
     heading: 0,
     speedKmh: 0,
+    sentido: null,
     capturedAt: null,
     receivedAt: null,
     sequence: null,
@@ -586,6 +599,7 @@ export function upsertPosition(phoneNumber: string, data: {
   lon: number;
   heading?: number;
   speedKmh?: number;
+  sentido?: 'ida' | 'venida';
   sessionId?: string;
   capturedAt?: number;
   sequence?: number;
@@ -602,18 +616,20 @@ export function upsertPosition(phoneNumber: string, data: {
   if (!routeId) return null;
   const heading = data.heading ?? 0;
   const speedKmh = data.speedKmh ?? 0;
+  const sentido = normalizeSentido(data.sentido ?? null);
   const companyId = data.companyId || driver?.companyId || '';
 
   const result = db.prepare(`
     INSERT INTO positions (
-      bus_id, route_id, lat, lon, heading, speed_kmh, timestamp, driver_phone,
+      bus_id, route_id, lat, lon, heading, speed_kmh, sentido, timestamp, driver_phone,
       session_id, captured_at, sequence, is_ghost
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     ON CONFLICT(bus_id) DO UPDATE SET
       lat = excluded.lat,
       lon = excluded.lon,
       heading = excluded.heading,
       speed_kmh = excluded.speed_kmh,
+      sentido = excluded.sentido,
       timestamp = excluded.timestamp,
       driver_phone = excluded.driver_phone,
       session_id = excluded.session_id,
@@ -630,6 +646,7 @@ export function upsertPosition(phoneNumber: string, data: {
     data.lon,
     heading,
     speedKmh,
+    sentido,
     now,
     phoneNumber,
     data.sessionId ?? null,
@@ -646,6 +663,7 @@ export function upsertPosition(phoneNumber: string, data: {
     lon: data.lon,
     heading,
     speedKmh,
+    sentido,
     timestamp: new Date(now).toISOString(),
     capturedAt: data.capturedAt ?? now,
     receivedAt: now,
