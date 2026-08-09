@@ -11,11 +11,16 @@ sleep 1
 set -a
 source local.env
 set +a
-nohup node dist/index.js > /tmp/yaviene-backend.log 2>&1 &
-nohup cloudflared tunnel --url http://localhost:3000 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
+# Todo con </dev/null y fds redirigidos + disown para que el script
+# devuelva el control al terminal y los procesos queden desacoplados.
+nohup node dist/index.js </dev/null > /tmp/yaviene-backend.log 2>&1 &
+disown
+nohup cloudflared tunnel --url http://localhost:3000 --no-autoupdate </dev/null > /tmp/cloudflared.log 2>&1 &
+disown
 
 # La Mac no debe dormirse mientras el teléfono haga pruebas.
-caffeinate -d -i -s -w $! &
+nohup caffeinate -d -i -s </dev/null > /dev/null 2>&1 &
+disown
 
 sleep 8
 URL=$(grep -o "https://[a-z0-9-]*\.trycloudflare\.com" /tmp/cloudflared.log | head -1)

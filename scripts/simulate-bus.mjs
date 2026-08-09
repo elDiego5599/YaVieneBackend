@@ -5,13 +5,20 @@
  *   node scripts/simulate-bus.mjs
  *
  * Requiere el backend corriendo (npm run dev).
- * Envía posiciones GPS cada 2 segundos simulando un bus
- * recorriendo la Calle 30 en Barranquilla.
+ * Envía posiciones GPS cada 2 segundos recorriendo la geometría real
+ * de la ruta (scripts/data/rutas.json, generado desde los KMZ de Sobusa).
+ *
+ * Variables: BUS_ID, ROUTE_ID, EMPRESA_ID, BACKEND_URL, PIN,
+ *            ADMIN_API_KEY, CAPTURE_INTERVAL_MS (demo rápida: 400).
  */
 
 import net from 'net';
 import http from 'http';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
 const MQTT_PORT = parseInt(process.env.MQTT_PORT || '8883', 10);
 const BUS_ID = process.env.BUS_ID || 'B-042';
@@ -23,8 +30,8 @@ const ROUTE_ID = process.env.ROUTE_ID || 'R-101';
 const CAPTURE_INTERVAL_MS = parseInt(process.env.CAPTURE_INTERVAL_MS || '2000', 10);
 const CAPTURE_BASE_LAG_MS = parseInt(process.env.CAPTURE_BASE_LAG_MS || '0', 10);
 
-// Coordenadas simulando un recorrido por la Calle 30, Barranquilla
-const WAYPOINTS = [
+// Fallback (recorrido por la Calle 30) si no está rutas.json
+const FALLBACK_WAYPOINTS = [
   { lat: 10.9630, lon: -74.8230 },
   { lat: 10.9635, lon: -74.8200 },
   { lat: 10.9640, lon: -74.8170 },
@@ -36,6 +43,45 @@ const WAYPOINTS = [
   { lat: 10.9648, lon: -74.7990 },
   { lat: 10.9655, lon: -74.7960 },
 ];
+
+let WAYPOINTS = FALLBACK_WAYPOINTS;
+let ROUTE_NAME = ROUTE_ID;
+try {
+  const payload = JSON.parse(readFileSync(join(SCRIPT_DIR, 'data', 'rutas.json'), 'utf8'));
+  const ruta = payload.rutas.find((r) => r.routeId === ROUTE_ID);
+  if (ruta && ruta.waypoints.length >= 2) {
+    WAYPOINTS = ruta.waypoints;
+    ROUTE_NAME = ruta.name;
+    console.log(`[RUTA] Geometría real cargada: ${ruta.name} (${ruta.waypoints.length} pts, ${ruta.lengthKm} km)`);
+  }
+} catch {
+  console.log('[RUTA] rutas.json no encontrado, usando recorrido de respaldo');
+}
+
+function headingBetween(a, b) {
+  const dLat = b.lat - a.lat;
+  const dLon = b.lon - a.lon;
+  return (Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360;
+}
+
+function haversineMeters(a, b) {
+  const R = 6371000;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLon = ((b.lon - a.lon) * Math.PI) / 180;
+  const lat1 = (a.lat * Math.PI) / 180;
+  const lat2 = (b.lat * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// Longitud de cada tramo entre waypoints consecutivos (para interpolar el
+// movimiento a velocidad realista, sin que el anti-fraude lo rechace).
+const SEG_LENGTHS = [];
+for (let i = 0; i < WAYPOINTS.length; i++) {
+  const next = WAYPOINTS[(i + 1) % WAYPOINTS.length];
+  SEG_LENGTHS.push(haversineMeters(WAYPOINTS[i], next));
+}
+const TOTAL_LENGTH_M = SEG_LENGTHS.reduce((acc, len) => acc + len, 0);
 
 let step = 0;
 let sequence = 0;
@@ -292,7 +338,7 @@ async function connectMQTTWithAuth() {
   });
 }
 
-async function publishPositionWithAuth(lat, lon) {
+async function publishPositionWithAuth(lat, lon, heading, speedKmh) {
   if (!mqttClient) return;
 
   const topic = `empresa/${EMPRESA_ID}/bus/${BUS_ID}/posicion`;
@@ -300,8 +346,8 @@ async function publishPositionWithAuth(lat, lon) {
     protocolVersion: 1,
     lat,
     lon,
-    heading: 45 + (step * 5 % 360),
-    speedKmh: 30 + Math.random() * 15,
+    heading,
+    speedKmh,
     capturedAt: simulatedCapturedAt,
     sequence: ++sequence,
   });
@@ -346,20 +392,34 @@ async function run() {
     // 2. Conectar MQTT con JWT
     await connectMQTTWithAuth();
 
-    // 3. Publicar posiciones cada 2 segundos
-    console.log(`\n[LOOP] Enviando posiciones cada 2s por la Calle 30...\n`);
+    // 3. Publicar posiciones interpolando sobre la geometría real
+    console.log(`\n[LOOP] ${BUS_ID} recorriendo ${ROUTE_NAME} (${ROUTE_ID}, ${(TOTAL_LENGTH_M / 1000).toFixed(1)} km) cada ${CAPTURE_INTERVAL_MS} ms...\n`);
+    let posM = 0;
     setInterval(async () => {
-      const wp = WAYPOINTS[step % WAYPOINTS.length];
-      const offsetLat = (Math.random() - 0.5) * 0.001;
-      const offsetLon = (Math.random() - 0.5) * 0.001;
+      const dt = CAPTURE_INTERVAL_MS / 1000;
+      const speedKmh = 30 + 15 * Math.abs(Math.sin(step / 12));
+      posM = (posM + (speedKmh / 3.6) * dt) % TOTAL_LENGTH_M;
 
-      await publishPositionWithAuth(wp.lat + offsetLat, wp.lon + offsetLon);
+      let acc = 0;
+      let seg = 0;
+      while (acc + SEG_LENGTHS[seg] <= posM) {
+        acc += SEG_LENGTHS[seg];
+        seg++;
+      }
+      const t = (posM - acc) / SEG_LENGTHS[seg];
+      const a = WAYPOINTS[seg];
+      const b = WAYPOINTS[(seg + 1) % WAYPOINTS.length];
+      const lat = a.lat + (b.lat - a.lat) * t + (Math.random() - 0.5) * 0.00004;
+      const lon = a.lon + (b.lon - a.lon) * t + (Math.random() - 0.5) * 0.00004;
+      const heading = headingBetween(a, b);
+
+      await publishPositionWithAuth(lat, lon, heading, speedKmh);
 
       const now = new Date().toLocaleTimeString();
-      console.log(`[${now}] ${BUS_ID} → (${(wp.lat + offsetLat).toFixed(5)}, ${(wp.lon + offsetLon).toFixed(5)})`);
+      console.log(`[${now}] ${BUS_ID} → (${lat.toFixed(5)}, ${lon.toFixed(5)}) ${speedKmh.toFixed(0)} km/h rumbo ${heading.toFixed(0)}°`);
 
       step++;
-    }, 2000);
+    }, CAPTURE_INTERVAL_MS);
 
   } catch (err) {
     console.error('[FATAL]', err.message);

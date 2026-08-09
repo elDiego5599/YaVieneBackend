@@ -415,6 +415,32 @@ function initSchema(): void {
         setEndpoints.run('Centro', 'Soledad', 'EMP-02', 'R-101');
       },
     },
+    {
+      version: 12,
+      apply: () => {
+        // Catálogo real de Sobusa (códigos de servicio desde los KMZ oficiales).
+        const sobusa: Record<string, [string, string, string]> = {
+          'R-101': ['B18 Tcherassi', 'Ciudad Mallorquín', 'La Playa'],
+          'R-102': ['C11 Silencio', 'Nevada', 'El Silencio'],
+          'R-103': ['C12 Vivero Paraíso', 'Vía 40', 'Paraíso'],
+          'R-104': ['C13 Carrera 50 Paraíso', 'Nevada (Soledad)', 'Calle 76 (Vía 40)'],
+          'R-105': ['C14 Carrera 54 Uninorte', 'Granabastos', 'Uninorte'],
+          'R-106': ['C16 Calle 72 Uninorte', 'Granabastos', 'Uninorte'],
+        };
+        const upsert = d.prepare(`
+          INSERT INTO company_routes (company_id, route_id, name, terminal_a, terminal_b, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT (company_id, route_id) DO UPDATE SET
+            name = excluded.name,
+            terminal_a = excluded.terminal_a,
+            terminal_b = excluded.terminal_b
+        `);
+        const now = Date.now();
+        for (const [routeId, [name, terminalA, terminalB]] of Object.entries(sobusa)) {
+          upsert.run('EMP-01', routeId, name, terminalA, terminalB, now);
+        }
+      },
+    },
   ];
 
   for (const migration of migrations) {
