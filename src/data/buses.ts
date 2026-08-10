@@ -692,6 +692,15 @@ export function sweepPositions(ghostMs: number): {
   const now = Date.now();
   const ghostTime = now - ghostMs;
 
+  // Pre-check: evitar lock de escritura WAL en el hilo principal si no hay candidatos.
+  // idx_positions_timestamp cubre el filtro timestamp < ?.
+  const hasCandidates = db.prepare(
+    'SELECT 1 FROM positions WHERE is_ghost = 0 AND timestamp < ? LIMIT 1'
+  ).get(ghostTime);
+  if (!hasCandidates) {
+    return { toGhost: [] };
+  }
+
   const sweep = db.transaction(() => {
     const ghostedRows = db.prepare(
       'UPDATE positions SET is_ghost = 1 WHERE is_ghost = 0 AND timestamp < ? RETURNING *'

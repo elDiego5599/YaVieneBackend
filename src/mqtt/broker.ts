@@ -40,14 +40,17 @@ MQEmitterClass.prototype._do = function patchedDo(
 let brokerReady = false;
 let brokerServer: Server | null = null;
 let brokerWs: WebSocketServer | null = null;
+let aedesInstance: any = null;
 let sessionSweepTimer: NodeJS.Timeout | null = null;
 const SESSION_SWEEP_MS = 5_000;
+const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 export function isBrokerReady(): boolean {
   return brokerReady;
 }
 
-export function closeBroker(): Promise<void> {
+export async function closeBroker(): Promise<void> {
+  brokerReady = false;
   if (sessionSweepTimer) {
     clearInterval(sessionSweepTimer);
     sessionSweepTimer = null;
@@ -56,10 +59,21 @@ export function closeBroker(): Promise<void> {
     brokerWs.close();
     brokerWs = null;
   }
-  if (!brokerServer) return Promise.resolve();
+  if (aedesInstance) {
+    const instance = aedesInstance;
+    aedesInstance = null;
+    await Promise.race([
+      new Promise<void>((resolve) => instance.close(() => resolve())),
+      new Promise<void>((resolve) => setTimeout(() => {
+        console.warn('[MQTT] aedes.close() timed out after 5s — forcing');
+        resolve();
+      }, SHUTDOWN_TIMEOUT_MS)),
+    ]);
+  }
+  if (!brokerServer) return;
   const server = brokerServer;
   brokerServer = null;
-  return new Promise((resolve) => server.close(() => resolve()));
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
 function forceCloseClient(broker: any, client: any, reason: string): void {
@@ -94,6 +108,7 @@ export function startBroker(
   wsPath = '/mqtt',
 ): Promise<Server> {
   const broker: any = new aedes();
+  aedesInstance = broker;
   const debugLogs = process.env.MQTT_DEBUG_LOGS === 'true';
 
   // ── Candado 1: JWT authentication ──────────────────────────────────
