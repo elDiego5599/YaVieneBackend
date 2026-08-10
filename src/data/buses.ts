@@ -625,6 +625,7 @@ export function upsertPosition(phoneNumber: string, data: {
       session_id, captured_at, sequence, is_ghost
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     ON CONFLICT(bus_id) DO UPDATE SET
+      route_id = excluded.route_id,
       lat = excluded.lat,
       lon = excluded.lon,
       heading = excluded.heading,
