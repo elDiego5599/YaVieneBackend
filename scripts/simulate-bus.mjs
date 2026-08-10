@@ -409,7 +409,8 @@ async function run() {
     if (sentido === 'venida') progress = TOTAL_LENGTH_M - progress;
     setInterval(async () => {
       const dt = CAPTURE_INTERVAL_MS / 1000;
-      const speedKmh = 30 + 15 * Math.abs(Math.sin(step / 12));
+      // Velocidad constante: evita que el ETA de la app salte con la variación.
+      const speedKmh = 35;
       const distM = (speedKmh / 3.6) * dt;
       progress += sentido === 'ida' ? distM : -distM;
       if (progress >= TOTAL_LENGTH_M) {
