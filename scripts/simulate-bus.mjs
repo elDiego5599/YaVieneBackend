@@ -237,6 +237,16 @@ async function connectMQTTWithAuth() {
       resolve();
     });
 
+    // Si la conexión se cae (túnel, red), se reconecta solo: sin esto el
+    // bus quedaba mudo para siempre y "se congelaba" en el mapa del pasajero
+    // hasta volverse "sin señal" tras 5 minutos.
+    client.on('close', () => {
+      console.log('[MQTT] Desconectado — reconectando en 3s...');
+      mqttClient = null;
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(ensureReconnected, 3000);
+    });
+
     const ackTopic = `empresa/${EMPRESA_ID}/bus/${BUS_ID}/ack`;
     const ackTopicBuf = Buffer.from(ackTopic);
     const ackPacket = Buffer.concat([
@@ -341,6 +351,20 @@ async function connectMQTTWithAuth() {
 
     client.write(packet);
   });
+}
+
+let reconnectTimer = null;
+
+async function ensureReconnected() {
+  if (mqttClient || reconnectTimer) return;
+  try {
+    await connectMQTTWithAuth();
+    console.log(`[MQTT] ${BUS_ID} reconectado`);
+  } catch (err) {
+    console.error(`[MQTT] Reconexión falló (${err.message}); reintento en 5s`);
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(ensureReconnected, 5000);
+  }
 }
 
 async function publishPositionWithAuth(lat, lon, heading, speedKmh, sentido) {
