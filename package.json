@@ -22,6 +22,7 @@
     "aedes": "^0.51.3",
     "better-sqlite3": "^13.0.2",
     "jsonwebtoken": "^9.0.3",
+    "mqtt": "^5.15.2",
     "socket.io": "^4.8.3",
     "ws": "^8.21.3"
   },
@@ -30,6 +31,7 @@
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.1.1",
+    "fast-check": "^4.9.0",
     "socket.io-client": "^4.8.3",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2"
