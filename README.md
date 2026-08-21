@@ -17,6 +17,13 @@ npm start
 Para desarrollo con hot-reload:
 ```bash
 npm run dev
+# o con el atajo:
+make dev
+```
+
+Con Docker (hot-reload dentro del contenedor):
+```bash
+docker compose up --build   # o: make docker-dev
 ```
 
 Servidor corre en `http://localhost:3000`.
