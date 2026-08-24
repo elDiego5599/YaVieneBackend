@@ -3,7 +3,7 @@ import test from 'node:test';
 import * as fc from 'fast-check';
 
 import { haversineDistanceKm, sanityCheck, MAX_SPEED_KMH, EARTH_RADIUS_KM } from '../src/security/physics';
-import { FixedWindowRateLimiter } from '../src/security/rate_limiter';
+import { SlidingWindowRateLimiter } from '../src/security/rate_limiter';
 import { hashPin, verifyPin } from '../src/auth/passwords';
 
 const lat = fc.float({ min: -90, max: 90, noNaN: true, noInteger: true });
@@ -118,7 +118,7 @@ test('physics: avance realista (~30 km/h) siempre es aceptado', () => {
 test('rate limiter: el presupuesto exacto pasa, el primero extra se bloquea y la ventana se resetea', async () => {
   fc.assert(
     fc.property(fc.nat({ max: 30 }), fc.nat({ max: 50 }), (windowMs, leadMs) => {
-      const limiter = new FixedWindowRateLimiter(3, Math.max(windowMs, 5));
+      const limiter = new SlidingWindowRateLimiter(3, Math.max(windowMs, 5));
       assert.equal(limiter.allow('k'), true);
       assert.equal(limiter.allow('k'), true);
       assert.equal(limiter.allow('k'), true);
@@ -128,7 +128,7 @@ test('rate limiter: el presupuesto exacto pasa, el primero extra se bloquea y la
     }),
     { numRuns: 50 },
   );
-  const limiter = new FixedWindowRateLimiter(2, 30);
+  const limiter = new SlidingWindowRateLimiter(2, 30);
   assert.equal(limiter.allow('k'), true);
   assert.equal(limiter.allow('k'), true);
   assert.equal(limiter.allow('k'), false);

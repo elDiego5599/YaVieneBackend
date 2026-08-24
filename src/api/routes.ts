@@ -31,7 +31,7 @@ import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords'
 import { signToken } from '../auth/tokens';
 import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
 import { getMetrics } from '../observability/metrics';
-import { adminRateLimiter, loginRateLimiter, requestKey } from '../security/rate_limiter';
+import { adminRateLimiter, loginRateLimiter, readRateLimiter, requestKey } from '../security/rate_limiter';
 import { getDb } from '../data/database';
 import { isBrokerReady } from '../mqtt/broker';
 import {
@@ -58,6 +58,18 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
 
 function writeError(res: ServerResponse, status: number, code: string, message: string): void {
   writeJson(res, status, { error: { code, message } });
+}
+
+/**
+ * Guarda de lecturas públicas: el catálogo y las posiciones son GET abiertos
+ * a internet que la app consulta cada pocos segundos. 120/min por IP deja
+ * trabajar a la app de verdad y frena el scraping; health/ready quedan fuera
+ * a propósito para no romper los sondeos de vida.
+ */
+function guardPublicRead(req: IncomingMessage, res: ServerResponse): boolean {
+  if (readRateLimiter.allow(requestKey(req, 'read'))) return true;
+  writeError(res, 429, 'TOO_MANY_REQUESTS', 'Demasiadas consultas, intenta más tarde');
+  return false;
 }
 
 function publicDriver(driver: NonNullable<ReturnType<typeof getDriver>>): Record<string, unknown> {
@@ -111,7 +123,8 @@ addRoute('GET', '/api/ready', (_req, res) => {
   }
 });
 
-addRoute('GET', '/api/companies', (_req, res) => {
+addRoute('GET', '/api/companies', (req, res) => {
+  if (!guardPublicRead(req, res)) return;
   const companies = getEmpresas().map((company) => ({
     id: company.companyId,
     name: company.name,
@@ -119,7 +132,8 @@ addRoute('GET', '/api/companies', (_req, res) => {
   writeJson(res, 200, companies);
 });
 
-addRoute('GET', '/api/companies/:id/routes', (_req, res, params) => {
+addRoute('GET', '/api/companies/:id/routes', (req, res, params) => {
+  if (!guardPublicRead(req, res)) return;
   const routes = getCompanyRoutes(params.id).map((route) => ({
     id: route.routeId,
     name: route.name,
@@ -132,16 +146,19 @@ addRoute('GET', '/api/companies/:id/routes', (_req, res, params) => {
   writeJson(res, 200, routes);
 });
 
-addRoute('GET', '/api/companies/:id/buses', (_req, res, params) => {
+addRoute('GET', '/api/companies/:id/buses', (req, res, params) => {
+  if (!guardPublicRead(req, res)) return;
   writeJson(res, 200, getCompanyBuses(params.id));
 });
 
-addRoute('GET', '/api/routes/:routeId/positions', (_req, res, params) => {
+addRoute('GET', '/api/routes/:routeId/positions', (req, res, params) => {
+  if (!guardPublicRead(req, res)) return;
   const positions = getPositionsByRoute(params.routeId).map(toPublicPosition);
   writeJson(res, 200, { routeId: params.routeId, buses: positions });
 });
 
-addRoute('GET', '/api/buses/:busId', (_req, res, params) => {
+addRoute('GET', '/api/buses/:busId', (req, res, params) => {
+  if (!guardPublicRead(req, res)) return;
   const bus = getPosition(params.busId);
   if (!bus) {
     writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');

@@ -6,6 +6,7 @@ import {
   HTTP_TLS_CERT_PATH,
   HTTP_TLS_KEY_PATH,
   BUS_TIMEOUT_MS,
+  CORS_ORIGINS,
 } from './config';
 import { closeBroker, PositionHandlingResult, startBroker } from './mqtt/broker';
 import { handleAPI } from './api/routes';
@@ -21,6 +22,7 @@ import {
 import { closeDb } from './data/database';
 import { cleanupRevokedSessions } from './data/sessions';
 import { dispatchLifecycleEvents, LifecycleEvent } from './data/lifecycle_events';
+import { flushMetrics, restoreMetrics } from './observability/metrics';
 import { DriverTokenPayload } from './auth/tokens';
 import {
   setupSocketServer,
@@ -58,8 +60,16 @@ import {
 // ─────────────────────────────────────────────────────────────────────
 
 const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS solo para orígenes autorizados explícitamente (CORS_ORIGINS): los
+  // clientes nativos no usan CORS y un navegador no autorizado no puede
+  // leer las respuestas.
+  const origin = req.headers.origin;
+  if (origin && CORS_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -267,12 +277,18 @@ server.listen(HTTP_PORT, '0.0.0.0', () => {
 
 loadVisibilityCache();
 loadBusCompanyCache();
+restoreMetrics();
+// Los contadores viven en memoria; a disco cada 30s para que un reinicio
+// no borre la señal operativa.
+const metricsFlushTimer = setInterval(flushMetrics, 30_000);
+metricsFlushTimer.unref();
 
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[Server] Shutting down from ${signal}...`);
   clearInterval(sweepTimer);
   clearInterval(sessionCleanupTimer);
   clearInterval(lifecycleDispatchTimer);
+  clearInterval(metricsFlushTimer);
   getIO()?.close();
   await closeBroker();
   await new Promise<void>((resolve) => {

@@ -1,0 +1,339 @@
+// Administración de flota: CRUD de buses por empresa, visibilidad y placas.
+// La visibilidad y la empresa del bus se cachean en memoria porque el camino
+// caliente (cada posición recibida / cada lectura pública) las consulta.
+import { getDb } from './database';
+import { queueLifecycleEvent } from './lifecycle_events';
+import { FleetBus, normalizeSentido } from './bus_types';
+import { getPosition } from './positions_store';
+
+export const visibilityCache = new Map<string, boolean>();
+export const busCompanyCache = new Map<string, string>();
+
+export function getBusCompanyId(busId: string): string | null {
+  const cached = busCompanyCache.get(busId);
+  if (cached !== undefined) return cached || null;
+  const row = getDb().prepare('SELECT company_id FROM buses WHERE bus_id = ?')
+    .get(busId) as { company_id: string } | undefined;
+  const value = row?.company_id ?? '';
+  busCompanyCache.set(busId, value);
+  return value || null;
+}
+
+export function loadVisibilityCache(): void {
+  const rows = getDb().prepare('SELECT bus_id, visible FROM buses').all() as {
+    bus_id: string;
+    visible: number;
+  }[];
+  visibilityCache.clear();
+  for (const row of rows) {
+    visibilityCache.set(row.bus_id, row.visible === 1);
+  }
+}
+
+export function loadBusCompanyCache(): void {
+  const rows = getDb().prepare('SELECT bus_id, company_id FROM buses').all() as {
+    bus_id: string;
+    company_id: string;
+  }[];
+  busCompanyCache.clear();
+  for (const row of rows) {
+    busCompanyCache.set(row.bus_id, row.company_id);
+  }
+}
+
+export function getBusVisibility(busId: string): boolean {
+  const cached = visibilityCache.get(busId);
+  if (cached !== undefined) return cached;
+  const row = getDb().prepare('SELECT visible FROM buses WHERE bus_id = ?')
+    .get(busId) as { visible: number } | undefined;
+  const value = row?.visible !== 0;
+  visibilityCache.set(busId, value);
+  return value;
+}
+
+export function getFleetPositions(companyId: string): FleetBus[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT b.bus_id, b.company_id, b.visible, b.plate_number, b.interno, b.route_id AS bus_route_id,
+           p.route_id, p.lat, p.lon, p.heading, p.speed_kmh, p.sentido,
+           p.timestamp, p.captured_at, p.sequence, p.is_ghost,
+           d.name AS driver_name
+    FROM buses b
+    LEFT JOIN positions p ON p.bus_id = b.bus_id
+    LEFT JOIN drivers d ON d.phone_number = p.driver_phone
+    WHERE b.company_id = ?
+    ORDER BY b.bus_id ASC
+  `).all(companyId) as {
+    bus_id: string;
+    company_id: string;
+    visible: number;
+    plate_number: string | null;
+    interno: string | null;
+    bus_route_id: string | null;
+    route_id: string | null;
+    lat: number | null;
+    lon: number | null;
+    heading: number | null;
+    speed_kmh: number | null;
+    sentido: string | null;
+    timestamp: number | null;
+    captured_at: number | null;
+    sequence: number | null;
+    is_ghost: number | null;
+    driver_name: string | null;
+  }[];
+
+  return rows.map((row) => ({
+    busId: row.bus_id,
+    companyId: row.company_id,
+    routeId: row.route_id ?? row.bus_route_id,
+    placa: row.plate_number ?? row.bus_id,
+    interno: row.interno ?? '',
+    driverName: row.driver_name,
+    visible: row.visible === 1,
+    online: row.timestamp != null,
+    lat: row.lat,
+    lon: row.lon,
+    heading: row.heading ?? 0,
+    speedKmh: row.speed_kmh ?? 0,
+    sentido: normalizeSentido(row.sentido),
+    capturedAt: row.captured_at ?? row.timestamp,
+    receivedAt: row.timestamp,
+    sequence: row.sequence,
+    isGhost: row.is_ghost === 1,
+  }));
+}
+
+export function createBus(
+  companyId: string,
+  placa: string,
+  routeId: string,
+  interno?: string,
+): FleetBus | null {
+  const normalized = normalizePlaca(placa);
+  if (!normalized) return null;
+  if (!routeId || !routeId.trim()) return null;
+  const busId = busIdFromPlaca(normalized);
+  const now = Date.now();
+  const db = getDb();
+
+  const existing = db.prepare('SELECT interno FROM buses WHERE bus_id = ?')
+    .get(busId) as { interno: string | null } | undefined;
+  const resolvedInterno = (interno ?? '').trim()
+    || existing?.interno
+    || String((db.prepare('SELECT COUNT(*) AS c FROM buses WHERE company_id = ?')
+        .get(companyId) as { c: number }).c + 1).padStart(3, '0');
+
+  const insert = db.prepare(`
+    INSERT INTO buses (bus_id, company_id, plate_number, route_id, interno, visible, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+    ON CONFLICT(bus_id) DO UPDATE SET
+      company_id = excluded.company_id,
+      plate_number = excluded.plate_number,
+      route_id = excluded.route_id,
+      interno = excluded.interno,
+      updated_at = excluded.updated_at
+  `);
+  insert.run(busId, companyId, normalized, routeId || null, resolvedInterno, now, now);
+  busCompanyCache.set(busId, companyId);
+  return {
+    busId,
+    companyId,
+    routeId: routeId || null,
+    placa: normalized,
+    interno: resolvedInterno,
+    driverName: null,
+    visible: false,
+    online: false,
+    lat: null,
+    lon: null,
+    heading: 0,
+    speedKmh: 0,
+    sentido: null,
+    capturedAt: null,
+    receivedAt: null,
+    sequence: null,
+    isGhost: false,
+  };
+}
+
+export function updateBus(
+  busId: string,
+  changes: { placa?: string; routeId?: string | null; interno?: string },
+): FleetBus | null {
+  const companyId = getBusCompanyId(busId);
+  if (!companyId) return null;
+  const db = getDb();
+
+  let newPlaca: string | null = null;
+  if (changes.placa !== undefined) {
+    newPlaca = normalizePlaca(changes.placa);
+    if (!newPlaca) return null;
+  }
+  const routeId = changes.routeId !== undefined ? changes.routeId : null;
+  const interno = changes.interno !== undefined ? changes.interno.trim() : null;
+
+  const dbUpdate = db.transaction(() => {
+    if (newPlaca) {
+      db.prepare('UPDATE buses SET plate_number = ?, updated_at = ? WHERE bus_id = ?')
+        .run(newPlaca, Date.now(), busId);
+    }
+    if (routeId !== null) {
+      db.prepare('UPDATE buses SET route_id = ?, updated_at = ? WHERE bus_id = ?')
+        .run(routeId || null, Date.now(), busId);
+    }
+    if (interno !== null) {
+      db.prepare('UPDATE buses SET interno = ?, updated_at = ? WHERE bus_id = ?')
+        .run(interno, Date.now(), busId);
+    }
+  });
+  dbUpdate();
+
+  const updated = getFleetPositions(companyId).find((b) => b.busId === busId);
+  return updated ?? null;
+}
+
+export function deleteBus(busId: string): { busId: string; routeId: string | null } | null {
+  const companyId = getBusCompanyId(busId);
+  if (!companyId) return null;
+  const db = getDb();
+
+  const remove = db.transaction(() => {
+    const position = db.prepare(
+      'SELECT route_id FROM positions WHERE bus_id = ?'
+    ).get(busId) as { route_id: string } | undefined;
+
+    const routeId = position?.route_id
+      ?? (db.prepare('SELECT route_id FROM buses WHERE bus_id = ?').get(busId) as { route_id: string | null } | undefined)?.route_id
+      ?? null;
+
+    db.prepare('DELETE FROM turn_assignments WHERE bus_id = ?').run(busId);
+    db.prepare('DELETE FROM positions WHERE bus_id = ?').run(busId);
+    db.prepare('DELETE FROM buses WHERE bus_id = ?').run(busId);
+
+    if (routeId) {
+      queueLifecycleEvent(db, 'bus:removed', routeId, { busId, routeId });
+    }
+    return routeId;
+  });
+  const routeId = remove();
+
+  busCompanyCache.delete(busId);
+  visibilityCache.delete(busId);
+  return { busId, routeId };
+}
+
+export function deleteAllBuses(companyId: string): number {
+  const db = getDb();
+  const remove = db.transaction(() => {
+    const buses = db.prepare('SELECT bus_id FROM buses WHERE company_id = ?')
+      .all(companyId) as { bus_id: string }[];
+    for (const bus of buses) {
+      const pos = db.prepare(
+        'SELECT route_id FROM positions WHERE bus_id = ? LIMIT 1',
+      ).get(bus.bus_id) as { route_id: string } | undefined;
+      const busRow = db.prepare(
+        'SELECT route_id FROM buses WHERE bus_id = ?',
+      ).get(bus.bus_id) as { route_id: string | null } | undefined;
+      const routeId = pos?.route_id ?? busRow?.route_id ?? null;
+      if (routeId) {
+        queueLifecycleEvent(db, 'bus:removed', routeId, {
+          busId: bus.bus_id,
+          routeId,
+        });
+      }
+    }
+    db.prepare('DELETE FROM positions WHERE bus_id IN (SELECT bus_id FROM buses WHERE company_id = ?)').run(companyId);
+    db.prepare('DELETE FROM turn_assignments WHERE bus_id IN (SELECT bus_id FROM buses WHERE company_id = ?)').run(companyId);
+    db.prepare('DELETE FROM buses WHERE company_id = ?').run(companyId);
+    return buses.length;
+  });
+  const count = remove();
+
+  const toClear = [...busCompanyCache.entries()]
+    .filter(([, c]) => c === companyId)
+    .map(([busId]) => busId);
+  for (const busId of toClear) {
+    busCompanyCache.delete(busId);
+    visibilityCache.delete(busId);
+  }
+  return count;
+}
+
+// Las placas reales son 3 letras + 3 números (SQA223). El id público del
+// bus deriva de la placa: BUS-SQA223.
+export function normalizePlaca(placa: string): string | null {
+  const cleaned = placa.trim().toUpperCase().replace(/\s+/g, '');
+  if (!/^[A-Z]{3}[0-9]{3}$/.test(cleaned)) return null;
+  return cleaned;
+}
+
+export function busIdFromPlaca(placa: string): string {
+  return 'BUS-' + placa.replace(/[^A-Z0-9]/g, '');
+}
+
+export function getCompanyBuses(companyId: string): {
+  busId: string;
+  placa: string;
+  routeId: string | null;
+  interno: string;
+  visible: boolean;
+}[] {
+  const rows = getDb().prepare(`
+    SELECT bus_id, plate_number, route_id, interno, visible
+    FROM buses
+    WHERE company_id = ?
+    ORDER BY interno ASC, bus_id ASC
+  `).all(companyId) as {
+    bus_id: string;
+    plate_number: string | null;
+    route_id: string | null;
+    interno: string | null;
+    visible: number;
+  }[];
+
+  return rows.map((row) => ({
+    busId: row.bus_id,
+    placa: row.plate_number ?? row.bus_id,
+    routeId: row.route_id,
+    interno: row.interno ?? '',
+    visible: row.visible === 1,
+  }));
+}
+
+export function setBusVisibility(
+  busId: string,
+  visible: boolean,
+): { busId: string; routeId: string; visible: boolean } | null {
+  const companyId = getBusCompanyId(busId);
+  if (!companyId) return null;
+
+  const db = getDb();
+  const update = db.transaction(() => {
+    db.prepare('UPDATE buses SET visible = ?, updated_at = ? WHERE bus_id = ?')
+      .run(visible ? 1 : 0, Date.now(), busId);
+
+    const position = getPosition(busId);
+    const routeId = position?.routeId ?? '';
+    queueLifecycleEvent(db, visible ? 'bus:visible' : 'bus:hidden', routeId, {
+      busId,
+      routeId,
+      ...(visible && position ? { position: { ...position, visible } } : {}),
+    });
+  });
+  update();
+
+  visibilityCache.set(busId, visible);
+  busCompanyCache.set(busId, companyId);
+  return { busId, routeId: getPosition(busId)?.routeId ?? '', visible };
+}
+
+export function setAllBusVisibility(companyId: string, visible: boolean): number {
+  const db = getDb();
+  const buses = db.prepare('SELECT bus_id FROM buses WHERE company_id = ?')
+    .all(companyId) as { bus_id: string }[];
+  for (const bus of buses) {
+    setBusVisibility(bus.bus_id, visible);
+  }
+  return buses.length;
+}

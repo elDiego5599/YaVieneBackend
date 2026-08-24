@@ -450,6 +450,33 @@ function initSchema(): void {
         ensureColumn(d, 'positions', 'sentido', 'TEXT');
       },
     },
+    {
+      version: 14,
+      apply: () => {
+        // Dead-letter del outbox: un evento que falla MAX_ATTEMPTS veces se
+        // marca con dead_at y deja de reclamarse (antes un evento venenoso
+        // reintenteaba cada 250 ms para siempre). El índice de created_at
+        // hace barata la purga de entregados y muertos.
+        ensureColumn(d, 'lifecycle_events', 'dead_at', 'INTEGER');
+        d.exec(
+          'CREATE INDEX IF NOT EXISTS idx_lifecycle_created ON lifecycle_events(created_at)',
+        );
+      },
+    },
+    {
+      version: 15,
+      apply: () => {
+        // Métricas persistidas: los contadores sobreviven al reinicio.
+        // Sin esto, cada deploy borraba la única señal operativa que
+        // teníamos de aceptación/rechazo de posiciones y autenticación.
+        d.exec(`
+          CREATE TABLE IF NOT EXISTS metrics (
+            name TEXT PRIMARY KEY,
+            value INTEGER NOT NULL
+          )
+        `);
+      },
+    },
   ];
 
   for (const migration of migrations) {

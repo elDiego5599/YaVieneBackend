@@ -1,4 +1,4 @@
-import aedes from 'aedes';
+import aedes, { type Client, type PublishPacket } from 'aedes';
 import { createServer as createNetServer, Server } from 'net';
 import { createServer as createTlsServer } from 'tls';
 import http from 'http';
@@ -23,11 +23,11 @@ const mqemitterModule = require('mqemitter');
 const MQEmitterClass = mqemitterModule.MQEmitter ?? mqemitterModule;
 const originalMqDo = MQEmitterClass.prototype._do as (
   message: unknown,
-  callback: (...args: any[]) => void,
+  callback: (...args: unknown[]) => void,
 ) => unknown;
 MQEmitterClass.prototype._do = function patchedDo(
   message: unknown,
-  callback: (...args: any[]) => void,
+  callback: (...args: unknown[]) => void,
 ): unknown {
   (this as { _doing: boolean })._doing = true;
   const self = this;
@@ -37,13 +37,31 @@ MQEmitterClass.prototype._do = function patchedDo(
   return this;
 };
 
+type AedesBroker = InstanceType<typeof aedes>;
+
+// aedes guarda los clientes vivos en `.clients` pero no lo declara en sus
+// tipos: en vez de `any` por todo el archivo, el acceso vive aquí dentro.
+interface AedesWithClients extends AedesBroker {
+  clients: Record<string, Client>;
+}
+
+function clientsOf(broker: AedesBroker): Record<string, Client> {
+  return (broker as AedesWithClients).clients;
+}
+
 let brokerReady = false;
 let brokerServer: Server | null = null;
 let brokerWs: WebSocketServer | null = null;
-let aedesInstance: any = null;
+let aedesInstance: AedesBroker | null = null;
 let sessionSweepTimer: NodeJS.Timeout | null = null;
 const SESSION_SWEEP_MS = 5_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
+
+// El payload JWT del conductor autenticado, por cliente. Antes se colgaba
+// como propiedad extra sobre el objeto Client con casts a `any`; un WeakMap
+// tipado hace lo mismo sin mentirle al compilador (y se limpia solo cuando
+// el cliente es recolectado).
+const clientAuth = new WeakMap<Client, DriverTokenPayload>();
 
 export function isBrokerReady(): boolean {
   return brokerReady;
@@ -76,7 +94,7 @@ export async function closeBroker(): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
-function forceCloseClient(broker: any, client: any, reason: string): void {
+function forceCloseClient(broker: AedesBroker, client: Client, reason: string): void {
   try {
     if (client && !client.closed) {
       console.warn(`[MQTT] Closing client ${client.id}: ${reason}`);
@@ -107,12 +125,12 @@ export function startBroker(
   httpServer?: http.Server,
   wsPath = '/mqtt',
 ): Promise<Server> {
-  const broker: any = new aedes();
+  const broker: AedesBroker = new aedes();
   aedesInstance = broker;
   const debugLogs = process.env.MQTT_DEBUG_LOGS === 'true';
 
   // ── Candado 1: JWT authentication ──────────────────────────────────
-  broker.authenticate = (client: any, username: string | undefined, password: Buffer | undefined, callback: any) => {
+  broker.authenticate = (client, _username, password, callback) => {
     if (!password) {
       incrementMetric('mqtt.auth.rejected');
       return callback(null, false);
@@ -135,11 +153,11 @@ export function startBroker(
       // el timeout de keepalive (~15s de rechazos).
       const ownedBy = getSession(driverPayload.sessionId)?.clientId ?? null;
       if (ownedBy) {
-        const owner = (broker.clients as Record<string, any> | undefined)?.[ownedBy];
+        const owner = clientsOf(broker)[ownedBy];
         if (!owner || owner.closed) {
           releaseSession(driverPayload.sessionId, ownedBy);
           if (claimSession(driverPayload.sessionId, client.id)) {
-            (client as any).authPayload = driverPayload;
+            clientAuth.set(client, driverPayload);
             incrementMetric('mqtt.auth.accepted');
             console.log(`[MQTT] Auth OK (claim robado): ${driverPayload.phoneNumber} (bus ${driverPayload.busId})`);
             return callback(null, true);
@@ -151,29 +169,35 @@ export function startBroker(
       return callback(null, false);
     }
 
-    (client as any).authPayload = driverPayload;
+    clientAuth.set(client, driverPayload);
     incrementMetric('mqtt.auth.accepted');
     console.log(`[MQTT] Auth OK: ${driverPayload.phoneNumber} (bus ${driverPayload.busId})`);
     callback(null, true);
   };
 
-  // ── Candado 1: Authorize publish — solo su propio topic ────────────
-  broker.authorizePublish = (client: any, packet: any, callback: any) => {
-    const payload: any = (client as any).authPayload;
+  // ── Candado 2: Authorize publish — solo su propio topic ────────────
+  broker.authorizePublish = (client, packet, callback) => {
+    // Un publish puede llegar con client null (p. ej. bridge interno): sin
+    // identidad no hay permiso.
+    if (!client) {
+      incrementMetric('mqtt.publish.rejected_no_auth');
+      return callback(null);
+    }
+    const payload = clientAuth.get(client);
     const topic = packet.topic;
 
     if (!payload) {
       incrementMetric('mqtt.publish.rejected_no_auth');
       console.warn(`[MQTT] authorizePublish: no authPayload for client ${client.id}`);
       forceCloseClient(broker, client, 'publish sin authPayload');
-      return callback(null, false);
+      return callback(null);
     }
 
     if (!isSessionAuthorized(payload.sessionId, client.id)) {
       incrementMetric('mqtt.publish.rejected_session');
       console.warn(`[MQTT] Session no longer authorized for client ${client.id}`);
       forceCloseClient(broker, client, 'sesión revocada o reclamada por otro dispositivo');
-      return callback(null, false);
+      return callback(null);
     }
 
     const expectedTopic = `empresa/${payload.companyId}/bus/${payload.busId}/posicion`;
@@ -184,20 +208,21 @@ export function startBroker(
       incrementMetric('mqtt.publish.rejected_topic');
       console.warn(`[MQTT] TOPIC HIJACKING: ${payload.phoneNumber} (bus ${payload.busId}) intentó publicar a ${topic}`);
       forceCloseClient(broker, client, `topic hijacking: ${topic}`);
-      return callback(null, false);
+      // El cliente ya está cerrándose: el paquete no llega a repartirse.
+      return callback(null);
     }
 
     incrementMetric('mqtt.publish.authorized');
-    callback(null, true);
+    callback(null);
   };
 
-  broker.authorizeSubscribe = (client: any, subscription: any, callback: any) => {
-    const payload = (client as any).authPayload as DriverTokenPayload | undefined;
+  broker.authorizeSubscribe = (client, subscription, callback) => {
+    const payload = client ? clientAuth.get(client) : undefined;
     const expectedTopic = payload
       ? `empresa/${payload.companyId}/bus/${payload.busId}/ack`
       : null;
 
-    if (!payload || subscription.topic !== expectedTopic || !isSessionAuthorized(payload.sessionId, client.id)) {
+    if (!payload || !client || subscription.topic !== expectedTopic || !isSessionAuthorized(payload.sessionId, client.id)) {
       incrementMetric('mqtt.subscribe.rejected');
       return callback(null, null);
     }
@@ -218,14 +243,15 @@ export function startBroker(
       receivedAt: Date.now(),
     }));
 
-    broker.publish({
+    const packet: PublishPacket = {
       cmd: 'publish',
       topic,
       payload,
       qos: 0,
       retain: false,
       dup: false,
-    }, (error: Error | undefined) => {
+    };
+    broker.publish(packet, (error?: Error) => {
       if (error) {
         incrementMetric('mqtt.ack.publish_error');
         console.error('[MQTT] ACK publish error:', error.message);
@@ -235,7 +261,7 @@ export function startBroker(
     });
   }
 
-  broker.on('publish', (packet: any, client: any) => {
+  broker.on('publish', (packet: PublishPacket, client: Client | null) => {
     if (debugLogs) {
       console.log(`[MQTT] publish event: client=${client?.id ?? 'null'} topic=${packet.topic}`);
     }
@@ -249,7 +275,7 @@ export function startBroker(
     if (matchesNew || matchesOld) {
       incrementMetric('mqtt.messages.received');
       try {
-        const authPayload = (client as any).authPayload as DriverTokenPayload | undefined;
+        const authPayload = clientAuth.get(client);
         if (!authPayload) return;
         const payload = JSON.parse(packet.payload.toString());
         const result = onMessage(client.id, authPayload, topic, payload);
@@ -263,8 +289,8 @@ export function startBroker(
     }
   });
 
-  broker.on('clientDisconnect', (client: any) => {
-    const authPayload = client.authPayload as DriverTokenPayload | undefined;
+  broker.on('clientDisconnect', (client: Client) => {
+    const authPayload = clientAuth.get(client);
     if (authPayload && onDisconnect) {
       if (!releaseSession(authPayload.sessionId, client.id as string)) return;
       console.log(`[MQTT] Disconnect: ${authPayload.phoneNumber} (bus ${authPayload.busId})`);
@@ -274,8 +300,8 @@ export function startBroker(
 
   // ── Sweep de sesiones: cierra clientes cuya sesión fue revocada (2º celular) ──
   sessionSweepTimer = setInterval(() => {
-    for (const client of Object.values(broker.clients as Record<string, any>)) {
-      const payload = client?.authPayload as DriverTokenPayload | undefined;
+    for (const client of Object.values(clientsOf(broker))) {
+      const payload = client ? clientAuth.get(client) : undefined;
       if (!payload) continue;
       if (client.closed) continue;
       if (!isSessionAuthorized(payload.sessionId, client.id)) {

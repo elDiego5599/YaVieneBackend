@@ -1,6 +1,6 @@
 import { Server as HTTPServer } from 'http';
 import { Server } from 'socket.io';
-import { WS_PATH } from '../config';
+import { WS_PATH, CORS_ORIGINS } from '../config';
 import {
   getPositionsByRoute,
   toPublicPosition,
@@ -78,7 +78,9 @@ function adminFromHandshake(auth: unknown): AdminTokenPayload | null {
 export function setupSocketServer(httpServer: HTTPServer): Server {
   io = new Server(httpServer, {
     path: WS_PATH,
-    cors: { origin: '*', methods: ['GET', 'POST'] },
+    // Mismo criterio que el HTTP: solo orígenes de navegador autorizados.
+    // Los clientes nativos no envían Origin y no pasan por aquí.
+    cors: { origin: CORS_ORIGINS, methods: ['GET', 'POST'] },
     pingInterval: 10000,
     pingTimeout: 5000,
   });

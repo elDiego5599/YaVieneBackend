@@ -6,7 +6,7 @@ process.env.ADMIN_API_KEY = 'test-admin-key';
 
 import { hashPin, verifyPin } from '../src/auth/passwords';
 import { signToken, verifyToken } from '../src/auth/tokens';
-import { FixedWindowRateLimiter } from '../src/security/rate_limiter';
+import { SlidingWindowRateLimiter } from '../src/security/rate_limiter';
 
 test('PIN hashing never validates the wrong PIN', () => {
   const hash = hashPin('2468');
@@ -32,7 +32,7 @@ test('JWT validates canonical claims and rejects tampering', () => {
 });
 
 test('rate limiter rejects after the configured window budget', () => {
-  const limiter = new FixedWindowRateLimiter(2, 60_000);
+  const limiter = new SlidingWindowRateLimiter(2, 60_000);
   assert.equal(limiter.allow('test-key'), true);
   assert.equal(limiter.allow('test-key'), true);
   assert.equal(limiter.allow('test-key'), false);
