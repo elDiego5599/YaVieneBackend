@@ -152,16 +152,33 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
       const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/empresas/${companyId}/admin`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
-        body: JSON.stringify({ username, password: 'secret123' }),
+        body: JSON.stringify({ username, password: 'secret123-de-prueba' }),
       });
       assert.equal(res.status, 201);
+    }
+
+    // El panel es la llave de toda la flota: la ruta HTTP pedía 8 caracteres
+    // mientras crear-admin-empresa.mjs pedía 12, así que por HTTP entraban
+    // cuentas más débiles que las que el propio proyecto acepta. Ahora las
+    // dos piden 12, y esto lo deja clavado.
+    async function createAdminConClave(
+      companyId: string,
+      username: string,
+      password: string,
+    ): Promise<number> {
+      const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/empresas/${companyId}/admin`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
+        body: JSON.stringify({ username, password }),
+      });
+      return res.status;
     }
 
     async function adminLogin(username: string): Promise<{ token: string; companyId: string }> {
       const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username, password: 'secret123' }),
+        body: JSON.stringify({ username, password: 'secret123-de-prueba' }),
       });
       assert.equal(res.status, 200);
       const body = (await res.json()) as { token: string; company: { companyId: string } };
@@ -189,6 +206,17 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
     await provisionDriver(phone2, bus2, company2);
     await createAdmin(company1, 'boss1');
     await createAdmin(company2, 'boss2');
+
+    assert.equal(
+      await createAdminConClave(company1, 'debilucho', 'secret123'),
+      400,
+      'una clave de 9 caracteres no debe crear cuenta de panel',
+    );
+    assert.equal(
+      await createAdminConClave(company1, 'justito', 'doceexactos'.padEnd(12, '!')),
+      201,
+      'doce caracteres sí deben bastar',
+    );
     const admin1 = await adminLogin('boss1');
     const admin2 = await adminLogin('boss2');
 
@@ -326,7 +354,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
       const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/empresas/${company}/admin`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
-        body: JSON.stringify({ username, password: 'secret123' }),
+        body: JSON.stringify({ username, password: 'secret123-de-prueba' }),
       });
       assert.equal(res.status, 201);
     };
@@ -334,7 +362,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     const login = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'crudboss', password: 'secret123' }),
+      body: JSON.stringify({ username: 'crudboss', password: 'secret123-de-prueba' }),
     });
     assert.equal(login.status, 200);
     const { token } = (await login.json()) as { token: string };

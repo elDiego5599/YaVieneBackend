@@ -34,7 +34,11 @@ export type TokenPayload = DriverTokenPayload | AdminTokenPayload;
 
 export function signToken(payload: TokenPayload): string {
   return jwt.sign(payload, jwtSecret(), {
-    expiresIn: '24h',
+    // El token del panel dura una jornada: es la llave de toda la flota y
+    // suele quedarse abierto en un computador de oficina. El del conductor
+    // sigue en 24h a propósito, porque es el que sostiene la conexión MQTT
+    // del bus: expirarlo a las 8 horas dejaría al bus mudo a media jornada.
+    expiresIn: payload.role === 'admin' ? '8h' : '24h',
     issuer: JWT_ISSUER,
     audience: JWT_AUDIENCE,
   });

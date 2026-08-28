@@ -369,8 +369,11 @@ addRoute('POST', '/api/admin/empresas/:companyId/admin', (req, res, params, body
     ? body.username.trim().toLowerCase() : '';
   const password = typeof body?.password === 'string' ? body.password : '';
 
-  if (!username || password.length < 8) {
-    writeError(res, 400, 'INVALID_ADMIN_CREDENTIALS', 'username and a password of at least 8 characters are required');
+  // 12, igual que scripts/crear-admin-empresa.mjs: la ruta HTTP pedía 8 y el
+  // script 12, así que por aquí entraban cuentas de panel más débiles que
+  // las que el propio proyecto considera aceptables.
+  if (!username || password.length < 12) {
+    writeError(res, 400, 'INVALID_ADMIN_CREDENTIALS', 'username and a password of at least 12 characters are required');
     return;
   }
 
