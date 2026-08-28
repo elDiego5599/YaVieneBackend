@@ -180,7 +180,7 @@ test('DAST-lite: SQLi/XSS/JSON gigante/verbos raros nunca producen 5xx', async (
       ['POST', '/api/admin/login', JSON.stringify({ username: '<script>alert(1)</script>', password: String({ a: 1 }) })],
       ['POST', '/api/auth/login', '{"phoneNumber":"3000000000!","pin":"1234"}'],
       ['POST', '/api/auth/login', '{'.repeat(500_000)],
-      ['POST', '/api/demo/buses', JSON.stringify({ companyId: '$ne', routeId: "''" })],
+      ['POST', '/api/fleet/buses', JSON.stringify({ companyId: '$ne', routeId: "''" })],
       ['GET', `/api/company/routes?companyId=${encodeURIComponent("EMP-01' OR 1=1")}`, null],
       ['GET', `/api/drivers/${encodeURIComponent('../../etc/passwd')}`, null],
       ['PATCH', '/api/health', JSON.stringify({ x: 1 })],

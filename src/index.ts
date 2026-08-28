@@ -44,13 +44,6 @@ if (!process.env.JWT_SECRET) {
   );
 }
 
-// DEMO_MODE habilita /api/demo/session y /api/demo/buses sin autenticación
-// (son harness de prueba, ver docs de arquitectura) — nunca debe llegar
-// activo a un despliegue con NODE_ENV=production.
-if (process.env.DEMO_MODE === '1' && process.env.NODE_ENV === 'production') {
-  throw new Error('DEMO_MODE no puede quedar activo en producción');
-}
-
 // ── Candado 3: Sanity check de física imposible (módulo puro, ver security/physics.ts) ──
 import {
   haversineDistanceKm,

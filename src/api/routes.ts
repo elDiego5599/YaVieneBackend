@@ -1,7 +1,5 @@
 import { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
-import { spawn } from 'child_process';
-import { join } from 'path';
 import {
   getDriver,
   endAssignment,
@@ -314,151 +312,12 @@ addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
   });
 });
 
-const DEMO_MODE = process.env.DEMO_MODE === '1';
-
-addRoute('POST', '/api/demo/session', (req, res, _params, body) => {
-  if (!DEMO_MODE) {
-    writeError(res, 404, 'NOT_FOUND', 'Endpoint not found');
-    return;
-  }
-  if (!adminRateLimiter.allow(requestKey(req, 'demo-session'))) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many demo session requests');
-    return;
-  }
-
-  const companyId = typeof body?.companyId === 'string' ? body.companyId : '';
-  const busId = typeof body?.busId === 'string' ? body.busId : '';
-  const routeId = typeof body?.routeId === 'string' ? body.routeId : '';
-
-  if (!companyId || !busId || !routeId) {
-    writeError(res, 400, 'INVALID_DEMO_SESSION', 'companyId, busId and routeId are required');
-    return;
-  }
-
-  const busCompany = getBusCompanyId(busId);
-  if (!busCompany || busCompany !== companyId) {
-    writeError(res, 403, 'BUS_FORBIDDEN', 'The bus does not belong to this company');
-    return;
-  }
-  const route = getCompanyRoutes(companyId).find((r) => r.routeId === routeId);
-  if (!route) {
-    writeError(res, 404, 'ROUTE_NOT_FOUND', 'The route does not belong to this company');
-    return;
-  }
-
-  const phoneNumber = `demo:${busId}`;
-  const driver = registerDriver(phoneNumber, 'Demo Sobusa', routeId, {
-    companyId,
-    busId,
-    pinHash: hashPin('1234'),
-  });
-  revokeSessionsForDriver(driver.driverId);
-
-  const sessionId = randomUUID();
-  const token = signToken({
-    sub: driver.driverId,
-    driverId: driver.driverId,
-    phoneNumber,
-    role: 'driver',
-    companyId,
-    busId,
-    routeId,
-    sessionId,
-  });
-
-  createDriverSession({
-    sessionId,
-    driverId: driver.driverId,
-    phoneNumber,
-    companyId,
-    busId,
-    routeId,
-  });
-
-  writeJson(res, 200, {
-    driver: publicDriver(driver),
-    token,
-  });
-});
-
-// ── Demo: buses simulados bajo demanda ──────────────────────────────
-// Cuando el pasajero entra a "Ver buses en vivo", el backend lanza 2
-// simuladores de la ruta elegida: uno que ya pasó (80%) y uno que viene
-// (15%). Cada llamada mata los anteriores y los relanza desde el inicio.
-const DEMO_SIMS = new Set<ReturnType<typeof spawn>>();
-let DEMO_SIM_PHONE = 3_000_000_000;
-
-function spawnDemoSim(busId: string, fraction: string, routeId: string, companyId: string): void {
-  const phone = `${DEMO_SIM_PHONE++}`;
-  const child = spawn('node', ['scripts/simulate-bus.mjs'], {
-    cwd: join(__dirname, '..', '..'),
-    env: {
-      ...process.env,
-      BUS_ID: busId,
-      ROUTE_ID: routeId,
-      EMPRESA_ID: companyId,
-      PHONE: phone,
-      PIN: '1234',
-      START_FRACTION: fraction,
-      SENTIDO: 'ida',
-      CAPTURE_INTERVAL_MS: '400',
-    },
-    stdio: 'ignore',
-  });
-  child.on('exit', () => DEMO_SIMS.delete(child));
-  DEMO_SIMS.add(child);
-}
-
-addRoute('POST', '/api/demo/buses', (req, res, _params, body) => {
-  if (!DEMO_MODE) {
-    writeError(res, 404, 'NOT_FOUND', 'Endpoint not found');
-    return;
-  }
-  if (!adminRateLimiter.allow(requestKey(req, 'demo-buses'))) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many demo bus requests');
-    return;
-  }
-
-  const companyId = typeof body?.companyId === 'string' ? body.companyId : '';
-  const routeId = typeof body?.routeId === 'string' ? body.routeId : '';
-  if (!companyId || !routeId) {
-    writeError(res, 400, 'INVALID_DEMO_BUSES', 'companyId and routeId are required');
-    return;
-  }
-  if (!getCompanyRoutes(companyId).some((r) => r.routeId === routeId)) {
-    writeError(res, 404, 'ROUTE_NOT_FOUND', 'The route does not belong to this company');
-    return;
-  }
-
-  for (const child of DEMO_SIMS) {
-    try {
-      child.kill('SIGTERM');
-    } catch {
-      /* proceso ya terminado */
-    }
-  }
-  DEMO_SIMS.clear();
-
-  spawnDemoSim('B-042', '0.80', routeId, companyId);
-  spawnDemoSim('B-055', '0.15', routeId, companyId);
-
-  // Los buses demo deben difundirse al pasajero: el registro del simulador
-  // crea el bus con visible=false; se marca visible apenas exista.
-  for (const busId of ['B-042', 'B-055']) {
-    let attempts = 0;
-    const timer = setInterval(() => {
-      attempts++;
-      if (setBusVisibility(busId, true)) {
-        clearInterval(timer);
-      } else if (attempts >= 20) {
-        clearInterval(timer);
-        console.warn(`[DEMO] No se pudo marcar ${busId} como visible`);
-      }
-    }, 500);
-  }
-
-  writeJson(res, 200, { started: true, routeId, buses: ['B-042', 'B-055'] });
-});
+// Aquí vivían POST /api/demo/session y POST /api/demo/buses. El primero
+// entregaba una sesión de conductor sobre un bus real sin pedir
+// autenticación —bastaba con leer el busId de la ruta pública— y de paso
+// echaba la sesión legítima del bus. Los buses simulados de la demo se
+// arrancan ahora desde el servidor con scripts/demo-buses.sh, que se
+// autentica como cualquier otro cliente.
 
 addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
   const username = typeof body?.username === 'string'

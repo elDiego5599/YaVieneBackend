@@ -1,7 +1,7 @@
 .PHONY: dev build start test
 
 # Levanta el backend con local.env cargado (como lo hace start-test.sh).
-# Requiere: npm install y local.env con JWT_SECRET, ADMIN_API_KEY, DEMO_MODE.
+# Requiere: npm install y local.env con JWT_SECRET y ADMIN_API_KEY.
 dev:
 	set -a && source local.env && set +a && npm run dev
 
