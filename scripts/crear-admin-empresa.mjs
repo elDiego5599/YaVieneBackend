@@ -1,0 +1,48 @@
+/**
+ * Crea o actualiza la cuenta de un admin de empresa para app_control.
+ *
+ * Uso:
+ *   node scripts/crear-admin-empresa.mjs <companyId> <username> <password> [nombreEmpresa]
+ *
+ * Reemplaza el hardcodeo de admin/admin123: cada empresa real del piloto
+ * recibe su propia cuenta corriendo esto, en vez de tocar la base a mano.
+ */
+import Database from 'better-sqlite3';
+import { randomBytes, randomUUID, scryptSync } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const DB_PATH = process.env.YA_VIENE_DB_PATH || path.join(ROOT, 'data', 'yaviene.db');
+const KEY_LENGTH = 64;
+
+const [companyId, username, password, name] = process.argv.slice(2);
+if (!companyId || !username || !password) {
+  console.error('Uso: node scripts/crear-admin-empresa.mjs <companyId> <username> <password> [nombreEmpresa]');
+  process.exit(1);
+}
+
+function hashSecret(secret) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(secret, salt, KEY_LENGTH).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+const db = new Database(DB_PATH);
+db.pragma('journal_mode = WAL');
+
+db.prepare(`
+  INSERT OR IGNORE INTO empresas (company_id, name, created_at)
+  VALUES (?, ?, ?)
+`).run(companyId, name ?? companyId, Date.now());
+
+db.prepare(`
+  INSERT INTO empresa_admins (admin_id, company_id, username, password_hash, created_at)
+  VALUES (?, ?, ?, ?, ?)
+  ON CONFLICT(username) DO UPDATE SET
+    company_id = excluded.company_id,
+    password_hash = excluded.password_hash
+`).run(randomUUID(), companyId, username, hashSecret(password), Date.now());
+
+db.close();
+console.log(`[OK] Admin '${username}' listo para la empresa '${companyId}'.`);
