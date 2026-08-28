@@ -55,6 +55,10 @@ export function createOrUpdateCompanyAdmin(
   username: string,
   passwordHash: string,
 ): EmpresaAdmin {
+  // El login busca por `username.trim().toLowerCase()`, así que guardarlo
+  // con mayúsculas creaba una cuenta que nunca podía entrar. Se normaliza
+  // aquí para que ningún camino de creación pueda dejarla inservible.
+  const normalized = username.trim().toLowerCase();
   const db = getDb();
   db.prepare(`
     INSERT INTO empresa_admins (admin_id, company_id, username, password_hash, created_at)
@@ -62,13 +66,13 @@ export function createOrUpdateCompanyAdmin(
     ON CONFLICT(username) DO UPDATE SET
       company_id = excluded.company_id,
       password_hash = excluded.password_hash
-  `).run(randomUUID(), companyId, username, passwordHash, Date.now());
+  `).run(randomUUID(), companyId, normalized, passwordHash, Date.now());
 
   const row = db.prepare(`
     SELECT admin_id, company_id, username, password_hash
     FROM empresa_admins
     WHERE username = ?
-  `).get(username) as AdminRow;
+  `).get(normalized) as AdminRow;
   return rowToAdmin(row);
 }
 

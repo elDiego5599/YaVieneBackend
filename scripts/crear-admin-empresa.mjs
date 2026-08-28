@@ -16,9 +16,20 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const DB_PATH = process.env.YA_VIENE_DB_PATH || path.join(ROOT, 'data', 'yaviene.db');
 const KEY_LENGTH = 64;
 
-const [companyId, username, password, name] = process.argv.slice(2);
-if (!companyId || !username || !password) {
+const MIN_PASSWORD = 12;
+
+const [companyId, rawUsername, password, name] = process.argv.slice(2);
+if (!companyId || !rawUsername || !password) {
   console.error('Uso: node scripts/crear-admin-empresa.mjs <companyId> <username> <password> [nombreEmpresa]');
+  process.exit(1);
+}
+
+// El login normaliza el usuario a minúsculas antes de buscarlo; guardarlo
+// de otra forma crea una cuenta que nunca puede entrar.
+const username = rawUsername.trim().toLowerCase();
+
+if (password.length < MIN_PASSWORD) {
+  console.error(`La contraseña debe tener al menos ${MIN_PASSWORD} caracteres (el panel es la llave de toda la flota).`);
   process.exit(1);
 }
 
