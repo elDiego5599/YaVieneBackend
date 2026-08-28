@@ -250,6 +250,11 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
     const batch = await batch2;
     assert.equal(batch.buses.some((b: any) => b.busId === bus1), false);
 
+    // Bug corregido: consultarlo por ID tampoco debe filtrar su posición real
+    const hiddenById = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/buses/${bus1}`);
+    assert.equal(hiddenById.status, 200);
+    assert.deepEqual(await hiddenById.json(), { busId: bus1, visible: false });
+
     // Mostrar: el pasajero recibe bus:visible con posición y vuelven las posiciones
     const visibleEvent = waitForSocketEvent(passenger, 'bus:visible', (p) => p?.busId === bus1);
     assert.equal(await toggleVisibility(admin1.token, bus1, true), 200);

@@ -199,15 +199,16 @@ export function removePositionOwned(busId: string, sessionId: string): BusPositi
   return remove();
 }
 
-export function getPosition(busId: string): BusPosition | null {
+export function getPosition(busId: string): (BusPosition & { visible: boolean }) | null {
   const db = getDb();
   const row = db.prepare(`
-    SELECT p.*, b.company_id AS bus_company_id
+    SELECT p.*, b.company_id AS bus_company_id, b.visible AS bus_visible
     FROM positions p
     LEFT JOIN buses b ON b.bus_id = p.bus_id
     WHERE p.bus_id = ?
   `).get(busId) as PositionRow | undefined;
-  return row ? rowToPosition(row) : null;
+  if (!row) return null;
+  return { ...rowToPosition(row), visible: row.bus_visible !== 0 };
 }
 
 export function getPositionSequence(busId: string, sessionId: string): number | null {

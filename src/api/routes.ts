@@ -164,7 +164,12 @@ addRoute('GET', '/api/buses/:busId', (req, res, params) => {
     writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
     return;
   }
-  writeJson(res, 200, toPublicPosition(bus));
+  const { visible, ...position } = bus;
+  if (!visible) {
+    writeJson(res, 200, { busId: bus.busId, visible: false });
+    return;
+  }
+  writeJson(res, 200, toPublicPosition(position));
 });
 
 addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {

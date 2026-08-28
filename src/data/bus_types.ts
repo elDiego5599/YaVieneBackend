@@ -75,6 +75,7 @@ export interface PositionRow {
   sequence: number | null;
   is_ghost: number;
   bus_company_id?: string | null;
+  bus_visible?: number | null;
 }
 
 export function normalizeSentido(raw: string | null | undefined): 'ida' | 'venida' | null {
