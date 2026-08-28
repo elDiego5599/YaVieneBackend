@@ -8,9 +8,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-set -a
-source local.env
-set +a
+# En el portátil las variables salen de local.env. Dentro de la máquina de
+# Fly ese archivo no existe —lo excluye .dockerignore porque lleva
+# JWT_SECRET y ADMIN_API_KEY— y las variables ya vienen del entorno (fly
+# secrets). Sin este `if`, `set -e` mataba el script en la línea del source.
+if [ -f local.env ]; then
+  set -a
+  source local.env
+  set +a
+fi
 
 CAPTURE_INTERVAL_MS="${CAPTURE_INTERVAL_MS:-400}"
 ROUTE_ID="${ROUTE_ID:-R-106}"

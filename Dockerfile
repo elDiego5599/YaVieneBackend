@@ -6,7 +6,11 @@
 # corre es el JavaScript ya compilado.
 
 # ── Etapa de compilación ─────────────────────────────────────────────
-FROM node:20-alpine AS build
+# Node 22, no 20: better-sqlite3@13 declara `engines: node >=22`, y npm no
+# lo impone salvo con engine-strict. Sobre node:20 compila sin una sola
+# queja y el binario nativo revienta con SIGSEGV al primer uso, sin imprimir
+# nada. Si se toca esta versión, que sea >= la que pida better-sqlite3.
+FROM node:22-alpine AS build
 WORKDIR /app
 
 # better-sqlite3 es un módulo nativo y no publica binario precompilado para
@@ -27,7 +31,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # ── Imagen final ─────────────────────────────────────────────────────
-FROM node:20-alpine
+FROM node:22-alpine
 WORKDIR /app
 
 # NODE_ENV=production no es decorativo: hace obligatorios JWT_SECRET

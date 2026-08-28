@@ -5,7 +5,11 @@
 # que la URL cambiaba había que recompilar y repartir las dos apps de nuevo.
 
 app = "ya-viene-backend"
-primary_region = "bog"   # Bogotá, la región más cercana a Barranquilla.
+# Fly retiró Bogotá, Miami y Santiago: de las regiones que quedan, la más
+# cercana a Barranquilla en tiempo de red es Ashburn. El tráfico de los ISP
+# colombianos sale por Miami y de ahí sube a la costa este, así que iad es
+# el salto más corto disponible (~60 ms) — dfw y gru quedan más lejos.
+primary_region = "iad"
 
 [build]
 
