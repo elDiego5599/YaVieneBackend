@@ -263,9 +263,14 @@ startBroker(
   server,
 );
 
-server.listen(HTTP_PORT, '0.0.0.0', () => {
+// '::' y no '0.0.0.0': en doble pila (ipv6Only=false por defecto en Node)
+// acepta IPv4 e IPv6 a la vez. Con '0.0.0.0' el socket era solo IPv4, y
+// `localhost` resuelve primero a ::1 en macOS: el panel pedía
+// http://localhost:3000, se topaba con conexión rechazada en IPv6 y
+// mostraba "No se pudo conectar con el servidor" con el backend corriendo.
+server.listen(HTTP_PORT, '::', () => {
   const scheme = HTTP_TLS_CERT_PATH && HTTP_TLS_KEY_PATH ? 'https' : 'http';
-  console.log(`[HTTP] Server listening on ${scheme}://0.0.0.0:${HTTP_PORT}`);
+  console.log(`[HTTP] Server listening on ${scheme}://[::]:${HTTP_PORT} (IPv4+IPv6)`);
 });
 
 loadVisibilityCache();
