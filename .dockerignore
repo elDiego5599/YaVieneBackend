@@ -1,0 +1,25 @@
+# Lo que NUNCA debe entrar en la imagen publicada.
+#
+# El Dockerfile ahora copia solo lo que necesita (src, scripts, tsconfig,
+# package*.json), pero este archivo es el cinturón de seguridad: si alguien
+# vuelve a poner un `COPY . .`, estas dos primeras líneas son las que evitan
+# publicar los secretos y la base de datos dentro de la imagen.
+local.env
+.env
+data/
+
+node_modules/
+dist/
+.git/
+.github/
+.gitignore
+
+tests/
+docker-compose.yml
+Makefile
+README.md
+start-test.sh
+sim_conductor.js
+
+*.log
+.DS_Store

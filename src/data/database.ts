@@ -477,6 +477,26 @@ function initSchema(): void {
         `);
       },
     },
+    {
+      version: 16,
+      apply: () => {
+        // Sobusa nunca se insertó en `empresas`: las migraciones 8 y 11 solo
+        // la ACTUALIZAN ("SET name = 'Terminal Central'", "SET name =
+        // 'Sobusa'"), y el catálogo de rutas se sembraba aparte en
+        // company_routes. En un portátil que ya se usó eso no se nota,
+        // porque ensureEmpresa creó la fila en algún momento y los UPDATE
+        // encontraron a quién actualizar. Sobre una base nueva —que es
+        // exactamente lo que hay en un volumen recién creado en Fly— los dos
+        // UPDATE no tocan nada, `empresas` queda vacía y GET /api/companies
+        // devuelve []: el pasajero abre la app y el selector de empresa no
+        // tiene ninguna que elegir, aunque las rutas sí estén sembradas.
+        d.prepare(`
+          INSERT INTO empresas (company_id, name, created_at)
+          VALUES ('EMP-01', 'Sobusa', ?)
+          ON CONFLICT(company_id) DO UPDATE SET name = 'Sobusa'
+        `).run(Date.now());
+      },
+    },
   ];
 
   for (const migration of migrations) {
