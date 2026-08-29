@@ -94,6 +94,67 @@ let simulatedCapturedAt = Date.now() - CAPTURE_BASE_LAG_MS;
 let token = '';
 let mqttClient = null;
 
+// El reloj del bus tiene que seguir al reloj real. Avanzaba exactamente
+// CAPTURE_INTERVAL_MS por posición, pero cada vuelta del setInterval tarda
+// más que eso —publicar, escribir el registro, el propio event loop—, así
+// que el reloj simulado se atrasaba como medio segundo por cada segundo
+// real. A la media hora el atraso pasaba de los 15 minutos que admite el
+// backend (MAX_PAST_CAPTURE_MS) y a partir de ahí RECHAZABA todas las
+// posiciones con CLOCK_DRIFT_EXCEEDED: el simulador seguía anunciando
+// posiciones en su registro, la base no guardaba ninguna, y en las dos apps
+// el bus salía "sin señal" para siempre. Era el motivo real de que los buses
+// simulados "no funcionaran".
+//
+// Sigue avanzando a pasos parejos de CAPTURE_INTERVAL_MS —el backend deduce
+// la velocidad de ese delta y las medidas irregulares lo alteran— pero nunca
+// se le deja quedar más de un paso por detrás de la hora real.
+function siguienteCapturedAt() {
+  const real = Date.now() - CAPTURE_BASE_LAG_MS;
+  if (simulatedCapturedAt < real - CAPTURE_INTERVAL_MS) simulatedCapturedAt = real;
+  const capturedAt = simulatedCapturedAt;
+  simulatedCapturedAt += CAPTURE_INTERVAL_MS;
+  return capturedAt;
+}
+
+// El backend contesta cada posición por el tópico /ack diciendo si la aceptó.
+// Antes se imprimían todas —un renglón cada 400 ms— y el rechazo quedaba
+// enterrado entre miles de líneas iguales. Ahora solo se anuncia el cambio de
+// estado, y si el backend rechaza sin parar el simulador se rinde: matarse es
+// lo único que lo arregla, porque quien lo vigila lo vuelve a levantar limpio
+// y con el reloj recién puesto en hora. Aguantar publicando en el vacío es lo
+// que dejaba los buses en "sin señal" el resto de la tarde.
+const MAX_RECHAZOS_SEGUIDOS = 25;
+let rechazosSeguidos = 0;
+let ultimoAckOk = null;
+
+function anotarAck(payload) {
+  let ack;
+  try {
+    ack = JSON.parse(payload);
+  } catch {
+    console.log(`[MQTT] ACK ilegible: ${payload.slice(0, 120)}`);
+    return;
+  }
+
+  if (ack.accepted !== false) {
+    if (ultimoAckOk !== true) console.log(`[MQTT] ✓ ${BUS_ID}: el backend está aceptando las posiciones`);
+    ultimoAckOk = true;
+    rechazosSeguidos = 0;
+    return;
+  }
+
+  rechazosSeguidos++;
+  if (ultimoAckOk !== false) {
+    console.error(`[MQTT] ✗ ${BUS_ID}: el backend RECHAZA las posiciones (${ack.reason}) — no se guarda ninguna`);
+  }
+  ultimoAckOk = false;
+
+  if (rechazosSeguidos >= MAX_RECHAZOS_SEGUIDOS) {
+    console.error(`[MQTT] ✗ ${BUS_ID}: ${rechazosSeguidos} rechazos seguidos (${ack.reason}); me reinicio`);
+    process.exit(1);
+  }
+}
+
 function postJson(path, payload, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(payload);
@@ -198,10 +259,9 @@ async function publishPosition(lat, lon) {
     lon,
     heading,
     speedKmh,
-    capturedAt: simulatedCapturedAt,
+    capturedAt: siguienteCapturedAt(),
     sequence: ++sequence,
   });
-  simulatedCapturedAt += CAPTURE_INTERVAL_MS;
 
   // MQTT packet: fixed header (0x30 = PUBLISH, QoS 0) + remaining length + topic + payload
   const topic = `empresa/${EMPRESA_ID}/bus/${BUS_ID}/posicion`;
@@ -286,7 +346,7 @@ async function connectMQTTWithAuth() {
           const topicStart = index + 2;
           const topicEnd = topicStart + topicLength;
           const payload = packet.subarray(topicEnd).toString();
-          console.log(`[MQTT] ACK ${packet.subarray(topicStart, topicEnd).toString()}: ${payload}`);
+          anotarAck(payload);
         } else if (firstByte !== 0x90) {
           console.log('[MQTT] ←', packet.toString('hex').substring(0, 80));
         }
@@ -368,7 +428,10 @@ async function ensureReconnected() {
 }
 
 async function publishPositionWithAuth(lat, lon, heading, speedKmh, sentido) {
-  if (!mqttClient) return;
+  // Sin conexión no hay nada que publicar, y quien llame tiene que saberlo:
+  // el registro anunciaba la posición igual, así que un bus desconectado se
+  // leía idéntico a uno sano mientras la base no recibía nada.
+  if (!mqttClient) return false;
 
   const topic = `empresa/${EMPRESA_ID}/bus/${BUS_ID}/posicion`;
   const payload = JSON.stringify({
@@ -378,10 +441,9 @@ async function publishPositionWithAuth(lat, lon, heading, speedKmh, sentido) {
     heading,
     speedKmh,
     sentido,
-    capturedAt: simulatedCapturedAt,
+    capturedAt: siguienteCapturedAt(),
     sequence: ++sequence,
   });
-  simulatedCapturedAt += CAPTURE_INTERVAL_MS;
 
   const topicBuf = Buffer.from(topic);
   const payloadBuf = Buffer.from(payload);
@@ -404,7 +466,7 @@ async function publishPositionWithAuth(lat, lon, heading, speedKmh, sentido) {
   ]);
 
   return new Promise((resolve) => {
-    mqttClient.write(packet, resolve);
+    mqttClient.write(packet, () => resolve(true));
   });
 }
 
@@ -461,10 +523,14 @@ async function run() {
         ? headingBetween(b, a)
         : headingBetween(a, b);
 
-      await publishPositionWithAuth(lat, lon, heading, speedKmh, sentido);
+      const publicada = await publishPositionWithAuth(lat, lon, heading, speedKmh, sentido);
 
       const now = new Date().toLocaleTimeString();
-      console.log(`[${now}] ${BUS_ID} → (${lat.toFixed(5)}, ${lon.toFixed(5)}) ${speedKmh.toFixed(0)} km/h rumbo ${heading.toFixed(0)}° · ${sentido.toUpperCase()}`);
+      if (publicada) {
+        console.log(`[${now}] ${BUS_ID} → (${lat.toFixed(5)}, ${lon.toFixed(5)}) ${speedKmh.toFixed(0)} km/h rumbo ${heading.toFixed(0)}° · ${sentido.toUpperCase()}`);
+      } else if (step % 25 === 0) {
+        console.log(`[${now}] ${BUS_ID} sin conexión MQTT — la posición no salió a ningún lado`);
+      }
 
       step++;
     }, CAPTURE_INTERVAL_MS);

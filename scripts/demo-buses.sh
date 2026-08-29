@@ -1,7 +1,10 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
 #  Ya Viene — demo-buses.sh
-#  Lanza 2 buses simulados en la ruta R-106 para la demo:
+#  Pone buses simulados a rodar en TODAS las rutas del catálogo, para que
+#  cualquier ruta que se abra —en el panel o en la app del pasajero— tenga
+#  buses moviéndose sin ir a arrancar nada. Dos por ruta, en puntos
+#  distintos del recorrido. En R-106, la de la demo, van más rápido:
 #   B-042 → arranca al 80% del recorrido (YA PASÓ al pasajero del ~50%)
 #   B-055 → arranca al 15% del recorrido (VIENE hacia el pasajero)
 #
@@ -16,6 +19,9 @@
 #    bash scripts/demo-buses.sh --fondo     sigue vivo al cerrar la terminal
 #    bash scripts/demo-buses.sh --estado    ¿están corriendo?
 #    bash scripts/demo-buses.sh --detener   para los que quedaron en fondo
+#
+#  RUTAS_DEMO="R-106 R-101" limita a esas rutas, por si la máquina se ahoga
+#  con doce simuladores.
 # ═══════════════════════════════════════════════════════════════
 set -uo pipefail
 
@@ -33,7 +39,7 @@ for arg in "$@"; do
     --fondo)   MODO=fondo ;;
     --estado)  MODO=estado ;;
     --detener) MODO=detener ;;
-    -h|--help) sed -n '2,19p' "$SCRIPT" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$SCRIPT" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Parámetro desconocido: $arg"; echo "Prueba: $0 --help"; exit 2 ;;
   esac
 done
@@ -51,6 +57,7 @@ case "$MODO" in
   estado)
     if PID="$(pid_guardado)"; then
       echo "Buses en fondo, vigilados por el proceso $PID."
+      echo "Corriendo ahora: $(pgrep -f 'scripts/simulate-bus.mjs' | wc -l | tr -d ' ') simuladores."
       echo "Registro: $LOG"
     else
       echo "No hay buses en fondo."
@@ -59,8 +66,8 @@ case "$MODO" in
     ;;
   detener)
     if PID="$(pid_guardado)"; then
-      # Al vigilante se le manda TERM; su trap se lleva a los dos
-      # simuladores. Matar un simulador suelto no sirve: lo levanta otra vez.
+      # Al vigilante se le manda TERM; su trap se lleva a los simuladores.
+      # Matar un simulador suelto no sirve: lo levanta otra vez.
       kill -TERM "$PID" 2>/dev/null
       # El vigilante duerme de 5 en 5 s y bash no atiende el trap hasta que
       # el sleep termina: hay que darle ese margen antes de rematarlo.
@@ -71,7 +78,7 @@ case "$MODO" in
       echo "No había buses en fondo."
     fi
     # Red de seguridad: si al vigilante hubo que rematarlo con KILL, su trap
-    # no corrió y los dos simuladores quedaron sueltos publicando.
+    # no corrió y los simuladores quedaron sueltos publicando.
     pkill -f 'scripts/simulate-bus.mjs' 2>/dev/null
     rm -f "$PIDFILE"
     exit 0
@@ -84,9 +91,10 @@ case "$MODO" in
     fi
     nohup bash "$SCRIPT" > "$LOG" 2>&1 &
     echo $! > "$PIDFILE"
-    sleep 3
+    sleep 8
     if vive "$(cat "$PIDFILE")"; then
       echo "Buses corriendo en fondo (proceso $(cat "$PIDFILE"))."
+      echo "  Simuladores vivos: $(pgrep -f 'scripts/simulate-bus.mjs' | wc -l | tr -d ' ')"
       echo "  Registro:  tail -f $LOG"
       echo "  Detener:   bash scripts/demo-buses.sh --detener"
     else
@@ -109,47 +117,84 @@ if [ -f local.env ]; then
   set +a
 fi
 
-CAPTURE_INTERVAL_MS="${CAPTURE_INTERVAL_MS:-400}"
-ROUTE_ID="${ROUTE_ID:-R-106}"
+# La ruta de la demo va a 400 ms: es la que se mira de cerca y donde el
+# movimiento tiene que verse fluido. Las demás a 1,5 s, que en pantalla se
+# ve igual de continuo y deja doce simuladores cabiendo en un portátil.
+RAPIDO="${CAPTURE_INTERVAL_MS:-400}"
+LENTO="${CAPTURE_INTERVAL_MS_RESTO:-1500}"
 
-PID_042=""
-PID_055=""
+# bus · ruta · fracción del recorrido donde arranca · teléfono · intervalo.
+# Dos por ruta y en extremos opuestos, para que en cualquier ruta que se abra
+# haya uno acercándose y otro alejándose. B-901 ya existía en R-101 de una
+# demo vieja: se reusa a propósito, así deja de ser el fantasma "sin señal"
+# que ensuciaba esa ruta y pasa a ser uno de los buses vivos.
+FLOTA=(
+  "B-042 R-106 0.80 3000000000 $RAPIDO"
+  "B-055 R-106 0.15 3000000001 $RAPIDO"
+  "B-901 R-101 0.35 3000000999 $LENTO"
+  "B-201 R-101 0.70 3000000201 $LENTO"
+  "B-202 R-102 0.20 3000000202 $LENTO"
+  "B-203 R-102 0.65 3000000203 $LENTO"
+  "B-204 R-103 0.25 3000000204 $LENTO"
+  "B-205 R-103 0.75 3000000205 $LENTO"
+  "B-206 R-104 0.30 3000000206 $LENTO"
+  "B-207 R-104 0.60 3000000207 $LENTO"
+  "B-208 R-105 0.10 3000000208 $LENTO"
+  "B-209 R-105 0.55 3000000209 $LENTO"
+)
 
-# $1 = nombre de la variable donde guardar el PID, $2 = bus,
-# $3 = fracción de arranque, $4 = teléfono del conductor simulado.
+# RUTAS_DEMO recorta la lista sin tocar el archivo, por si la máquina no da.
+if [ -n "${RUTAS_DEMO:-}" ]; then
+  FILTRADA=()
+  for fila in "${FLOTA[@]}"; do
+    set -- $fila
+    case " $RUTAS_DEMO " in *" $2 "*) FILTRADA+=("$fila") ;; esac
+  done
+  FLOTA=("${FILTRADA[@]}")
+  [ "${#FLOTA[@]}" -gt 0 ] || { echo "RUTAS_DEMO='$RUTAS_DEMO' no coincide con ninguna ruta."; exit 2; }
+fi
+
+PIDS=()
+
+# $1 = índice dentro de FLOTA. Guarda el PID él mismo en vez de imprimirlo:
+# capturarlo con $(...) colgaba el script para siempre, porque el simulador
+# hereda la tubería de la sustitución y nunca la cierra.
 arrancar() {
-  BUS_ID="$2" ROUTE_ID="$ROUTE_ID" PHONE="$4" START_FRACTION="$3" SENTIDO=ida \
-    CAPTURE_INTERVAL_MS="$CAPTURE_INTERVAL_MS" node scripts/simulate-bus.mjs &
-  printf -v "$1" '%s' "$!"
+  local i="$1"
+  set -- ${FLOTA[$i]}
+  BUS_ID="$1" ROUTE_ID="$2" START_FRACTION="$3" PHONE="$4" SENTIDO=ida \
+    CAPTURE_INTERVAL_MS="$5" node scripts/simulate-bus.mjs &
+  PIDS[$i]=$!
 }
 
 limpiar() {
   trap - EXIT INT TERM
-  kill "$PID_042" "$PID_055" 2>/dev/null
+  kill "${PIDS[@]}" 2>/dev/null
   echo ""
   echo "Buses detenidos."
   exit 0
 }
 trap limpiar EXIT INT TERM
 
-echo "▶ Bus YA PASÓ   B-042 · ${ROUTE_ID} · arranca en 80% del recorrido"
-arrancar PID_042 B-042 0.80 3000000000
-sleep 1
-echo "▶ Bus QUE VIENE B-055 · ${ROUTE_ID} · arranca en 15% del recorrido"
-arrancar PID_055 B-055 0.15 3000000001
+for i in "${!FLOTA[@]}"; do
+  set -- ${FLOTA[$i]}
+  echo "▶ $1 · $2 · arranca en $(awk -v f="$3" 'BEGIN{printf "%d", f*100}')% del recorrido"
+  arrancar "$i"
+  # Escalonados: doce simuladores registrando conductor a la vez son doce
+  # peticiones simultáneas al backend en el primer segundo.
+  sleep 0.4
+done
 
-echo "Ambos buses corriendo y vigilados (Ctrl+C para detenerlos a los dos)."
-echo "Para ver el estado 'sin señal' a propósito: kill $PID_042 y espera 5 min;"
-echo "  el vigilante lo levanta en 5 s, así que primero detén el vigilante."
+echo ""
+echo "${#FLOTA[@]} buses corriendo y vigilados (Ctrl+C para detenerlos todos)."
 
 while true; do
   sleep 5
-  if ! vive "$PID_042"; then
-    echo "[vigilante] B-042 se cayó — lo levanto otra vez"
-    arrancar PID_042 B-042 0.80 3000000000
-  fi
-  if ! vive "$PID_055"; then
-    echo "[vigilante] B-055 se cayó — lo levanto otra vez"
-    arrancar PID_055 B-055 0.15 3000000001
-  fi
+  for i in "${!FLOTA[@]}"; do
+    if ! vive "${PIDS[$i]}"; then
+      set -- ${FLOTA[$i]}
+      echo "[vigilante] $1 ($2) se cayó — lo levanto otra vez"
+      arrancar "$i"
+    fi
+  done
 done
