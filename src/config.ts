@@ -8,7 +8,6 @@ export const HTTP_TLS_CERT_PATH = process.env.HTTP_TLS_CERT_PATH;
 export const HTTP_TLS_KEY_PATH = process.env.HTTP_TLS_KEY_PATH;
 export const MQTT_TLS_CERT_PATH = process.env.MQTT_TLS_CERT_PATH;
 export const MQTT_TLS_KEY_PATH = process.env.MQTT_TLS_KEY_PATH;
-export const GHOST_TIMEOUT_MS = 90_000;
 export const BUS_TIMEOUT_MS = 30_000;
 
 /**

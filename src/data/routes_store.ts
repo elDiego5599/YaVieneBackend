@@ -111,7 +111,12 @@ export function addCompanyRoute(
     const next = match ? parseInt(match[1], 10) + 1 : 1;
     cleanedId = `R-${String(next).padStart(3, '0')}`;
   }
-  if (!/^[A-Z0-9-]{2,20}$/.test(cleanedId)) return null;
+  // El patrón viejo aceptaba `---` o `-R-`: guiones sueltos como identificador.
+  // Ahora el guion solo puede ir entre grupos alfanuméricos (R-106, RUTA-1A).
+  if (!/^[A-Z0-9]+(-[A-Z0-9]+)*$/.test(cleanedId) || cleanedId.length < 2
+      || cleanedId.length > 20) {
+    return null;
+  }
   getDb().prepare(`
     INSERT INTO company_routes (company_id, route_id, name, created_at)
     VALUES (?, ?, ?, ?)
@@ -150,15 +155,21 @@ export function removeCompanyRoute(companyId: string, routeId: string): boolean 
       const fallback = db.prepare(
         'SELECT route_id FROM company_routes WHERE company_id = ? ORDER BY route_id ASC LIMIT 1',
       ).get(companyId) as { route_id: string } | undefined;
-      const fallbackId = fallback?.route_id ?? 'R-101';
+      // Si a la empresa no le queda ninguna ruta, el fallback era 'R-101'
+      // a pelo: los buses quedaban apuntando a una ruta que puede no
+      // existir, y el pasajero pedía posiciones de un identificador
+      // fantasma. Sin ruta a la que mudarlos, se quedan sin ruta.
+      const fallbackId = fallback?.route_id ?? null;
       db.prepare(
         'UPDATE buses SET route_id = ?, updated_at = ? WHERE company_id = ? AND route_id = ?',
       ).run(fallbackId, Date.now(), companyId, routeId);
-      const setPositionRoute = db.prepare(
-        'UPDATE positions SET route_id = ? WHERE bus_id = ?',
-      );
-      for (const busId of busIds) {
-        setPositionRoute.run(fallbackId, busId);
+      if (fallbackId) {
+        const setPositionRoute = db.prepare(
+          'UPDATE positions SET route_id = ? WHERE bus_id = ?',
+        );
+        for (const busId of busIds) {
+          setPositionRoute.run(fallbackId, busId);
+        }
       }
     }
     return true;

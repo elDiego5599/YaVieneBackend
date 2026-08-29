@@ -119,10 +119,16 @@ export function createBus(
 
   const existing = db.prepare('SELECT interno FROM buses WHERE bus_id = ?')
     .get(busId) as { interno: string | null } | undefined;
+  // El número interno salía de COUNT(*)+1, y eso repite en cuanto se borra un
+  // bus: con 001, 002 y 003 dados de alta, borrar el 002 deja el contador en
+  // 2 y el siguiente nace como 003, chocando con el que ya existe. Se toma el
+  // mayor interno numérico de la empresa, que no depende de cuántos queden.
   const resolvedInterno = (interno ?? '').trim()
     || existing?.interno
-    || String((db.prepare('SELECT COUNT(*) AS c FROM buses WHERE company_id = ?')
-        .get(companyId) as { c: number }).c + 1).padStart(3, '0');
+    || String(((db.prepare(
+        `SELECT MAX(CAST(interno AS INTEGER)) AS m FROM buses
+         WHERE company_id = ? AND interno GLOB '[0-9]*'`,
+      ).get(companyId) as { m: number | null }).m ?? 0) + 1).padStart(3, '0');
 
   const insert = db.prepare(`
     INSERT INTO buses (bus_id, company_id, plate_number, route_id, interno, visible, created_at, updated_at)

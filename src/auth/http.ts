@@ -1,4 +1,5 @@
 import { IncomingMessage } from 'http';
+import { timingSafeEqual } from 'crypto';
 import { TokenPayload, verifyToken, AdminTokenPayload } from './tokens';
 import { getSession } from '../data/sessions';
 
@@ -18,9 +19,21 @@ export function authenticateCompanyAdmin(req: IncomingMessage): AdminTokenPayloa
   return auth?.role === 'admin' ? auth : null;
 }
 
+/**
+ * La comparación es de tiempo constante, igual que la del PIN en
+ * `passwords.ts`: `===` sobre cadenas corta en el primer byte distinto y le
+ * va midiendo al atacante cuánto lleva acertado. `timingSafeEqual` exige
+ * buffers del mismo largo, así que la diferencia de longitud se resuelve
+ * aparte —y esa sí se puede medir, pero solo revela el largo de la clave.
+ */
 export function isAdminRequest(req: IncomingMessage): boolean {
   if (!ADMIN_API_KEY) return false;
-  return req.headers['x-admin-key'] === ADMIN_API_KEY;
+  const provided = req.headers['x-admin-key'];
+  if (typeof provided !== 'string') return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(ADMIN_API_KEY);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 export function isDriverForBus(auth: TokenPayload | null, busId: string): boolean {

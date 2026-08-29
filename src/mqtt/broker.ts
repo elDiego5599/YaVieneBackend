@@ -176,12 +176,21 @@ export function startBroker(
   };
 
   // ── Candado 2: Authorize publish — solo su propio topic ────────────
+  //
+  // aedes lee este callback al revés de lo que parece: `callback(null)` es
+  // "adelante, repártelo" y solo un Error lo deniega. Las ramas de rechazo
+  // pasaban null y confiaban en que el cierre del cliente llegara antes que
+  // el reparto: eso es una carrera, no un candado. Cada rechazo devuelve
+  // ahora su Error, y el cierre queda como lo que siempre debió ser, un
+  // extra para que el cliente no siga insistiendo.
+  const denyPublish = (reason: string) => new Error(reason);
+
   broker.authorizePublish = (client, packet, callback) => {
     // Un publish puede llegar con client null (p. ej. bridge interno): sin
     // identidad no hay permiso.
     if (!client) {
       incrementMetric('mqtt.publish.rejected_no_auth');
-      return callback(null);
+      return callback(denyPublish('publish sin cliente'));
     }
     const payload = clientAuth.get(client);
     const topic = packet.topic;
@@ -190,14 +199,14 @@ export function startBroker(
       incrementMetric('mqtt.publish.rejected_no_auth');
       console.warn(`[MQTT] authorizePublish: no authPayload for client ${client.id}`);
       forceCloseClient(broker, client, 'publish sin authPayload');
-      return callback(null);
+      return callback(denyPublish('publish sin authPayload'));
     }
 
     if (!isSessionAuthorized(payload.sessionId, client.id)) {
       incrementMetric('mqtt.publish.rejected_session');
       console.warn(`[MQTT] Session no longer authorized for client ${client.id}`);
       forceCloseClient(broker, client, 'sesión revocada o reclamada por otro dispositivo');
-      return callback(null);
+      return callback(denyPublish('sesión revocada o reclamada por otro dispositivo'));
     }
 
     const expectedTopic = `empresa/${payload.companyId}/bus/${payload.busId}/posicion`;
@@ -208,8 +217,7 @@ export function startBroker(
       incrementMetric('mqtt.publish.rejected_topic');
       console.warn(`[MQTT] TOPIC HIJACKING: ${payload.phoneNumber} (bus ${payload.busId}) intentó publicar a ${topic}`);
       forceCloseClient(broker, client, `topic hijacking: ${topic}`);
-      // El cliente ya está cerrándose: el paquete no llega a repartirse.
-      return callback(null);
+      return callback(denyPublish(`topic no autorizado: ${topic}`));
     }
 
     incrementMetric('mqtt.publish.authorized');
@@ -269,10 +277,12 @@ export function startBroker(
 
     const topic = packet.topic;
 
+    // Solo el topic vigente. La rama `gps/` era del esquema viejo y ya no
+    // pasa el candado de autorización: dejarla aquí solo servía para sumar
+    // `mqtt.messages.received` por mensajes que nadie llegaba a procesar.
     const matchesNew = topic.match(/^empresa\/[^/]+\/bus\/([^/]+)\/posicion$/);
-    const matchesOld = topic.startsWith('gps/');
 
-    if (matchesNew || matchesOld) {
+    if (matchesNew) {
       incrementMetric('mqtt.messages.received');
       try {
         const authPayload = clientAuth.get(client);

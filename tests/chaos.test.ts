@@ -191,17 +191,16 @@ test('DAST-lite: SQLi/XSS/JSON gigante/verbos raros nunca producen 5xx', async (
         init.headers = { 'content-type': 'application/json' };
         init.body = body;
       }
-      let response: Response | null = null;
-      try {
-        response = await fetch(`http://127.0.0.1:${ctx.httpPort}${path}`, init);
-      } catch {
-        // Hallazgo DAST real: ante un cuerpo de 500 KB el servidor corta la
-        // conexion (socket reset) en vez de responder 413/400. Es un guardia
-        // anti-DoS valido (no lee el cuerpo), pero responder 413 seria mejor.
-        assert.equal([method, path].join(' '), 'POST /api/auth/login', 'solo el probe gigante puede cortar');
-      }
-      if (response !== null) {
-        assert.ok(response.status < 500, `${method} ${path} exploto con ${response.status} en vez de 4xx`);
+      // El cuerpo de 500 KB cortaba la conexion (socket reset) y el cliente
+      // veia un error de red en vez de una respuesta. Ahora sale el 413 con
+      // su JSON y el socket se cierra despues: si vuelve a lanzar, el
+      // arreglo se deshizo y este test lo dice.
+      const response = await fetch(`http://127.0.0.1:${ctx.httpPort}${path}`, init);
+      assert.ok(response.status < 500, `${method} ${path} exploto con ${response.status} en vez de 4xx`);
+      if (body !== null && body.length > 32 * 1024) {
+        assert.equal(response.status, 413, `${method} ${path} deberia responder 413`);
+        const payload = await response.json() as { error?: { code?: string } };
+        assert.equal(payload.error?.code, 'REQUEST_TOO_LARGE');
       }
     }
     const health = await fetch(healthUrl());

@@ -642,10 +642,16 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
         bodyBytes += chunk.length;
         if (bodyBytes > MAX_BODY_BYTES) {
           tooLarge = true;
-          req.destroy();
+          // `req.destroy()` iba antes de escribir la respuesta y se llevaba
+          // por delante el socket: el cliente veía un reset de conexión, no
+          // el 413. Primero sale el JSON, y el socket se corta cuando la
+          // respuesta ya se fue, para no seguir tragando el cuerpo entero.
           if (!res.headersSent) {
+            res.setHeader('Connection', 'close');
             writeError(res, 413, 'REQUEST_TOO_LARGE', 'Request body is too large');
           }
+          res.once('finish', () => req.destroy());
+          body = '';
           return;
         }
         body += chunk.toString();
