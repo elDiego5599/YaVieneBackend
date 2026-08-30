@@ -358,11 +358,6 @@ async function connectMQTTWithAuth() {
       reject(err);
     });
 
-    client.on('close', () => {
-      console.log('[MQTT] Desconectado');
-      mqttClient = null;
-    });
-
     // Enviar CONNECT packet con JWT como password
     const clientId = `sim_${BUS_ID}_${Date.now()}`;
     const clientIdBuf = Buffer.from(clientId);
@@ -416,7 +411,14 @@ async function connectMQTTWithAuth() {
 let reconnectTimer = null;
 
 async function ensureReconnected() {
-  if (mqttClient || reconnectTimer) return;
+  // El temporizador que nos trajo hasta aquí ya se disparó, así que deja de
+  // estar pendiente. Sin esta línea el guardia de abajo leía el identificador
+  // viejo —`clearTimeout` no lo borra, solo cancela— y se devolvía a sí mismo
+  // en la primera vuelta: el bus quedaba vivo pero mudo para siempre. Es
+  // exactamente lo que pasó al reiniciar el backend, y desde el vigilante no
+  // se ve, porque el proceso sigue en pie.
+  reconnectTimer = null;
+  if (mqttClient) return;
   try {
     await connectMQTTWithAuth();
     console.log(`[MQTT] ${BUS_ID} reconectado`);
