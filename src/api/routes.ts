@@ -146,7 +146,11 @@ addRoute('GET', '/api/companies/:id/routes', (req, res, params) => {
 
 addRoute('GET', '/api/companies/:id/buses', (req, res, params) => {
   if (!guardPublicRead(req, res)) return;
-  writeJson(res, 200, getCompanyBuses(params.id));
+  writeJson(
+    res,
+    200,
+    getCompanyBuses(params.id).filter((b) => b.visible),
+  );
 });
 
 addRoute('GET', '/api/routes/:routeId/positions', (req, res, params) => {
