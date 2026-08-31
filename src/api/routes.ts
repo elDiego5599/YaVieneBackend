@@ -527,18 +527,45 @@ addRoute('DELETE', '/api/fleet/routes/:routeId', (req, res, params) => {
     writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found in this company');
     return;
   }
-  console.log(`[API] Ruta ${params.routeId} eliminada del catálogo de ${auth.companyId}`);
+  console.log(`[API] ${auth.username} eliminó la ruta ${params.routeId} del catálogo de ${auth.companyId}`);
   writeJson(res, 200, { status: 'deleted', routeId: params.routeId });
 });
 
+/**
+ * Borrado masivo: es la única ruta que puede dejar a una empresa sin flota
+ * de un golpe, y hasta ahora bastaba con el token —el mismo que se queda
+ * abierto en el computador de la oficina toda la jornada— para vaciarla sin
+ * decir nada. Ahora hay que nombrar la empresa en `?confirm=`, igual que
+ * GitHub pide escribir el nombre del repo antes de borrarlo: un curl mal
+ * copiado o un clic perdido ya no alcanzan, y el que sí quiere borrar tiene
+ * que escribir a qué empresa le está apuntando. Va con el mismo limitador
+ * que la creación de buses y deja el nombre del admin en el registro.
+ */
 addRoute('DELETE', '/api/fleet/buses', (req, res) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
     return;
   }
+  if (!adminRateLimiter.allow(requestKey(req, 'fleet:wipe'))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many fleet wipe attempts');
+    return;
+  }
+
+  const query = req.url?.split('?')[1] ?? '';
+  const confirm = new URLSearchParams(query).get('confirm');
+  if (confirm !== auth.companyId) {
+    writeError(
+      res,
+      400,
+      'CONFIRMATION_REQUIRED',
+      `Para borrar toda la flota hay que confirmar la empresa: ?confirm=${auth.companyId}`,
+    );
+    return;
+  }
+
   const count = deleteAllBuses(auth.companyId);
-  console.log(`[API] Debug: todos los buses (${count}) de ${auth.companyId} eliminados`);
+  console.log(`[API] ${auth.username} borró los ${count} buses de ${auth.companyId}`);
   writeJson(res, 200, { status: 'deleted', count });
 });
 
@@ -610,7 +637,7 @@ addRoute('DELETE', '/api/fleet/buses/:busId', (req, res, params) => {
     writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
     return;
   }
-  console.log(`[API] Bus ${params.busId} eliminado del catálogo (empresa ${auth.companyId})`);
+  console.log(`[API] ${auth.username} eliminó el bus ${params.busId} del catálogo (empresa ${auth.companyId})`);
   writeJson(res, 200, { status: 'deleted', ...result });
 });
 

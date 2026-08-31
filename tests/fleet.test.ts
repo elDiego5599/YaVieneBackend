@@ -484,10 +484,24 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     assert.equal(dup.status, 400);
     assert.equal(((await dup.json()) as any).error.code, 'DUPLICATE_ROUTE');
 
-    const wipe = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses`, {
+    // Sin confirmar la empresa el borrado masivo no ocurre
+    const sinConfirmar = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses`, {
       method: 'DELETE',
       headers: auth,
     });
+    assert.equal(sinConfirmar.status, 400);
+    assert.equal(((await sinConfirmar.json()) as any).error.code, 'CONFIRMATION_REQUIRED');
+    const otraEmpresa = await fetch(
+      `http://127.0.0.1:${HTTP_PORT}/api/fleet/buses?confirm=EMP-01`,
+      { method: 'DELETE', headers: auth },
+    );
+    assert.equal(otraEmpresa.status, 400, 'confirmar otra empresa tampoco vale');
+    assert.ok((await fleet()).buses.length >= 2, 'la flota sigue intacta tras los intentos sin confirmar');
+
+    const wipe = await fetch(
+      `http://127.0.0.1:${HTTP_PORT}/api/fleet/buses?confirm=${company}`,
+      { method: 'DELETE', headers: auth },
+    );
     assert.equal(wipe.status, 200);
     const wiped = (await wipe.json()) as any;
     assert.ok(wiped.count >= 2, 'al menos 2 buses eliminados');
