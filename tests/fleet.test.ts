@@ -122,6 +122,10 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
       JWT_SECRET,
       ADMIN_API_KEY,
       MQTT_DEBUG_LOGS: 'false',
+      // Los buses de demostración son del backend de verdad, no de un
+      // test: doce simuladores publicando encima de este vuelven ruido
+      // cada aserción sobre la flota.
+      YA_VIENE_FLOTA_DEMO: '0',
       YA_VIENE_DB_PATH: `/tmp/yaviene-fleet-${process.pid}.db`,
     },
     stdio: 'ignore',
@@ -342,6 +346,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
         MQTT_PORT: String(MQTT_PORT),
         ADMIN_API_KEY,
         JWT_SECRET,
+        YA_VIENE_FLOTA_DEMO: '0',
         YA_VIENE_DB_PATH: `/tmp/yaviene-test-fleet2-${Date.now()}.db`,
         ALLOWED_ORIGINS: '*',
       },

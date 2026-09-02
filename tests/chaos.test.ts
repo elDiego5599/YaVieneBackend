@@ -59,6 +59,10 @@ async function withBackend(file: string, httpPort: number, mqttPort: number, fn:
       JWT_SECRET,
       ADMIN_API_KEY,
       MQTT_DEBUG_LOGS: 'false',
+      // Los buses de demostración son del backend de verdad, no de un
+      // test: doce simuladores publicando encima de este vuelven ruido
+      // cada aserción sobre la flota.
+      YA_VIENE_FLOTA_DEMO: '0',
       YA_VIENE_DB_PATH: `/tmp/yaviene-chaos-${file}-${process.pid}.db`,
       YA_VIENE_GHOST_MS: '2000',
     },
@@ -301,6 +305,10 @@ async function spawnBackendOnly(): Promise<void> {
       JWT_SECRET,
       ADMIN_API_KEY,
       MQTT_DEBUG_LOGS: 'false',
+      // Los buses de demostración son del backend de verdad, no de un
+      // test: doce simuladores publicando encima de este vuelven ruido
+      // cada aserción sobre la flota.
+      YA_VIENE_FLOTA_DEMO: '0',
       YA_VIENE_DB_PATH: `/tmp/yaviene-chaos-restart-${process.pid}-2.db`,
       YA_VIENE_GHOST_MS: '2000',
     },

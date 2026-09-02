@@ -23,6 +23,7 @@ import { closeDb } from './data/database';
 import { cleanupRevokedSessions } from './data/sessions';
 import { dispatchLifecycleEvents, LifecycleEvent } from './data/lifecycle_events';
 import { flushMetrics, restoreMetrics } from './observability/metrics';
+import { arrancarFlotaDemo, detenerFlotaDemo } from './demo/flota_demo';
 import { DriverTokenPayload } from './auth/tokens';
 import {
   setupSocketServer,
@@ -276,6 +277,9 @@ server.listen(HTTP_PORT, '::', () => {
 loadVisibilityCache();
 loadBusCompanyCache();
 restoreMetrics();
+// Backend encendido = buses rodando. Va después de `listen` porque los
+// simuladores se autentican contra este mismo servidor por HTTP.
+arrancarFlotaDemo();
 // Los contadores viven en memoria; a disco cada 30s para que un reinicio
 // no borre la señal operativa.
 const metricsFlushTimer = setInterval(flushMetrics, 30_000);
@@ -283,6 +287,7 @@ metricsFlushTimer.unref();
 
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[Server] Shutting down from ${signal}...`);
+  detenerFlotaDemo();
   clearInterval(sweepTimer);
   clearInterval(sessionCleanupTimer);
   clearInterval(lifecycleDispatchTimer);

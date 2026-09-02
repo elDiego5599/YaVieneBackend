@@ -1,6 +1,14 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
 #  Ya Viene — demo-buses.sh
+#
+#  YA NO HACE FALTA PARA LA DEMO: el backend levanta y vigila esta misma
+#  flota él solo (src/demo/flota_demo.ts). Este script se queda para
+#  arrancar buses contra un backend ajeno, o para probar la flota sin
+#  reiniciarlo. Corriendo los dos a la vez cada bus se registra dos veces y
+#  las sesiones se echan la una a la otra: apaga primero la del backend con
+#  YA_VIENE_FLOTA_DEMO=0.
+#
 #  Pone buses simulados a rodar en TODAS las rutas del catálogo, para que
 #  cualquier ruta que se abra —en el panel o en la app del pasajero— tenga
 #  buses moviéndose sin ir a arrancar nada. Dos por ruta, en puntos
@@ -39,7 +47,7 @@ for arg in "$@"; do
     --fondo)   MODO=fondo ;;
     --estado)  MODO=estado ;;
     --detener) MODO=detener ;;
-    -h|--help) sed -n '2,25p' "$SCRIPT" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$SCRIPT" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Parámetro desconocido: $arg"; echo "Prueba: $0 --help"; exit 2 ;;
   esac
 done

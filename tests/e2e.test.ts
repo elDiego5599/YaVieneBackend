@@ -73,6 +73,10 @@ test('conductor -> MQTT -> backend -> Socket.io -> bus queda "sin señal" (is_gh
       JWT_SECRET,
       ADMIN_API_KEY,
       MQTT_DEBUG_LOGS: 'false',
+      // Los buses de demostración son del backend de verdad, no de un
+      // test: doce simuladores publicando encima de este vuelven ruido
+      // cada aserción sobre la flota.
+      YA_VIENE_FLOTA_DEMO: '0',
       YA_VIENE_DB_PATH: `/tmp/yaviene-e2e-${process.pid}.db`,
       YA_VIENE_GHOST_MS: '2000',
     },
