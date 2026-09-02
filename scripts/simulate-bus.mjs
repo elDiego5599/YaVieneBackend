@@ -208,6 +208,22 @@ async function registerDriver() {
     throw new Error(`Registro fallo: ${JSON.stringify(registration.body)}`);
   }
 
+  await renovarToken();
+  console.log(`[REGISTER] Conductor ${PHONE} provisionado y autenticado. JWT obtenido.`);
+}
+
+/**
+ * Pide un JWT nuevo.
+ *
+ * El broker solo mira el token en el CONNECT, así que una conexión ya
+ * abierta sobrevive a su propia caducidad; el problema era el reintento.
+ * El token dura 24 h y el simulador guardaba el primero para siempre: al
+ * caerse el MQTT pasado ese día, cada reconexión volvía con un token
+ * vencido, el broker la rechazaba, y el bus quedaba vivo y mudo —proceso en
+ * pie, así que ningún vigilante lo levantaba— hasta salir "sin señal" en
+ * las dos apps. Una flota entera podía morirse así de un día para otro.
+ */
+async function renovarToken() {
   const login = await postJson('/api/auth/login', {
     phoneNumber: PHONE,
     pin: PIN,
@@ -219,7 +235,6 @@ async function registerDriver() {
     throw new Error(`Login fallo: ${JSON.stringify(login.body)}`);
   }
 
-  console.log(`[REGISTER] Conductor ${PHONE} provisionado y autenticado. JWT obtenido.`);
   token = login.body.token;
 }
 
@@ -420,6 +435,8 @@ async function ensureReconnected() {
   reconnectTimer = null;
   if (mqttClient) return;
   try {
+    // Token fresco en cada reintento: el guardado puede llevar horas ahí.
+    await renovarToken();
     await connectMQTTWithAuth();
     console.log(`[MQTT] ${BUS_ID} reconectado`);
   } catch (err) {
