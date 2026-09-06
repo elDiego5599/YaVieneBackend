@@ -34,12 +34,27 @@ primary_region = "iad"
   # sigue escuchando solo en loopback, como está diseñado, y por eso no se
   # expone ningún puerto más.
 
-  # Si la máquina se duerme se mueren los buses simulados y el pasajero abre
-  # el mapa vacío. Para la presentación en AMBQ eso no puede pasar, así que
-  # la máquina se queda despierta.
-  auto_stop_machines = false
+  # Escala a cero mientras no se use. Fuera de las pruebas y de la
+  # presentación esta máquina no debe costar nada, y una máquina parada en
+  # Fly no factura CPU ni memoria: lo único que se sigue pagando es el
+  # volumen (1 GB).
+  #
+  # `auto_start_machines` sigue en true a propósito: así la URL de Fly sirve
+  # de respaldo del túnel de ngrok. Si ngrok se cae, la primera petición que
+  # llegue aquí levanta la máquina sola (arranque en frío de unos segundos).
+  #
+  # OJO para el día de la presentación: con la máquina dormida no hay buses
+  # simulados rodando, porque los lanza el propio proceso al arrancar y
+  # tardan un momento en aparecer en el mapa. Antes de presentar hay que
+  # dejarla despierta:
+  #
+  #     fly scale count 1 --yes && fly machine start
+  #
+  # y volver a `min_machines_running = 1` si se quiere que no se duerma sola
+  # a mitad de la demo.
+  auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
 
   # Una sola máquina, a propósito: SQLite con un volumen no se reparte entre
   # varias. Si algún día hacen falta más, primero hay que cambiar de motor.
