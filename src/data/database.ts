@@ -497,6 +497,12 @@ function initSchema(): void {
         `).run(Date.now());
       },
     },
+    {
+      version: 17,
+      apply: () => {
+        eliminarEmpresasFantasma(d);
+      },
+    },
   ];
 
   for (const migration of migrations) {
@@ -520,4 +526,60 @@ function ensureColumn(
   const columns = d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (columns.some((item) => item.name === column)) return;
   d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+/**
+ * Borra las empresas fantasma: filas de `empresas` cuyo `name` es literalmente
+ * su propio `company_id`, sin cuenta de panel y sin haber reportado nunca una
+ * posición.
+ *
+ * El caso que lo motiva es `EMP-02`, que en el selector del pasajero salía
+ * ANTES que Sobusa porque `getEmpresas()` ordena por `name ASC` y "EMP-02" va
+ * alfabéticamente delante de "Sobusa": lo primero que veía un usuario al abrir
+ * la app era una empresa que no existe. Además tenía tres turnos `active` que
+ * ocupaban el índice único `idx_active_assignment_bus`.
+ *
+ * De dónde salió: una versión vieja del registro de conductores llamaba a
+ * `ensureEmpresa(companyId)` sin nombre, y `ensureEmpresa` usa el
+ * identificador como nombre cuando no le dan uno. Ese camino ya no existe (la
+ * única llamada que queda está en la ruta de crear admin, protegida por
+ * ADMIN_API_KEY), así que esto limpia lo que quedó de entonces.
+ *
+ * La firma que se exige es deliberadamente estrecha para que no pueda llevarse
+ * por delante una empresa de verdad: un nombre que sea igual al identificador
+ * es la marca de haber nacido sin nombre, y una empresa real termina teniendo
+ * cuenta de panel o posiciones.
+ *
+ * Devuelve los identificadores borrados.
+ */
+export function eliminarEmpresasFantasma(d: Database.Database): string[] {
+  const fantasmas = d.prepare(`
+    SELECT company_id FROM empresas
+    WHERE name = company_id
+      AND company_id NOT IN (SELECT company_id FROM empresa_admins)
+      AND company_id NOT IN (
+        SELECT b.company_id FROM buses b
+        JOIN positions p ON p.bus_id = b.bus_id
+      )
+  `).all() as { company_id: string }[];
+
+  // El orden importa: `positions` y `driver_sessions` tienen FOREIGN KEY a
+  // `drivers(phone_number)` con ON DELETE CASCADE, así que los hijos salen
+  // antes que sus padres y ningún borrado arrastra de más.
+  const borrar = [
+    'DELETE FROM turn_assignments WHERE company_id = ?',
+    'DELETE FROM driver_sessions WHERE company_id = ?',
+    'DELETE FROM drivers WHERE company_id = ?',
+    'DELETE FROM buses WHERE company_id = ?',
+    'DELETE FROM company_routes WHERE company_id = ?',
+    'DELETE FROM empresas WHERE company_id = ?',
+  ].map((sql) => d.prepare(sql));
+
+  const borradas: string[] = [];
+  for (const { company_id: companyId } of fantasmas) {
+    for (const stmt of borrar) stmt.run(companyId);
+    borradas.push(companyId);
+    console.log(`[DB] Empresa fantasma ${companyId} eliminada`);
+  }
+  return borradas;
 }
