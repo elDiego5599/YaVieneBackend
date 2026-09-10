@@ -8,6 +8,7 @@ import {
   getFleetPositions,
   getBusCompanyId,
 } from '../data/buses';
+import { isRouteId } from '../data/routes_store';
 import { verifyToken, AdminTokenPayload } from '../auth/tokens';
 import { incrementMetric } from '../observability/metrics';
 
@@ -127,8 +128,22 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
       });
     });
 
+    // Cuántas rutas puede seguir un mismo socket a la vez. La app enseña
+    // una ruta y como mucho compara un par: doce es holgado para cualquier
+    // uso real. Sin tope, un cliente podía pedir `subscribe:route` en bucle
+    // con identificadores inventados y hacer crecer sin fin el mapa de salas
+    // del servidor —cada sala es memoria, y cada emisión las recorre.
+    const MAX_RUTAS_POR_SOCKET = 12;
+
     socket.on('subscribe:route', (routeId: string) => {
-      if (!routeId) return;
+      // Lo que llega del cliente es lo que el cliente quiera: aquí se
+      // comprobaba solo que no fuera vacío, así que un objeto o una cadena
+      // de miles de caracteres acababa siendo el nombre de una sala.
+      if (typeof routeId !== 'string' || !isRouteId(routeId)) return;
+      const salas = [...socket.rooms].filter((r) => r.startsWith('route:'));
+      if (salas.length >= MAX_RUTAS_POR_SOCKET && !socket.rooms.has(`route:${routeId}`)) {
+        return;
+      }
       socket.join(`route:${routeId}`);
       const positions = getPositionsByRoute(routeId);
       socket.emit('positions:batch', {
@@ -138,7 +153,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
     });
 
     socket.on('unsubscribe:route', (routeId: string) => {
-      if (routeId) socket.leave(`route:${routeId}`);
+      if (typeof routeId === 'string' && routeId) socket.leave(`route:${routeId}`);
     });
 
     socket.on('disconnect', () => {

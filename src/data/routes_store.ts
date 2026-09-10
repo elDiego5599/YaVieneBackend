@@ -24,7 +24,10 @@ export function getCompanyRoutes(companyId: string): {
   const derived = db.prepare(`
     SELECT COALESCE(p.route_id, b.route_id) AS route_id,
            COUNT(DISTINCT b.bus_id) AS total,
-           SUM(CASE WHEN p.bus_id IS NOT NULL THEN 1 ELSE 0 END) AS online
+           -- Conectado es el que sigue reportando: el barrido marca
+           -- is_ghost a los que llevan GHOST_MS callados, y contarlos
+           -- aquí daba una ruta llena de buses que ya no publican.
+           SUM(CASE WHEN p.bus_id IS NOT NULL AND p.is_ghost = 0 THEN 1 ELSE 0 END) AS online
     FROM buses b
     LEFT JOIN positions p ON p.bus_id = b.bus_id
     WHERE b.company_id = ? AND COALESCE(p.route_id, b.route_id) IS NOT NULL
@@ -95,6 +98,22 @@ export function routeNameExists(companyId: string, name: string, excludeRouteId?
   });
 }
 
+/**
+ * Forma válida de un identificador de ruta: grupos alfanuméricos separados
+ * por guiones (R-106, RUTA-1A), de 2 a 20 caracteres. El patrón viejo
+ * aceptaba `---` o `-R-`: guiones sueltos como identificador.
+ *
+ * Vive aquí y se exporta porque el alta de rutas no es el único sitio que
+ * necesita saberlo: el socket también recibe identificadores del cliente.
+ */
+export function isRouteId(routeId: string): boolean {
+  return (
+    /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/.test(routeId)
+    && routeId.length >= 2
+    && routeId.length <= 20
+  );
+}
+
 export function addCompanyRoute(
   companyId: string,
   routeId: string,
@@ -111,12 +130,7 @@ export function addCompanyRoute(
     const next = match ? parseInt(match[1], 10) + 1 : 1;
     cleanedId = `R-${String(next).padStart(3, '0')}`;
   }
-  // El patrón viejo aceptaba `---` o `-R-`: guiones sueltos como identificador.
-  // Ahora el guion solo puede ir entre grupos alfanuméricos (R-106, RUTA-1A).
-  if (!/^[A-Z0-9]+(-[A-Z0-9]+)*$/.test(cleanedId) || cleanedId.length < 2
-      || cleanedId.length > 20) {
-    return null;
-  }
+  if (!isRouteId(cleanedId)) return null;
   getDb().prepare(`
     INSERT INTO company_routes (company_id, route_id, name, created_at)
     VALUES (?, ?, ?, ?)

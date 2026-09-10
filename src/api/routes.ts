@@ -29,7 +29,13 @@ import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords'
 import { signToken } from '../auth/tokens';
 import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
 import { getMetrics } from '../observability/metrics';
-import { adminRateLimiter, loginRateLimiter, readRateLimiter, requestKey } from '../security/rate_limiter';
+import {
+  adminRateLimiter,
+  loginIpRateLimiter,
+  loginRateLimiter,
+  readRateLimiter,
+  requestKey,
+} from '../security/rate_limiter';
 import { getDb } from '../data/database';
 import { isBrokerReady } from '../mqtt/broker';
 import {
@@ -264,7 +270,12 @@ addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
   const requestedBusId = typeof body?.busId === 'string' ? body.busId : null;
   const requestedRouteId = typeof body?.routeId === 'string' ? body.routeId : null;
 
-  if (!loginRateLimiter.allow(requestKey(req, `login:${phoneNumber || 'unknown'}`))) {
+  // Dos topes: el de la IP entera frena la barrida de cuentas, y el de
+  // (IP, teléfono) frena el bombardeo de PIN contra una sola.
+  if (
+    !loginIpRateLimiter.allow(requestKey(req, 'login')) ||
+    !loginRateLimiter.allow(requestKey(req, `login:${phoneNumber || 'unknown'}`))
+  ) {
     writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
     return;
   }
@@ -327,7 +338,10 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
   const username = typeof body?.username === 'string'
     ? body.username.trim().toLowerCase() : '';
   const password = typeof body?.password === 'string' ? body.password : '';
-  if (!loginRateLimiter.allow(requestKey(req, `adminlogin:${username || 'unknown'}`))) {
+  if (
+    !loginIpRateLimiter.allow(requestKey(req, 'adminlogin')) ||
+    !loginRateLimiter.allow(requestKey(req, `adminlogin:${username || 'unknown'}`))
+  ) {
     writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
     return;
   }
@@ -585,8 +599,14 @@ addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
   const interno = typeof body?.interno === 'string' ? body.interno : '';
 
   const bus = createBus(auth.companyId, placa, routeId, interno);
-  if (!bus) {
+  if (bus === 'invalid') {
     writeError(res, 400, 'INVALID_BUS', 'Placa inválida (3 letras + 3 números, ej. ABC123) o falta la ruta (ej. R-101)');
+    return;
+  }
+  // La placa ya está dada de alta en otra empresa. No se dice en cuál: quien
+  // pregunta no tiene por qué enterarse de la flota ajena.
+  if (bus === 'taken') {
+    writeError(res, 409, 'BUS_TAKEN', 'Esa placa ya está registrada en otra empresa');
     return;
   }
   console.log(`[API] Bus ${bus.busId} creado (placa ${bus.placa}, ruta ${bus.routeId ?? '-'}) por ${auth.companyId}`);

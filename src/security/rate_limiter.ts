@@ -65,6 +65,14 @@ export class SlidingWindowRateLimiter {
 // 5 logins por minuto por IP es generoso para una persona y frena el
 // bombardeo de PIN; el admin mueve más (provisión, rutas, buses) y lleva 20.
 export const loginRateLimiter = new SlidingWindowRateLimiter(5, 60_000);
+// El de arriba cuenta por (IP, cuenta), así que quien prueba una cuenta
+// distinta en cada intento estrena presupuesto cada vez: con una lista de
+// teléfonos y el PIN '1234' se pueden barrer cientos de cuentas por minuto
+// desde una sola IP sin tocar nunca el tope. Este segundo cuenta todos los
+// intentos de una IP juntos y pone el techo a esa barrida. 20/min deja sitio
+// a un teléfono compartido o a una oficina detrás de un NAT pequeño —cuatro
+// personas equivocándose seguido— y aun así corta el barrido.
+export const loginIpRateLimiter = new SlidingWindowRateLimiter(20, 60_000);
 export const adminRateLimiter = new SlidingWindowRateLimiter(20, 60_000);
 // Lecturas públicas: la app del pasajero refresca posiciones cada pocos
 // segundos y el catálogo casi no cambia; 120/min por IP deja trabajar a la

@@ -28,6 +28,14 @@ docker compose up --build   # o: make docker-dev
 
 Servidor corre en `http://localhost:3000`.
 
+El backend arranca con la flota simulada rodando, para que la app y el panel
+tengan buses que enseñar. Para levantarlo sin ella —por ejemplo con tráfico
+real, donde esas posiciones falsas viajan por el mismo canal que las buenas:
+
+```bash
+YA_VIENE_FLOTA_DEMO=0 npm start
+```
+
 ## Endpoints REST
 
 | Método | Ruta | Descripción |
@@ -37,7 +45,7 @@ Servidor corre en `http://localhost:3000`.
 | GET | `/api/companies/:id/routes` | Rutas de una empresa |
 | GET | `/api/routes/:routeId/positions` | Posiciones actuales de una ruta |
 | GET | `/api/buses/:busId` | Posición de un bus específico |
-| POST | `/api/gps` | Enviar posición GPS (alternativa a MQTT) |
+| POST | `/api/gps` | **Retirado.** Responde 410: las posiciones entran solo por MQTT autenticado |
 | POST | `/api/drivers/register` | Registrar conductor |
 
 ## WebSocket (Socket.io)

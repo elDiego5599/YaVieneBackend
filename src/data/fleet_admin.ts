@@ -91,7 +91,11 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     interno: row.interno ?? '',
     driverName: row.driver_name,
     visible: row.visible === 1,
-    online: row.timestamp != null,
+    // Una fila en `positions` sólo dice que este bus reportó alguna vez. El
+    // barrido marca `is_ghost` cuando lleva GHOST_MS sin publicar, y hasta
+    // ahora esos seguían contando como conectados: el panel de la empresa
+    // enseñaba la flota entera en línea con todos los teléfonos apagados.
+    online: row.timestamp != null && row.is_ghost !== 1,
     lat: row.lat,
     lon: row.lon,
     heading: row.heading ?? 0,
@@ -104,21 +108,36 @@ export function getFleetPositions(companyId: string): FleetBus[] {
   }));
 }
 
+/**
+ * Alta (o renovación) de un bus. Devuelve el bus, o por qué no se pudo:
+ * `invalid` es una placa mal escrita o sin ruta, y `taken` es una placa que
+ * ya está dada de alta en OTRA empresa.
+ *
+ * Ese segundo caso era un robo silencioso: el INSERT resuelve el conflicto
+ * de placa pisando `company_id` con el de quien la manda, así que a un
+ * administrador le bastaba con dar de alta la placa de un bus ajeno para que
+ * el bus —y las posiciones que ya estaba publicando— cambiaran de empresa sin
+ * que la dueña se enterara. Una placa es única en el país; que ya exista en
+ * otra empresa no es un conflicto que se resuelva sobrescribiendo.
+ */
+export type CreateBusError = 'invalid' | 'taken';
+
 export function createBus(
   companyId: string,
   placa: string,
   routeId: string,
   interno?: string,
-): FleetBus | null {
+): FleetBus | CreateBusError {
   const normalized = normalizePlaca(placa);
-  if (!normalized) return null;
-  if (!routeId || !routeId.trim()) return null;
+  if (!normalized) return 'invalid';
+  if (!routeId || !routeId.trim()) return 'invalid';
   const busId = busIdFromPlaca(normalized);
   const now = Date.now();
   const db = getDb();
 
-  const existing = db.prepare('SELECT interno FROM buses WHERE bus_id = ?')
-    .get(busId) as { interno: string | null } | undefined;
+  const existing = db.prepare('SELECT interno, company_id FROM buses WHERE bus_id = ?')
+    .get(busId) as { interno: string | null; company_id: string } | undefined;
+  if (existing && existing.company_id !== companyId) return 'taken';
   // El número interno salía de COUNT(*)+1, y eso repite en cuanto se borra un
   // bus: con 001, 002 y 003 dados de alta, borrar el 002 deja el contador en
   // 2 y el siguiente nace como 003, chocando con el que ya existe. Se toma el
