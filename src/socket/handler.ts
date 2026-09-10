@@ -8,7 +8,7 @@ import {
   getFleetPositions,
   getBusCompanyId,
 } from '../data/buses';
-import { isRouteId } from '../data/routes_store';
+import { isRouteId, routeExists } from '../data/routes_store';
 import { verifyToken, AdminTokenPayload } from '../auth/tokens';
 import { incrementMetric } from '../observability/metrics';
 
@@ -139,7 +139,9 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
       // Lo que llega del cliente es lo que el cliente quiera: aquí se
       // comprobaba solo que no fuera vacío, así que un objeto o una cadena
       // de miles de caracteres acababa siendo el nombre de una sala.
-      if (typeof routeId !== 'string' || !isRouteId(routeId)) return;
+      // Y con la forma no basta: una ruta bien escrita que no existe
+      // también abría sala. Se descarta igual, sin respuesta.
+      if (typeof routeId !== 'string' || !isRouteId(routeId) || !routeExists(routeId)) return;
       const salas = [...socket.rooms].filter((r) => r.startsWith('route:'));
       if (salas.length >= MAX_RUTAS_POR_SOCKET && !socket.rooms.has(`route:${routeId}`)) {
         return;

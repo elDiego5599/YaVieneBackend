@@ -16,7 +16,7 @@ process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
 // evaluarse: el import se izaría por encima de la línea que fija la ruta.
 const { createBus, deleteBus, getCompanyBuses, getBusCompanyId } =
   require('../src/data/fleet_admin') as typeof import('../src/data/fleet_admin');
-const { addCompanyRoute, removeCompanyRoute, getCompanyRoutes } =
+const { addCompanyRoute, removeCompanyRoute, getCompanyRoutes, routeExists } =
   require('../src/data/routes_store') as typeof import('../src/data/routes_store');
 const { getDb } = require('../src/data/database') as typeof import('../src/data/database');
 
@@ -126,6 +126,23 @@ test('una placa de otra empresa no se puede dar de alta', () => {
   assert.equal(getBusCompanyId(bus.busId), duena);
   const guardado = getCompanyBuses(duena).find((b) => b.busId === bus.busId);
   assert.equal(guardado?.routeId, 'R-970');
+});
+
+test('una ruta bien escrita pero que no existe no cuenta como ruta', () => {
+  const empresa = 'EMP-EXISTE';
+  nuevaEmpresa(empresa);
+  // Forma válida, pero nadie la ha dado de alta: el socket la aceptaba.
+  assert.equal(routeExists('ZZ-999'), false);
+  // Las de la demo existen aunque ninguna empresa las tenga en catálogo.
+  assert.equal(routeExists('R-101'), true);
+
+  addCompanyRoute(empresa, 'R-990', 'Recién creada');
+  assert.equal(routeExists('R-990'), true);
+
+  // Borrada del catálogo y sin buses que la usen, deja de existir.
+  addCompanyRoute(empresa, 'R-991', 'Efímera');
+  assert.equal(removeCompanyRoute(empresa, 'R-991'), true);
+  assert.equal(routeExists('R-991'), false);
 });
 
 test('la placa mal escrita o sin ruta se distingue de la ocupada', () => {

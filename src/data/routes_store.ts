@@ -114,6 +114,27 @@ export function isRouteId(routeId: string): boolean {
   );
 }
 
+/**
+ * Si la ruta existe en alguna parte: en el catálogo de alguna empresa, como
+ * ruta de algún bus o de alguna posición guardada, o entre las rutas de la
+ * demo. Son las mismas tres fuentes de las que sale la lista de rutas que ve
+ * el pasajero, así que lo que la app puede pedir, existe.
+ *
+ * `isRouteId` solo mira la forma: `ZZ-999` la pasa sin existir, y el socket
+ * abría una sala para ella. Con esto, el pasajero ya no puede inventarse
+ * salas aunque respete el formato.
+ */
+export function routeExists(routeId: string): boolean {
+  if (Object.prototype.hasOwnProperty.call(routeNameMap, routeId)) return true;
+  const hit = getDb().prepare(`
+    SELECT 1 FROM company_routes WHERE route_id = ?
+    UNION ALL SELECT 1 FROM buses WHERE route_id = ?
+    UNION ALL SELECT 1 FROM positions WHERE route_id = ?
+    LIMIT 1
+  `).get(routeId, routeId, routeId);
+  return hit !== undefined;
+}
+
 export function addCompanyRoute(
   companyId: string,
   routeId: string,

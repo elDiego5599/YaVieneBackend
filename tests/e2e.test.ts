@@ -128,7 +128,22 @@ test('conductor -> MQTT -> backend -> Socket.io -> bus queda "sin señal" (is_gh
       (payload) => payload?.busId === busId && payload?.isGhost === true,
       60_000,
     );
+    // Una ruta bien escrita que no existe no abre sala ni trae carga
+    // inicial. Los eventos del socket llegan en orden, así que si la
+    // inventada hubiera respondido, su lote llegaría antes que el de R-101.
+    const lotes: string[] = [];
+    const anotarLote = (payload: any) => lotes.push(payload?.routeId);
+    socket.on('positions:batch', anotarLote);
+    const loteReal = waitForSocketEvent(
+      socket,
+      'positions:batch',
+      (payload) => payload?.routeId === 'R-101',
+    );
+    socket.emit('subscribe:route', 'ZZ-999');
     socket.emit('subscribe:route', 'R-101');
+    await loteReal;
+    socket.off('positions:batch', anotarLote);
+    assert.deepEqual(lotes, ['R-101']);
 
     simulator = spawn(process.execPath, ['scripts/simulate-bus.mjs'], {
       env: {
