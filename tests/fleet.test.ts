@@ -559,3 +559,161 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     await stopProcess(backend);
   }
 });
+
+test('fleet: una empresa no puede tocar ni ver buses, rutas ni flota de otra', { timeout: 60_000 }, async () => {
+  const HTTP_PORT = 3150;
+  const MQTT_PORT = 8920;
+  const base = `http://127.0.0.1:${HTTP_PORT}`;
+  const suffix = Date.now().toString().slice(-6);
+  const companyA = `EMP-MA-${suffix}`;
+  const companyB = `EMP-MB-${suffix}`;
+  const busA = 'BUS-AAA111';
+  const backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+    env: {
+      ...process.env,
+      HTTP_PORT: String(HTTP_PORT),
+      MQTT_PORT: String(MQTT_PORT),
+      JWT_SECRET,
+      ADMIN_API_KEY,
+      MQTT_DEBUG_LOGS: 'false',
+      YA_VIENE_FLOTA_DEMO: '0',
+      YA_VIENE_DB_PATH: `/tmp/yaviene-tenant-${process.pid}-${suffix}.db`,
+    },
+    stdio: 'ignore',
+  });
+  const sockets: Socket[] = [];
+
+  try {
+    await waitForReady(HTTP_PORT);
+    const conClave = { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY };
+
+    const login = async (companyId: string, username: string): Promise<Record<string, string>> => {
+      const created = await fetch(`${base}/api/admin/empresas/${companyId}/admin`, {
+        method: 'POST',
+        headers: conClave,
+        body: JSON.stringify({ username, password: 'secret123-de-prueba' }),
+      });
+      assert.equal(created.status, 201);
+      const res = await fetch(`${base}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password: 'secret123-de-prueba' }),
+      });
+      assert.equal(res.status, 200);
+      const { token } = (await res.json()) as { token: string };
+      return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    };
+    const call = (headers: Record<string, string>, method: string, path: string, body?: unknown) =>
+      fetch(`${base}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+
+    const a = await login(companyA, `jefa${suffix}`);
+    const b = await login(companyB, `jefe${suffix}`);
+
+    assert.equal((await call(a, 'POST', '/api/fleet/routes', { routeId: 'R-301', name: 'Ruta de A' })).status, 201);
+    assert.equal(
+      (await call(a, 'POST', '/api/fleet/buses', { placa: 'AAA111', routeId: 'R-301', interno: '077' })).status,
+      201,
+    );
+
+    // Escrituras de B sobre lo de A: todas 404, el mismo que da un bus o una
+    // ruta que no existe, para no confirmar que existen en otra empresa.
+    assert.equal(
+      (await call(b, 'PATCH', `/api/fleet/buses/${busA}`, { placa: 'ZZZ999', routeId: 'R-101', interno: '999' })).status,
+      404,
+    );
+    assert.equal((await call(b, 'DELETE', `/api/fleet/buses/${busA}`)).status, 404);
+    assert.equal((await call(b, 'POST', `/api/fleet/buses/${busA}/visibility`, { visible: true })).status, 404);
+    assert.equal((await call(b, 'PATCH', '/api/fleet/routes/R-301', { name: 'Robada' })).status, 404);
+    assert.equal((await call(b, 'DELETE', '/api/fleet/routes/R-301')).status, 404);
+
+    // La placa ya es de A: 409 y el bus no cambia de dueña ni de ruta.
+    const robo = await call(b, 'POST', '/api/fleet/buses', { placa: 'aaa 111', routeId: 'R-101' });
+    assert.equal(robo.status, 409);
+    const roboBody = (await robo.json()) as { error: { code: string } };
+    assert.equal(roboBody.error.code, 'BUS_TAKEN');
+    assert.equal(JSON.stringify(roboBody).includes(companyA), false, 'el 409 no dice de qué empresa es');
+
+    // «Mostrar todos» de B solo cuenta los suyos: el de A sigue oculto.
+    const todos = await call(b, 'POST', '/api/fleet/buses/visibility', { visible: true });
+    assert.equal(todos.status, 200);
+    assert.equal(((await todos.json()) as { count: number }).count, 0);
+
+    // Lecturas de B: nada de A, ni por HTTP ni por el socket del panel.
+    const flotaB = (await (await call(b, 'GET', '/api/fleet/positions')).json()) as any;
+    assert.equal(flotaB.companyId, companyB);
+    assert.equal(flotaB.buses.some((bus: any) => bus.busId === busA), false);
+    const rutasB = (await (await call(b, 'GET', '/api/fleet/routes')).json()) as any;
+    assert.equal(rutasB.routes.some((r: any) => r.routeId === 'R-301'), false);
+
+    const panelB = connectSocket({ token: b.authorization.slice('Bearer '.length) }, HTTP_PORT);
+    sockets.push(panelB);
+    await waitForConnection(panelB);
+    const loteB = new Promise<any>((resolve) => panelB.once('fleet:batch', resolve));
+    panelB.emit('subscribe:fleet');
+    const flotaSocketB = await loteB;
+    assert.equal(flotaSocketB.companyId, companyB);
+    assert.equal(flotaSocketB.buses.some((bus: any) => bus.busId === busA), false);
+
+    // Y lo de A quedó exactamente como estaba.
+    const flotaA = (await (await call(a, 'GET', '/api/fleet/positions')).json()) as any;
+    const suyo = flotaA.buses.find((bus: any) => bus.busId === busA);
+    assert.ok(suyo, 'el bus sigue en la flota de A');
+    assert.equal(suyo.companyId, companyA);
+    assert.equal(suyo.placa, 'AAA111');
+    assert.equal(suyo.routeId, 'R-301');
+    assert.equal(suyo.interno, '077');
+    assert.equal(suyo.visible, false);
+    const rutasA = (await (await call(a, 'GET', '/api/fleet/routes')).json()) as any;
+    assert.equal(rutasA.routes.find((r: any) => r.routeId === 'R-301')?.name, 'Ruta de A');
+
+    // Datos que antes entraban tal cual en la base.
+    const rutaBasura = await call(a, 'POST', '/api/fleet/buses', { placa: 'BBB222', routeId: '<script>' });
+    assert.equal(rutaBasura.status, 400);
+    assert.equal(((await rutaBasura.json()) as any).error.code, 'INVALID_BUS');
+    const edicionBasura = await call(a, 'PATCH', `/api/fleet/buses/${busA}`, { routeId: 'no vale!' });
+    assert.equal(edicionBasura.status, 400);
+    assert.equal(((await edicionBasura.json()) as any).error.code, 'INVALID_ROUTE');
+    assert.equal((await call(a, 'PATCH', `/api/fleet/buses/${busA}`, { interno: '1'.repeat(13) })).status, 400);
+    assert.equal((await call(a, 'POST', '/api/fleet/routes', { routeId: 'R-302', name: 'n'.repeat(61) })).status, 400);
+    const renombreLargo = await call(a, 'PATCH', '/api/fleet/routes/R-301', { name: 'n'.repeat(61) });
+    assert.equal(renombreLargo.status, 400, 'un nombre largo no es «ruta no encontrada»');
+    const flotaA2 = (await (await call(a, 'GET', '/api/fleet/positions')).json()) as any;
+    const intacto = flotaA2.buses.find((bus: any) => bus.busId === busA);
+    assert.equal(intacto.routeId, 'R-301');
+    assert.equal(intacto.interno, '077');
+
+    // La ficha de un conductor no dice si un teléfono existe a quien no
+    // puede leerla: mismo 403 para uno dado de alta y uno inventado.
+    const phone = `3009${suffix}`;
+    const provision = await call(conClave, 'POST', '/api/admin/drivers', {
+      phoneNumber: phone,
+      name: 'Conductor A',
+      pin: '2468',
+      companyId: companyA,
+      busId: `DRV-${suffix}`,
+      routeId: 'R-101',
+    });
+    assert.equal(provision.status, 201);
+    const existente = await fetch(`${base}/api/drivers/${phone}`);
+    const inventado = await fetch(`${base}/api/drivers/3990000000`);
+    assert.equal(existente.status, 403);
+    assert.equal(inventado.status, 403);
+    assert.deepEqual(await existente.json(), await inventado.json());
+
+    // Probar claves de administración también gasta cupo: antes solo
+    // contaban los intentos con la clave buena. Con la provisión de arriba
+    // ya va uno de 20.
+    const malas = { 'content-type': 'application/json', 'x-admin-key': 'no-es-la-clave' };
+    for (let i = 0; i < 19; i++) {
+      assert.equal((await call(malas, 'POST', '/api/admin/drivers', {})).status, 401);
+    }
+    assert.equal((await call(malas, 'POST', '/api/admin/drivers', {})).status, 429);
+  } finally {
+    for (const socket of sockets) socket.close();
+    await stopProcess(backend);
+  }
+});

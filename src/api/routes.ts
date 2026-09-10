@@ -29,12 +29,16 @@ import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords'
 import { signToken } from '../auth/tokens';
 import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
 import { getMetrics } from '../observability/metrics';
+import { MAX_INTERNO } from '../data/fleet_admin';
+import { isRouteId, MAX_NOMBRE_RUTA } from '../data/routes_store';
 import {
   adminRateLimiter,
+  fleetWriteRateLimiter,
   loginIpRateLimiter,
   loginRateLimiter,
   readRateLimiter,
   requestKey,
+  SlidingWindowRateLimiter,
 } from '../security/rate_limiter';
 import { getDb } from '../data/database';
 import { isBrokerReady } from '../mqtt/broker';
@@ -76,6 +80,18 @@ function guardPublicRead(req: IncomingMessage, res: ServerResponse): boolean {
   return false;
 }
 
+/** Deja pasar la petición o responde 429. Devuelve si puede seguir. */
+function guardRate(
+  limiter: SlidingWindowRateLimiter,
+  req: IncomingMessage,
+  res: ServerResponse,
+  suffix: string,
+): boolean {
+  if (limiter.allow(requestKey(req, suffix))) return true;
+  writeError(res, 429, 'RATE_LIMITED', 'Too many requests');
+  return false;
+}
+
 function publicDriver(driver: NonNullable<ReturnType<typeof getDriver>>): Record<string, unknown> {
   return {
     driverId: driver.driverId,
@@ -107,6 +123,9 @@ addRoute('GET', '/api/health', (_req, res) => {
 });
 
 addRoute('GET', '/api/metrics', (req, res) => {
+  // El limitador va antes de mirar la clave: si fuera después, solo contaría
+  // a quien ya la tiene y dejaría probar claves sin tope.
+  if (!guardRate(adminRateLimiter, req, res, 'metrics')) return;
   if (!isAdminRequest(req)) {
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
     return;
@@ -199,15 +218,28 @@ addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
   writeJson(res, 200, { status: 'offline', busId: params.busId });
 });
 
+// La búsqueda iba antes de la autenticación: sin token, un teléfono dado de
+// alta respondía 403 y uno desconocido 404, así que cualquiera podía barrer
+// números y saber cuáles son de conductores. Ahora quien no puede leer la
+// ficha recibe siempre el mismo 403, exista o no; el 404 queda para quien
+// sí tiene permiso de verlo.
 addRoute('GET', '/api/drivers/:phone', (req, res, params) => {
-  const driver = getDriver(params.phone);
-  if (!driver) {
-    writeError(res, 404, 'DRIVER_NOT_FOUND', 'Driver not found');
+  const auth = authenticateRequest(req);
+  if (auth?.role !== 'driver') {
+    writeError(res, 403, 'DRIVER_FORBIDDEN', 'The token cannot read this driver');
     return;
   }
-
-  const auth = authenticateRequest(req);
-  if (auth?.role !== 'driver' || (!isAdminRequest(req) && auth.driverId !== driver.driverId)) {
+  const admin = isAdminRequest(req);
+  const driver = getDriver(params.phone);
+  if (!driver) {
+    if (admin) {
+      writeError(res, 404, 'DRIVER_NOT_FOUND', 'Driver not found');
+    } else {
+      writeError(res, 403, 'DRIVER_FORBIDDEN', 'The token cannot read this driver');
+    }
+    return;
+  }
+  if (!admin && auth.driverId !== driver.driverId) {
     writeError(res, 403, 'DRIVER_FORBIDDEN', 'The token cannot read this driver');
     return;
   }
@@ -224,12 +256,15 @@ function provisionDriver(
   _params: Record<string, string>,
   body?: Record<string, unknown>,
 ): void {
-  if (!isAdminRequest(req)) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
-    return;
-  }
+  // El limitador iba después de comprobar la clave de administración, así
+  // que solo frenaba a quien ya la tenía: los intentos fallidos no contaban
+  // y se podían probar claves sin tope. Ahora cuenta todo intento.
   if (!adminRateLimiter.allow(requestKey(req, 'provision'))) {
     writeError(res, 429, 'RATE_LIMITED', 'Too many provisioning attempts');
+    return;
+  }
+  if (!isAdminRequest(req)) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
     return;
   }
 
@@ -374,12 +409,15 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
 });
 
 addRoute('POST', '/api/admin/empresas/:companyId/admin', (req, res, params, body) => {
-  if (!isAdminRequest(req)) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
+  // Igual que en la provisión: el tope va antes de la clave para que los
+  // intentos fallidos también cuenten. Y la key ya no lleva la empresa:
+  // con ella, cambiar el :companyId de la URL estrenaba presupuesto.
+  if (!adminRateLimiter.allow(requestKey(req, 'companyadmin'))) {
+    writeError(res, 429, 'RATE_LIMITED', 'Too many attempts');
     return;
   }
-  if (!adminRateLimiter.allow(requestKey(req, `companyadmin:${params.companyId}`))) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many attempts');
+  if (!isAdminRequest(req)) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
     return;
   }
 
@@ -406,12 +444,18 @@ addRoute('POST', '/api/admin/empresas/:companyId/admin', (req, res, params, body
   });
 });
 
+// Las rutas de flota de aquí abajo que no tenían tope ahora llevan uno: las
+// lecturas el mismo de las lecturas públicas (el panel se alimenta del
+// socket, no sondea por HTTP) y las escrituras `fleetWriteRateLimiter`.
+// Van después de autenticar: sin token no hay nada que leer ni escribir, y
+// así un tercero no puede agotarle el cupo a una oficina que comparte IP.
 addRoute('GET', '/api/fleet/positions', (req, res) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
     return;
   }
+  if (!guardRate(readRateLimiter, req, res, 'fleet:read')) return;
   writeJson(res, 200, {
     companyId: auth.companyId,
     buses: getFleetPositions(auth.companyId),
@@ -424,6 +468,7 @@ addRoute('POST', '/api/fleet/buses/:busId/visibility', (req, res, params, body) 
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
     return;
   }
+  if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
 
   const companyId = getBusCompanyId(params.busId);
   if (!companyId || companyId !== auth.companyId) {
@@ -452,6 +497,7 @@ addRoute('POST', '/api/fleet/buses/visibility', (req, res, _params, body) => {
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
     return;
   }
+  if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
 
   const visible = body?.visible;
   if (typeof visible !== 'boolean') {
@@ -470,6 +516,7 @@ addRoute('GET', '/api/fleet/routes', (req, res) => {
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
     return;
   }
+  if (!guardRate(readRateLimiter, req, res, 'fleet:read')) return;
   writeJson(res, 200, {
     companyId: auth.companyId,
     routes: getCompanyRoutes(auth.companyId),
@@ -497,7 +544,7 @@ addRoute('POST', '/api/fleet/routes', (req, res, _params, body) => {
 
   const route = addCompanyRoute(auth.companyId, routeId, name);
   if (!route) {
-    writeError(res, 400, 'INVALID_ROUTE', 'routeId (ej. R-104) y name son obligatorios');
+    writeError(res, 400, 'INVALID_ROUTE', `routeId (ej. R-104) y name (máx. ${MAX_NOMBRE_RUTA} caracteres) son obligatorios`);
     return;
   }
   console.log(`[API] Ruta ${route.routeId} creada para ${auth.companyId}: ${route.name}`);
@@ -516,6 +563,12 @@ addRoute('PATCH', '/api/fleet/routes/:routeId', (req, res, params, body) => {
   }
 
   const name = typeof body?.name === 'string' ? body.name : '';
+  // Sin esto un nombre largo salía como 404 «ruta no encontrada», que es
+  // mentira: la ruta existe, lo que sobra es el nombre.
+  if (name.trim().length > MAX_NOMBRE_RUTA) {
+    writeError(res, 400, 'INVALID_ROUTE', `name admite hasta ${MAX_NOMBRE_RUTA} caracteres`);
+    return;
+  }
   if (routeNameExists(auth.companyId, name, params.routeId)) {
     writeError(res, 400, 'DUPLICATE_ROUTE', 'Ya existe una ruta con ese nombre');
     return;
@@ -536,6 +589,7 @@ addRoute('DELETE', '/api/fleet/routes/:routeId', (req, res, params) => {
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
     return;
   }
+  if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
   const removed = removeCompanyRoute(auth.companyId, params.routeId);
   if (!removed) {
     writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found in this company');
@@ -600,7 +654,12 @@ addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
 
   const bus = createBus(auth.companyId, placa, routeId, interno);
   if (bus === 'invalid') {
-    writeError(res, 400, 'INVALID_BUS', 'Placa inválida (3 letras + 3 números, ej. ABC123) o falta la ruta (ej. R-101)');
+    writeError(
+      res,
+      400,
+      'INVALID_BUS',
+      `Placa inválida (3 letras + 3 números, ej. ABC123), ruta que falta o mal escrita (ej. R-101) o interno de más de ${MAX_INTERNO} caracteres`,
+    );
     return;
   }
   // La placa ya está dada de alta en otra empresa. No se dice en cuál: quien
@@ -619,6 +678,7 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
     return;
   }
+  if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
 
   const companyId = getBusCompanyId(params.busId);
   if (!companyId || companyId !== auth.companyId) {
@@ -627,8 +687,20 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
   }
 
   const placa = typeof body?.placa === 'string' ? body.placa : undefined;
-  const routeId = typeof body?.routeId === 'string' ? body.routeId : undefined;
+  const rawRouteId = typeof body?.routeId === 'string' ? body.routeId.trim() : undefined;
   const interno = typeof body?.interno === 'string' ? body.interno : undefined;
+  // La edición guardaba cualquier cadena como ruta, igual que el alta: un bus
+  // pasado a `<lo que sea>` desaparecía del mapa del pasajero. La cadena vacía
+  // sigue sirviendo para dejar el bus sin ruta.
+  if (rawRouteId && !isRouteId(rawRouteId)) {
+    writeError(res, 400, 'INVALID_ROUTE', 'routeId debe tener forma de ruta (ej. R-101)');
+    return;
+  }
+  if (interno !== undefined && interno.trim().length > MAX_INTERNO) {
+    writeError(res, 400, 'INVALID_INTERNO', `interno admite hasta ${MAX_INTERNO} caracteres`);
+    return;
+  }
+  const routeId = rawRouteId;
 
   const bus = updateBus(params.busId, { placa, routeId, interno });
   if (!bus) {
@@ -645,6 +717,7 @@ addRoute('DELETE', '/api/fleet/buses/:busId', (req, res, params) => {
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
     return;
   }
+  if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
 
   const companyId = getBusCompanyId(params.busId);
   if (!companyId || companyId !== auth.companyId) {

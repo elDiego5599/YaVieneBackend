@@ -135,13 +135,22 @@ export function routeExists(routeId: string): boolean {
   return hit !== undefined;
 }
 
+/**
+ * Largo máximo del nombre de una ruta. El nombre sale tal cual en el selector
+ * de la app del pasajero y en `/api/companies/:id/routes`, que es público, y
+ * hasta ahora el único tope era el del cuerpo de la petición (32 KB): una
+ * empresa podía dejar un nombre de miles de caracteres en la lista que ven
+ * todos los pasajeros. El más largo de verdad hoy es «Carrera 14 - Silencio».
+ */
+export const MAX_NOMBRE_RUTA = 60;
+
 export function addCompanyRoute(
   companyId: string,
   routeId: string,
   name: string,
 ): { routeId: string; name: string } | null {
   const cleanedName = name.trim();
-  if (!cleanedName) return null;
+  if (!cleanedName || cleanedName.length > MAX_NOMBRE_RUTA) return null;
   let cleanedId = routeId.trim().toUpperCase();
   if (!cleanedId) {
     const last = getDb().prepare(
@@ -166,7 +175,7 @@ export function renameCompanyRoute(
   name: string,
 ): { routeId: string; name: string } | null {
   const cleanedName = name.trim();
-  if (!cleanedName) return null;
+  if (!cleanedName || cleanedName.length > MAX_NOMBRE_RUTA) return null;
   const result = getDb().prepare(
     'UPDATE company_routes SET name = ? WHERE company_id = ? AND route_id = ?',
   ).run(cleanedName, companyId, routeId);

@@ -21,3 +21,92 @@ export const CORS_ORIGINS: string[] = (process.env.CORS_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+
+/**
+ * Revisa la configuración antes de arrancar. Hasta ahora solo se comprobaba
+ * que JWT_SECRET existiera, y el resto de errores pasaba en silencio:
+ *
+ * - JWT_SECRET con solo espacios pasaba la guardia y firmaba tokens con un
+ *   secreto trivial.
+ * - Un certificado TLS sin su clave (o al revés) hacía que el servidor
+ *   arrancara en HTTP plano sin decir nada, creyendo quien lo desplegó que
+ *   iba cifrado. Lo mismo con el MQTT.
+ * - Un origen CORS mal escrito (`https://sitio.co/`, con barra final) no
+ *   coincide nunca con la cabecera Origin del navegador, y `*` no significa
+ *   «todos» aquí sino un origen literal que nadie manda: la web quedaba sin
+ *   acceso y nadie sabía por qué.
+ * - Un puerto no numérico acababa en `listen(NaN)`.
+ *
+ * Devuelve errores (el arranque se detiene) y avisos (se imprimen y sigue).
+ * Recibe el entorno como parámetro para poder probarlo sin arrancar nada.
+ * Producción es `NODE_ENV=production` (lo pone el Dockerfile de Fly); el
+ * arranque local con ngrok no la define y se revisa con criterio de
+ * desarrollo, para no romper la demo.
+ */
+export function validateConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): { errores: string[]; avisos: string[] } {
+  const errores: string[] = [];
+  const avisos: string[] = [];
+  const produccion = env.NODE_ENV === 'production';
+
+  const jwtSecret = env.JWT_SECRET ?? '';
+  if (!jwtSecret.trim()) {
+    errores.push('JWT_SECRET es obligatorio y no puede estar vacío: arranca con local.env cargado');
+  } else if (produccion && jwtSecret.length < 32) {
+    avisos.push('JWT_SECRET tiene menos de 32 caracteres; en producción conviene uno largo y aleatorio');
+  }
+
+  const adminKey = env.ADMIN_API_KEY;
+  if (adminKey !== undefined && adminKey !== '' && !adminKey.trim()) {
+    errores.push('ADMIN_API_KEY está definida pero solo tiene espacios');
+  } else if (produccion && !adminKey) {
+    errores.push('ADMIN_API_KEY es obligatoria en producción');
+  } else if (produccion && adminKey && adminKey.length < 24) {
+    avisos.push('ADMIN_API_KEY tiene menos de 24 caracteres; en producción conviene una larga y aleatoria');
+  }
+
+  for (const nombre of ['HTTP_PORT', 'MQTT_PORT']) {
+    const valor = env[nombre];
+    if (valor === undefined || valor === '') continue;
+    const puerto = Number(valor);
+    if (!Number.isInteger(puerto) || puerto < 1 || puerto > 65535) {
+      errores.push(`${nombre} debe ser un puerto entre 1 y 65535 (llegó «${valor}»)`);
+    }
+  }
+
+  const httpTls = [env.HTTP_TLS_CERT_PATH, env.HTTP_TLS_KEY_PATH].filter(Boolean).length;
+  if (httpTls === 1) {
+    errores.push('HTTP_TLS_CERT_PATH y HTTP_TLS_KEY_PATH van juntas: con una sola el servidor arrancaría sin TLS');
+  }
+  const mqttTlsCount = [env.MQTT_TLS_CERT_PATH, env.MQTT_TLS_KEY_PATH].filter(Boolean).length;
+  if (mqttTlsCount === 1) {
+    errores.push('MQTT_TLS_CERT_PATH y MQTT_TLS_KEY_PATH van juntas: con una sola el MQTT arrancaría sin TLS');
+  }
+
+  const mqttHost = env.MQTT_HOST || '127.0.0.1';
+  if (!LOOPBACK_HOSTS.has(mqttHost) && mqttTlsCount !== 2) {
+    const mensaje = `MQTT_HOST=${mqttHost} expone el MQTT por TCP fuera de esta máquina sin TLS`;
+    if (produccion) errores.push(mensaje);
+    else avisos.push(mensaje);
+  }
+
+  const origenes = (env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
+  for (const origen of origenes) {
+    let valido = false;
+    try {
+      valido = new URL(origen).origin === origen;
+    } catch {
+      valido = false;
+    }
+    if (!valido) {
+      errores.push(`CORS_ORIGINS: «${origen}» no es un origen (esquema://host[:puerto], sin barra final ni comodines)`);
+    } else if (produccion && !origen.startsWith('https://')) {
+      errores.push(`CORS_ORIGINS: «${origen}» no es https; en producción solo se autorizan orígenes cifrados`);
+    }
+  }
+
+  return { errores, avisos };
+}

@@ -7,6 +7,7 @@ import {
   HTTP_TLS_KEY_PATH,
   BUS_TIMEOUT_MS,
   CORS_ORIGINS,
+  validateConfig,
 } from './config';
 import { closeBroker, PositionHandlingResult, startBroker } from './mqtt/broker';
 import { handleAPI } from './api/routes';
@@ -38,11 +39,17 @@ import {
 // ── Guardia de arranque ──────────────────────────────────────────────
 // Sin JWT_SECRET el backend arranca con un secret por defecto y rota todos
 // los tokens en silencio: las apps quedan con "sesión expiró" en loop.
-// Arrancar siempre con local.env cargado (start-test.sh lo hace).
-if (!process.env.JWT_SECRET) {
-  throw new Error(
-    'JWT_SECRET es obligatorio: arranca con start-test.sh o con local.env cargado',
-  );
+// Arrancar siempre con local.env cargado. validateConfig revisa además
+// secretos vacíos, TLS a medias, CORS mal escrito y MQTT expuesto sin
+// cifrar: cualquiera de esos errores detiene el arranque en vez de dejar un
+// servidor inseguro funcionando en silencio.
+{
+  const { errores, avisos } = validateConfig();
+  for (const aviso of avisos) console.warn(`[Config] Aviso: ${aviso}`);
+  if (errores.length > 0) {
+    for (const error of errores) console.error(`[Config] ${error}`);
+    throw new Error(`Configuración inválida: ${errores.join(' | ')}`);
+  }
 }
 
 // ── Candado 3: Sanity check de física imposible (módulo puro, ver security/physics.ts) ──
@@ -258,7 +265,7 @@ startBroker(
     // Desconexión MQTT: NO se borra la posición. El bus conserva su última
     // ubicación y pasa a "sin señal" (is_ghost) tras GHOST_MS via sweep.
     console.log(
-      `[MQTT] Conductor ${auth.phoneNumber} desconectado — bus ${auth.busId} pasa a sin señal en ${GHOST_MS / 1000}s`,
+      `[MQTT] Conductor ${auth.driverId} desconectado — bus ${auth.busId} pasa a sin señal en ${GHOST_MS / 1000}s`,
     );
   },
   server,
@@ -296,28 +303,77 @@ if (FLOTA_DEMO) {
 const metricsFlushTimer = setInterval(flushMetrics, 30_000);
 metricsFlushTimer.unref();
 
+// Los contadores se vuelcan cada 30 s, así que apagar el servidor tiraba
+// a la basura hasta medio minuto de señal operativa —justo la del rato
+// anterior a la caída, que es la que se quiere leer después. Va en su propia
+// función, protegida y una sola vez, porque se llama desde dos sitios: el
+// final normal del apagado y el reloj de emergencia.
+let datosCerrados = false;
+function cerrarDatos(): void {
+  if (datosCerrados) return;
+  datosCerrados = true;
+  try {
+    flushMetrics();
+  } catch (error) {
+    console.error('[Server] No se pudieron guardar las métricas al apagar:', error);
+  }
+  try {
+    closeDb();
+  } catch (error) {
+    console.error('[Server] No se pudo cerrar SQLite al apagar:', error);
+  }
+}
+
+// Tiempo máximo del apagado ordenado. Pasado, se guarda lo que se pueda y se
+// sale igual: el orquestador (Fly, launchd) manda SIGKILL poco después y ahí
+// ya no se guarda nada.
+const APAGADO_MAX_MS = 10_000;
+let apagando = false;
+
 const shutdown = async (signal: string): Promise<void> => {
+  // SIGTERM y SIGINT tienen cada uno su `once`: un Ctrl+C durante el apagado
+  // lo arrancaba por segunda vez y cerraba la base dos veces.
+  if (apagando) return;
+  apagando = true;
   console.log(`[Server] Shutting down from ${signal}...`);
-  detenerFlotaDemo();
-  clearInterval(sweepTimer);
-  clearInterval(sessionCleanupTimer);
-  clearInterval(lifecycleDispatchTimer);
-  clearInterval(metricsFlushTimer);
-  getIO()?.close();
-  await closeBroker();
-  await new Promise<void>((resolve) => {
-    if (!server.listening) {
-      resolve();
-      return;
-    }
-    server.close(() => resolve());
-  });
-  // Los contadores se vuelcan cada 30 s, así que apagar el servidor tiraba
-  // a la basura hasta medio minuto de señal operativa —justo la del rato
-  // anterior a la caída, que es la que se quiere leer después.
-  flushMetrics();
-  closeDb();
-  process.exit(0);
+
+  // Antes, si algo se colgaba al cerrar (una conexión que no suelta, el
+  // broker) o lanzaba, el proceso se quedaba a medias o moría sin volcar las
+  // métricas ni cerrar SQLite. El reloj NO lleva unref a propósito: si el
+  // cierre se queda esperando una promesa que nunca resuelve y no queda nada
+  // más vivo, Node saldría con código 0 sin pasar por el volcado.
+  const reloj = setTimeout(() => {
+    console.error(`[Server] El apagado pasó de ${APAGADO_MAX_MS / 1000}s — salida forzada`);
+    cerrarDatos();
+    process.exit(1);
+  }, APAGADO_MAX_MS);
+
+  let codigo = 0;
+  try {
+    // Orden: primero lo que genera trabajo nuevo (simuladores, timers),
+    // luego lo que lo recibe (sockets, MQTT, HTTP) y al final los datos.
+    detenerFlotaDemo();
+    clearInterval(sweepTimer);
+    clearInterval(sessionCleanupTimer);
+    clearInterval(lifecycleDispatchTimer);
+    clearInterval(metricsFlushTimer);
+    getIO()?.close();
+    await closeBroker();
+    await new Promise<void>((resolve) => {
+      if (!server.listening) {
+        resolve();
+        return;
+      }
+      server.close(() => resolve());
+    });
+  } catch (error) {
+    console.error('[Server] Error cerrando conexiones:', error);
+    codigo = 1;
+  } finally {
+    clearTimeout(reloj);
+    cerrarDatos();
+    process.exit(codigo);
+  }
 };
 
 process.once('SIGTERM', () => { void shutdown('SIGTERM'); });

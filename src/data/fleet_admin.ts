@@ -5,6 +5,14 @@ import { getDb } from './database';
 import { queueLifecycleEvent } from './lifecycle_events';
 import { FleetBus, normalizeSentido } from './bus_types';
 import { getPosition } from './positions_store';
+import { isRouteId } from './routes_store';
+
+/**
+ * Largo máximo del número interno. Sale en `/api/companies/:id/buses`, que es
+ * público, y antes solo lo acotaba el tope del cuerpo de la petición (32 KB).
+ * Los internos reales son de tres o cuatro cifras.
+ */
+export const MAX_INTERNO = 12;
 
 export const visibilityCache = new Map<string, boolean>();
 export const busCompanyCache = new Map<string, string>();
@@ -110,8 +118,9 @@ export function getFleetPositions(companyId: string): FleetBus[] {
 
 /**
  * Alta (o renovación) de un bus. Devuelve el bus, o por qué no se pudo:
- * `invalid` es una placa mal escrita o sin ruta, y `taken` es una placa que
- * ya está dada de alta en OTRA empresa.
+ * `invalid` es una placa mal escrita, una ruta que falta o no tiene forma de
+ * ruta, o un interno demasiado largo; `taken` es una placa que ya está dada
+ * de alta en OTRA empresa.
  *
  * Ese segundo caso era un robo silencioso: el INSERT resuelve el conflicto
  * de placa pisando `company_id` con el de quien la manda, así que a un
@@ -119,6 +128,11 @@ export function getFleetPositions(companyId: string): FleetBus[] {
  * el bus —y las posiciones que ya estaba publicando— cambiaran de empresa sin
  * que la dueña se enterara. Una placa es única en el país; que ya exista en
  * otra empresa no es un conflicto que se resuelva sobrescribiendo.
+ *
+ * La ruta solo se comprobaba no vacía, así que cualquier cadena acababa en
+ * `buses.route_id`: un bus con ruta `<lo que sea>` queda fuera del mapa para
+ * siempre, porque el socket del pasajero rechaza suscribirse a algo que no
+ * tenga forma de ruta. Ahora se exige la misma forma que el alta de rutas.
  */
 export type CreateBusError = 'invalid' | 'taken';
 
@@ -130,7 +144,9 @@ export function createBus(
 ): FleetBus | CreateBusError {
   const normalized = normalizePlaca(placa);
   if (!normalized) return 'invalid';
-  if (!routeId || !routeId.trim()) return 'invalid';
+  routeId = routeId.trim();
+  if (!isRouteId(routeId)) return 'invalid';
+  if ((interno ?? '').trim().length > MAX_INTERNO) return 'invalid';
   const busId = busIdFromPlaca(normalized);
   const now = Date.now();
   const db = getDb();

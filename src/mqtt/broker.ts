@@ -159,7 +159,7 @@ export function startBroker(
           if (claimSession(driverPayload.sessionId, client.id)) {
             clientAuth.set(client, driverPayload);
             incrementMetric('mqtt.auth.accepted');
-            console.log(`[MQTT] Auth OK (claim robado): ${driverPayload.phoneNumber} (bus ${driverPayload.busId})`);
+            console.log(`[MQTT] Auth OK (claim robado): conductor ${driverPayload.driverId} (bus ${driverPayload.busId})`);
             return callback(null, true);
           }
         }
@@ -171,7 +171,10 @@ export function startBroker(
 
     clientAuth.set(client, driverPayload);
     incrementMetric('mqtt.auth.accepted');
-    console.log(`[MQTT] Auth OK: ${driverPayload.phoneNumber} (bus ${driverPayload.busId})`);
+    // El teléfono del conductor no sale en los registros: en Fly se guardan
+    // y los lee cualquiera con acceso a la consola. El driverId basta para
+    // cruzar un incidente con la base.
+    console.log(`[MQTT] Auth OK: conductor ${driverPayload.driverId} (bus ${driverPayload.busId})`);
     callback(null, true);
   };
 
@@ -215,7 +218,7 @@ export function startBroker(
     }
     if (topic !== expectedTopic) {
       incrementMetric('mqtt.publish.rejected_topic');
-      console.warn(`[MQTT] TOPIC HIJACKING: ${payload.phoneNumber} (bus ${payload.busId}) intentó publicar a ${topic}`);
+      console.warn(`[MQTT] TOPIC HIJACKING: conductor ${payload.driverId} (bus ${payload.busId}) intentó publicar a ${topic}`);
       forceCloseClient(broker, client, `topic hijacking: ${topic}`);
       return callback(denyPublish(`topic no autorizado: ${topic}`));
     }
@@ -303,7 +306,7 @@ export function startBroker(
     const authPayload = clientAuth.get(client);
     if (authPayload && onDisconnect) {
       if (!releaseSession(authPayload.sessionId, client.id as string)) return;
-      console.log(`[MQTT] Disconnect: ${authPayload.phoneNumber} (bus ${authPayload.busId})`);
+      console.log(`[MQTT] Disconnect: conductor ${authPayload.driverId} (bus ${authPayload.busId})`);
       onDisconnect(client.id as string, authPayload);
     }
   });
@@ -318,7 +321,7 @@ export function startBroker(
         forceCloseClient(
           broker,
           client,
-          `sesión revocada (${payload.phoneNumber} inició en otro dispositivo o fue expulsada)`,
+          `sesión revocada (conductor ${payload.driverId} inició en otro dispositivo o fue expulsado)`,
         );
       }
     }

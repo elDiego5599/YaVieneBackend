@@ -78,6 +78,12 @@ export const adminRateLimiter = new SlidingWindowRateLimiter(20, 60_000);
 // segundos y el catálogo casi no cambia; 120/min por IP deja trabajar a la
 // app y frena el scraping burdo sin tocar a quien la usa de verdad.
 export const readRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
+// Cambios de flota que no tenían tope: visibilidad (de un bus o de todos),
+// editar o borrar un bus y borrar una ruta. Van con token de empresa, así que
+// no es un ataque de adivinanza, pero sin límite un token filtrado —o un
+// script mal hecho— podía martillar escrituras en SQLite sin freno. 60/min
+// deja a una persona ocultar treinta buses uno a uno sin tropezar.
+export const fleetWriteRateLimiter = new SlidingWindowRateLimiter(60, 60_000);
 
 // Solo confiamos en X-Forwarded-For si la conexión TCP viene del túnel local
 // (ngrok/cloudflared corren en loopback en este despliegue, confirmado con
@@ -86,6 +92,18 @@ export const readRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
 const TRUSTED_PROXY_ADDRESSES = new Set(['127.0.0.1', '::1']);
 
 export function requestKey(req: IncomingMessage, suffix = ''): string {
+  // En Fly (el respaldo) no hay túnel en loopback: todo llega desde el
+  // proxy de Fly por su red privada, así que la IP del socket era la del
+  // proxy y TODOS los pasajeros compartían un único cupo —con 120 lecturas
+  // por minuto para el país entero, el respaldo se ahogaba en cuanto la app
+  // conmutaba a él. El proxy de Fly pone la IP real en Fly-Client-IP y
+  // pisa la que mande el cliente; FLY_APP_NAME solo existe dentro de una
+  // máquina de Fly, así que fuera de ella la cabecera no se mira.
+  const flyClientIp = process.env.FLY_APP_NAME ? req.headers['fly-client-ip'] : undefined;
+  if (typeof flyClientIp === 'string' && flyClientIp.trim()) {
+    const ip = flyClientIp.trim();
+    return suffix ? `${ip}:${suffix}` : ip;
+  }
   const trustedProxy = TRUSTED_PROXY_ADDRESSES.has(req.socket.remoteAddress ?? '');
   const forwarded = trustedProxy ? req.headers['x-forwarded-for'] : undefined;
   const ip = typeof forwarded === 'string'

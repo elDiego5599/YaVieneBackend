@@ -21,6 +21,8 @@ let slowConsumerTimer: NodeJS.Timeout | null = null;
 const latencySamples: number[] = [];
 let lastLatencyReport = Date.now();
 const LATENCY_REPORT_MS = 10_000;
+const VENTANA_EVENTOS_MS = 10_000;
+const MAX_EVENTOS_POR_VENTANA = 30;
 
 // ── Guard anti-Slowloris: clientes que no consumen el socket se acumulan
 //    en el búfer de ws (bufferedAmount). Superado el umbral → terminate. ──
@@ -84,6 +86,12 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
     cors: { origin: CORS_ORIGINS, methods: ['GET', 'POST'] },
     pingInterval: 10000,
     pingTimeout: 5000,
+    // Lo más grande que manda un cliente legítimo es el token de admin en el
+    // handshake (menos de 1 KB); un identificador de ruta son 20 caracteres.
+    // El valor por defecto de Socket.IO es 1 MB por mensaje, así que un
+    // cliente podía obligar al servidor a recibir y parsear megas por cada
+    // evento. Por encima de 16 KB el motor corta la conexión.
+    maxHttpBufferSize: 16 * 1024,
   });
 
   // ── Candado 4: onAny — default deny, pero ignorando eventos internos ──
@@ -102,10 +110,33 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
       'subscribe:fleet',
     ]);
 
-    socket.onAny((event: string, ...args: any[]) => {
+    // Presupuesto de eventos por socket. Cada `subscribe:route` es una
+    // consulta a SQLite y un lote de posiciones de vuelta, y cada
+    // `subscribe:fleet` la flota entera: sin tope, un solo cliente podía
+    // pedirlos en bucle y tener al servidor consultando y serializando sin
+    // parar. La app del pasajero manda uno o dos al conectar y el panel uno
+    // cada 15 s, así que 30 cada 10 s no lo roza nadie legítimo. Quien lo
+    // supera se desconecta: onAny corre antes que el manejador del evento, y
+    // Socket.IO no despacha eventos de un socket ya desconectado.
+    let ventanaDesde = Date.now();
+    let eventosEnVentana = 0;
+
+    socket.onAny((event: string) => {
       // Ignorar eventos internos del motor Socket.io
       if (event.startsWith('/')) return;
       if (['connect', 'disconnect', 'error', 'connect_error', 'reconnect', 'reconnect_attempt'].includes(event)) return;
+
+      const ahora = Date.now();
+      if (ahora - ventanaDesde >= VENTANA_EVENTOS_MS) {
+        ventanaDesde = ahora;
+        eventosEnVentana = 0;
+      }
+      if (++eventosEnVentana > MAX_EVENTOS_POR_VENTANA) {
+        console.warn(`[WS] KICKED client ${socket.id} — más de ${MAX_EVENTOS_POR_VENTANA} eventos en ${VENTANA_EVENTOS_MS / 1000}s`);
+        incrementMetric('socket.flood.kicked');
+        socket.disconnect(true);
+        return;
+      }
 
       if (PASSENGER_ALLOWED_EVENTS.has(event)) return;
 
@@ -154,8 +185,11 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
       });
     });
 
-    socket.on('unsubscribe:route', (routeId: string) => {
-      if (typeof routeId === 'string' && routeId) socket.leave(`route:${routeId}`);
+    socket.on('unsubscribe:route', (routeId: unknown) => {
+      // Misma forma que al suscribirse: salir de una sala que no puede
+      // existir no hace nada útil, y así una cadena de miles de caracteres
+      // no llega ni a construir el nombre de la sala.
+      if (typeof routeId === 'string' && isRouteId(routeId)) socket.leave(`route:${routeId}`);
     });
 
     socket.on('disconnect', () => {
