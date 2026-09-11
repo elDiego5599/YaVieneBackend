@@ -16,6 +16,10 @@ primary_region = "iad"
 [env]
   # La base vive en el volumen, no en la imagen: así sobrevive a cada deploy.
   YA_VIENE_DB_PATH = "/app/data/yaviene.db"
+  # El TLS lo termina el proxy de Fly (force_https, más abajo) y a la máquina
+  # le llega el tráfico por la red privada de Fly. Sin esta línea el backend
+  # se niega a arrancar en producción sin certificado propio (src/config.ts).
+  HTTP_TLS_EXTERNO = "1"
 
 # El volumen es lo que hace persistente a SQLite. Se siembra sola al
 # arrancar (src/data/database.ts crea el esquema e inserta Sobusa EMP-01 con

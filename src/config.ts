@@ -81,6 +81,18 @@ export function validateConfig(
   if (httpTls === 1) {
     errores.push('HTTP_TLS_CERT_PATH y HTTP_TLS_KEY_PATH van juntas: con una sola el servidor arrancaría sin TLS');
   }
+  // Por el HTTP pasan la contraseña del panel, el PIN del conductor y los
+  // tokens: en claro los lee cualquiera en el camino. En producción el
+  // servidor arrancaba sin TLS sin decir nada. Ahora hace falta una de dos:
+  // el par de rutas TLS propio, o declarar con HTTP_TLS_EXTERNO=1 que el
+  // cifrado lo termina un proxy delante (el de Fly con force_https, o el
+  // túnel de ngrok) y a este proceso solo le llega tráfico desde ese proxy.
+  // Es una variable explícita a propósito: servir sin TLS propio tiene que
+  // ser una decisión escrita en el despliegue, no un olvido. El arranque
+  // local con ngrok no es producción y no se ve afectado.
+  if (produccion && httpTls === 0 && env.HTTP_TLS_EXTERNO !== '1') {
+    errores.push('En producción el HTTP necesita TLS: HTTP_TLS_CERT_PATH y HTTP_TLS_KEY_PATH, o HTTP_TLS_EXTERNO=1 si lo termina un proxy delante (Fly, ngrok)');
+  }
   const mqttTlsCount = [env.MQTT_TLS_CERT_PATH, env.MQTT_TLS_KEY_PATH].filter(Boolean).length;
   if (mqttTlsCount === 1) {
     errores.push('MQTT_TLS_CERT_PATH y MQTT_TLS_KEY_PATH van juntas: con una sola el MQTT arrancaría sin TLS');

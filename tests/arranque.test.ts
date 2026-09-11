@@ -23,6 +23,8 @@ test('validateConfig: el arranque de Fly (producción, sin CORS, MQTT en loopbac
     JWT_SECRET: JWT_LARGO,
     ADMIN_API_KEY: CLAVE_LARGA,
     YA_VIENE_DB_PATH: '/data/yaviene.db',
+    // fly.toml lo declara: el TLS lo termina el proxy de Fly.
+    HTTP_TLS_EXTERNO: '1',
   });
   assert.deepEqual(errores, []);
   assert.deepEqual(avisos, []);
@@ -37,7 +39,9 @@ test('validateConfig: secretos ausentes o en blanco', () => {
     /ADMIN_API_KEY es obligatoria/,
   );
   // Cortos en producción avisan, no paran: rotarlos es decisión de quien despliega.
-  const cortos = validateConfig({ NODE_ENV: 'production', JWT_SECRET: 'corto', ADMIN_API_KEY: 'corta' });
+  const cortos = validateConfig({
+    NODE_ENV: 'production', JWT_SECRET: 'corto', ADMIN_API_KEY: 'corta', HTTP_TLS_EXTERNO: '1',
+  });
   assert.deepEqual(cortos.errores, []);
   assert.equal(cortos.avisos.length, 2);
 });
@@ -61,7 +65,9 @@ test('validateConfig: MQTT por TCP fuera de loopback exige TLS en producción', 
   const dev = validateConfig({ JWT_SECRET: 'x', MQTT_HOST: '0.0.0.0' });
   assert.deepEqual(dev.errores, []);
   assert.equal(dev.avisos.length, 1);
-  const prod = { NODE_ENV: 'production', JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA, MQTT_HOST: '0.0.0.0' };
+  const prod = {
+    NODE_ENV: 'production', JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA, HTTP_TLS_EXTERNO: '1', MQTT_HOST: '0.0.0.0',
+  };
   assert.match(validateConfig(prod).errores[0], /MQTT_HOST/);
   assert.deepEqual(
     validateConfig({ ...prod, MQTT_TLS_CERT_PATH: '/c.pem', MQTT_TLS_KEY_PATH: '/k.pem' }).errores,
@@ -77,9 +83,25 @@ test('validateConfig: CORS solo con orígenes exactos, y https en producción', 
     1,
     'con barra final no coincide nunca con la cabecera Origin',
   );
-  const prod = { NODE_ENV: 'production', JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA };
+  const prod = { NODE_ENV: 'production', JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA, HTTP_TLS_EXTERNO: '1' };
   assert.deepEqual(validateConfig({ ...prod, CORS_ORIGINS: 'https://yaviene.co, https://www.yaviene.co' }).errores, []);
   assert.match(validateConfig({ ...prod, CORS_ORIGINS: 'http://yaviene.co' }).errores[0], /https/);
+});
+
+// Por el HTTP pasan la contraseña del panel y el PIN del conductor. En
+// producción arrancaba en claro sin avisar; ahora hace falta el par TLS o
+// declarar que lo termina un proxy delante.
+test('validateConfig: en producción el HTTP no arranca en claro sin decirlo', () => {
+  const prod = { NODE_ENV: 'production', JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA };
+  assert.match(validateConfig(prod).errores[0], /HTTP_TLS_EXTERNO/);
+  assert.equal(validateConfig({ ...prod, HTTP_TLS_EXTERNO: 'true' }).errores.length, 1, 'solo vale «1»');
+  assert.deepEqual(validateConfig({ ...prod, HTTP_TLS_EXTERNO: '1' }).errores, []);
+  assert.deepEqual(
+    validateConfig({ ...prod, HTTP_TLS_CERT_PATH: '/c.pem', HTTP_TLS_KEY_PATH: '/k.pem' }).errores,
+    [],
+  );
+  // El arranque local con ngrok no es producción: sigue sin pedir nada.
+  assert.deepEqual(validateConfig({ JWT_SECRET: JWT_LARGO }).errores, []);
 });
 
 test('validateConfig: puertos que no son puertos', () => {

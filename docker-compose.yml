@@ -4,6 +4,11 @@ services:
     ports:
       - "3000:3000"
     env_file: local.env
+    environment:
+      # El Dockerfile fija NODE_ENV=production pensando en Fly. Aquí corre
+      # `npm run dev` en HTTP plano por localhost, y con el criterio de
+      # producción el arranque exigiría TLS (src/config.ts).
+      NODE_ENV: development
     volumes:
       - .:/app
       - /app/node_modules

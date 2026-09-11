@@ -47,6 +47,7 @@ YA_VIENE_FLOTA_DEMO=0 npm start
 | `HTTP_PORT` / `MQTT_PORT` | Por defecto 3000 y 8883 |
 | `MQTT_HOST` | Dónde escucha el MQTT por TCP. Por defecto `127.0.0.1` |
 | `HTTP_TLS_CERT_PATH` + `HTTP_TLS_KEY_PATH` | TLS del HTTP. Van juntas |
+| `HTTP_TLS_EXTERNO` | `1` declara que el TLS lo termina un proxy delante (Fly, ngrok). En producción hace falta esto o el par TLS |
 | `MQTT_TLS_CERT_PATH` + `MQTT_TLS_KEY_PATH` | TLS del MQTT por TCP. Van juntas |
 | `CORS_ORIGINS` | Orígenes web autorizados, separados por coma. Sin ella no se emite CORS |
 | `YA_VIENE_DB_PATH` | Ruta del archivo SQLite |
@@ -59,6 +60,8 @@ Producción es `NODE_ENV=production` (lo pone el Dockerfile). El arranque
 - en producción falta `ADMIN_API_KEY`;
 - un puerto no es un número entre 1 y 65535;
 - hay una sola de las dos rutas TLS (HTTP o MQTT);
+- en producción, el HTTP no tiene TLS propio ni `HTTP_TLS_EXTERNO=1`
+  (`fly.toml` lo declara, porque el TLS lo termina el proxy de Fly);
 - un origen de `CORS_ORIGINS` no es exacto (`https://sitio.co`, sin barra final
   ni `*`), o en producción no es `https`;
 - en producción, `MQTT_HOST` sale de loopback sin TLS de MQTT.
