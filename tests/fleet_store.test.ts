@@ -14,10 +14,14 @@ process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
 
 // Los módulos se cargan con require y no con import porque abren la base al
 // evaluarse: el import se izaría por encima de la línea que fija la ruta.
-const { createBus, deleteBus, getCompanyBuses, getBusCompanyId } =
+const { createBus, deleteBus, updateBus, getCompanyBuses, getBusCompanyId } =
   require('../src/data/fleet_admin') as typeof import('../src/data/fleet_admin');
 const { addCompanyRoute, removeCompanyRoute, getCompanyRoutes, routeExists } =
   require('../src/data/routes_store') as typeof import('../src/data/routes_store');
+const { upsertPosition } =
+  require('../src/data/positions_store') as typeof import('../src/data/positions_store');
+const { createDriverSession, getSession } =
+  require('../src/data/sessions') as typeof import('../src/data/sessions');
 const { getDb } = require('../src/data/database') as typeof import('../src/data/database');
 
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -151,4 +155,115 @@ test('la placa mal escrita o sin ruta se distingue de la ocupada', () => {
   addCompanyRoute(empresa, 'R-980', 'Buena');
   assert.equal(createBus(empresa, 'no-es-placa', 'R-980'), 'invalid');
   assert.equal(createBus(empresa, 'JJJ000', ''), 'invalid');
+});
+
+// ── Auditoría del 11/09/2026 ─────────────────────────────────────────
+// Buses borrados que seguían publicando, rutas cambiadas a medias, placas
+// repetidas por la edición y altas de ruta que renombraban la existente.
+
+// Un conductor en la tabla: `positions.driver_phone` apunta a `drivers`.
+function conductor(telefono: string): void {
+  getDb().prepare(`
+    INSERT OR IGNORE INTO drivers (phone_number, driver_id, name, route_id, registered_at)
+    VALUES (?, ?, 'Conductor de prueba', 'R-101', ?)
+  `).run(telefono, telefono, Date.now());
+}
+
+// Lo que hace el manejador MQTT con una posición que ya pasó sus candados.
+function publicar(busId: string, ruta: string, telefono: string, sequence: number) {
+  return upsertPosition(telefono, {
+    busId,
+    routeId: ruta,
+    lat: 10.98,
+    lon: -74.8,
+    sessionId: `ses-${busId}`,
+    sequence,
+    driverValidated: true,
+  });
+}
+
+const rutaViva = (busId: string) =>
+  (getDb().prepare('SELECT route_id FROM positions WHERE bus_id = ?').get(busId) as
+    { route_id: string } | undefined)?.route_id;
+
+test('borrar un bus revoca sus sesiones y deja de aceptar sus posiciones', () => {
+  const empresa = 'EMP-BORRA';
+  const telefono = '3000000800';
+  nuevaEmpresa(empresa);
+  addCompanyRoute(empresa, 'R-800', 'Borrable');
+  const bus = alta(empresa, 'KKK111', 'R-800');
+  conductor(telefono);
+  createDriverSession({
+    sessionId: 'ses-800',
+    driverId: telefono,
+    phoneNumber: telefono,
+    companyId: empresa,
+    busId: bus.busId,
+    routeId: 'R-800',
+  });
+  assert.ok(publicar(bus.busId, 'R-800', telefono, 1));
+
+  deleteBus(bus.busId);
+  // Antes la sesión seguía activa y el broker lo dejaba publicar.
+  assert.equal(getSession('ses-800')?.status, 'revoked');
+  // Y aunque se cuele una publicación antes del barrido, no resucita la fila.
+  assert.equal(publicar(bus.busId, 'R-800', telefono, 2), null);
+  assert.equal(rutaViva(bus.busId), undefined);
+});
+
+test('una posición de un bus que no está en el catálogo no se guarda', () => {
+  conductor('3000000801');
+  assert.equal(publicar('BUS-NOEXISTE', 'R-800', '3000000801', 1), null);
+  assert.equal(rutaViva('BUS-NOEXISTE'), undefined);
+});
+
+test('cambiar la ruta de un bus mueve también su posición viva', () => {
+  const empresa = 'EMP-MUDA';
+  const telefono = '3000000810';
+  nuevaEmpresa(empresa);
+  addCompanyRoute(empresa, 'R-810', 'Vieja');
+  addCompanyRoute(empresa, 'R-811', 'Nueva');
+  const bus = alta(empresa, 'LLL111', 'R-810');
+  conductor(telefono);
+  publicar(bus.busId, 'R-810', telefono, 1);
+
+  assert.notEqual(updateBus(bus.busId, { routeId: 'R-811' }), 'taken');
+  // Antes sólo cambiaba `buses.route_id` y el pasajero lo seguía viendo en
+  // la ruta vieja.
+  assert.equal(rutaViva(bus.busId), 'R-811');
+  // La sesión del conductor sigue diciendo R-810: la siguiente posición no
+  // puede devolverlo allí.
+  assert.equal(publicar(bus.busId, 'R-810', telefono, 2)?.routeId, 'R-811');
+  assert.equal(rutaViva(bus.busId), 'R-811');
+
+  // Sin ruta no queda mapa donde ponerlo.
+  updateBus(bus.busId, { routeId: '' });
+  assert.equal(rutaViva(bus.busId), undefined);
+});
+
+test('la edición no deja ponerle a un bus la placa de otro', () => {
+  const empresa = 'EMP-PLACA';
+  nuevaEmpresa(empresa);
+  addCompanyRoute(empresa, 'R-820', 'Placas');
+  const uno = alta(empresa, 'MMM111', 'R-820');
+  const dos = alta(empresa, 'NNN222', 'R-820');
+
+  assert.equal(updateBus(dos.busId, { placa: 'mmm 111' }), 'taken');
+  assert.equal(getCompanyBuses(empresa).find((b) => b.busId === dos.busId)?.placa, 'NNN222');
+  // Volver a guardar la propia no es un choque.
+  assert.notEqual(updateBus(uno.busId, { placa: 'MMM111' }), 'taken');
+  // Y la base lo impide aunque alguien se salte la comprobación.
+  assert.throws(
+    () => getDb().prepare('UPDATE buses SET plate_number = ? WHERE bus_id = ?').run('MMM111', dos.busId),
+    /UNIQUE/,
+  );
+});
+
+test('dar de alta una ruta con un id que ya existe no la renombra', () => {
+  const empresa = 'EMP-RUTA2';
+  nuevaEmpresa(empresa);
+  addCompanyRoute(empresa, 'R-830', 'Original');
+  // Antes el ON CONFLICT pisaba el nombre y respondía como un alta.
+  assert.equal(addCompanyRoute(empresa, 'R-830', 'Pisada'), 'taken');
+  assert.equal(getCompanyRoutes(empresa).find((r) => r.routeId === 'R-830')?.name, 'Original');
 });

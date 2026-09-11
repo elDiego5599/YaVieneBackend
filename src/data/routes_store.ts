@@ -144,11 +144,24 @@ export function routeExists(routeId: string): boolean {
  */
 export const MAX_NOMBRE_RUTA = 60;
 
+/**
+ * Alta de una ruta en el catálogo de la empresa. Devuelve la ruta, `null` si
+ * el nombre o el identificador no valen, o `'taken'` si la empresa ya tiene
+ * una ruta con ese identificador.
+ *
+ * Ese último caso se resolvía con `ON CONFLICT DO UPDATE SET name`: un alta
+ * con un identificador repetido renombraba en silencio la ruta que ya
+ * existía —con sus buses y sus pasajeros suscritos— y respondía 201 como si
+ * hubiera creado otra. Renombrar tiene su propio PATCH; aquí un choque es un
+ * choque.
+ */
+export type AddRouteError = 'taken';
+
 export function addCompanyRoute(
   companyId: string,
   routeId: string,
   name: string,
-): { routeId: string; name: string } | null {
+): { routeId: string; name: string } | AddRouteError | null {
   const cleanedName = name.trim();
   if (!cleanedName || cleanedName.length > MAX_NOMBRE_RUTA) return null;
   let cleanedId = routeId.trim().toUpperCase();
@@ -161,11 +174,12 @@ export function addCompanyRoute(
     cleanedId = `R-${String(next).padStart(3, '0')}`;
   }
   if (!isRouteId(cleanedId)) return null;
-  getDb().prepare(`
+  const result = getDb().prepare(`
     INSERT INTO company_routes (company_id, route_id, name, created_at)
     VALUES (?, ?, ?, ?)
-    ON CONFLICT(company_id, route_id) DO UPDATE SET name = excluded.name
+    ON CONFLICT(company_id, route_id) DO NOTHING
   `).run(companyId, cleanedId, cleanedName, Date.now());
+  if (result.changes === 0) return 'taken';
   return { routeId: cleanedId, name: cleanedName };
 }
 

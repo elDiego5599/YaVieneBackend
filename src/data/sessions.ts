@@ -212,3 +212,22 @@ export function revokeSessionsForDriver(driverId: string): number {
   sessionCache.clear();
   return result.changes;
 }
+
+/**
+ * Revoca las sesiones activas de un bus. Borrar un bus del catálogo no
+ * tocaba sus sesiones: el teléfono seguía autorizado en MQTT y su siguiente
+ * posición volvía a crear la fila en `positions` de un bus que ya no
+ * existe, a la vista del pasajero. Con la sesión revocada el broker le
+ * niega la publicación en el acto (`authorizePublish` consulta la base al
+ * vaciarse la caché) y lo desconecta en el siguiente barrido.
+ */
+export function revokeSessionsForBus(busId: string): number {
+  const db = getDb();
+  const result = db.prepare(`
+    UPDATE driver_sessions
+    SET status = 'revoked', revoked_at = ?, client_id = NULL
+    WHERE bus_id = ? AND status = 'active'
+  `).run(Date.now(), busId);
+  sessionCache.clear();
+  return result.changes;
+}

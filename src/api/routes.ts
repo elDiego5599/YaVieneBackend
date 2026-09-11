@@ -543,6 +543,12 @@ addRoute('POST', '/api/fleet/routes', (req, res, _params, body) => {
   }
 
   const route = addCompanyRoute(auth.companyId, routeId, name);
+  // 409 y no 201: antes el alta con un id repetido renombraba la ruta que
+  // ya existía. El panel lo enseña como «ese identificador ya está».
+  if (route === 'taken') {
+    writeError(res, 409, 'ROUTE_EXISTS', 'Ya existe una ruta con ese identificador');
+    return;
+  }
   if (!route) {
     writeError(res, 400, 'INVALID_ROUTE', `routeId (ej. R-104) y name (máx. ${MAX_NOMBRE_RUTA} caracteres) son obligatorios`);
     return;
@@ -703,6 +709,12 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
   const routeId = rawRouteId;
 
   const bus = updateBus(params.busId, { placa, routeId, interno });
+  // El mismo 409 que el alta, y sin decir de quién es la placa: con la
+  // edición se podía hacer lo que el alta ya no deja.
+  if (bus === 'taken') {
+    writeError(res, 409, 'BUS_TAKEN', 'Esa placa ya está registrada en otro bus');
+    return;
+  }
   if (!bus) {
     writeError(res, 400, 'INVALID_BUS_PLACA', 'placa must be 3 letters followed by 3 numbers (e.g. ABC123)');
     return;

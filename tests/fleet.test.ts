@@ -637,6 +637,18 @@ test('fleet: una empresa no puede tocar ni ver buses, rutas ni flota de otra', {
     assert.equal(roboBody.error.code, 'BUS_TAKEN');
     assert.equal(JSON.stringify(roboBody).includes(companyA), false, 'el 409 no dice de qué empresa es');
 
+    // Por la edición tampoco: un bus propio no puede tomar la placa de otro.
+    assert.equal((await call(a, 'POST', '/api/fleet/buses', { placa: 'CCC333', routeId: 'R-301' })).status, 201);
+    const cambiazo = await call(a, 'PATCH', '/api/fleet/buses/BUS-CCC333', { placa: 'AAA111' });
+    assert.equal(cambiazo.status, 409);
+    assert.equal(((await cambiazo.json()) as { error: { code: string } }).error.code, 'BUS_TAKEN');
+
+    // Un alta de ruta con un id que ya existe es un choque, no un renombre:
+    // más abajo se comprueba que R-301 sigue llamándose «Ruta de A».
+    const pisada = await call(a, 'POST', '/api/fleet/routes', { routeId: 'R-301', name: 'Pisada' });
+    assert.equal(pisada.status, 409);
+    assert.equal(((await pisada.json()) as { error: { code: string } }).error.code, 'ROUTE_EXISTS');
+
     // «Mostrar todos» de B solo cuenta los suyos: el de A sigue oculto.
     const todos = await call(b, 'POST', '/api/fleet/buses/visibility', { visible: true });
     assert.equal(todos.status, 200);

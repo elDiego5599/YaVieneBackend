@@ -35,6 +35,22 @@ export function toPublicPosition(position: BusPosition): Omit<BusPosition, 'driv
   return publicPosition;
 }
 
+/** La fila del bus en el catálogo, o `undefined` si no está dado de alta. */
+function busDelCatalogo(busId: string): { route_id: string | null } | undefined {
+  return getDb().prepare('SELECT route_id FROM buses WHERE bus_id = ?')
+    .get(busId) as { route_id: string | null } | undefined;
+}
+
+/**
+ * Si el bus existe en el catálogo. Se consulta la base y no
+ * `busCompanyCache`: esa caché guarda también los «no está», y el alta de un
+ * conductor crea la fila del bus sin pasar por ella, así que un bus
+ * preguntado antes de provisionarse quedaría rechazado para siempre.
+ */
+export function busInCatalog(busId: string): boolean {
+  return busDelCatalogo(busId) !== undefined;
+}
+
 export function upsertPosition(phoneNumber: string, data: {
   busId: string;
   routeId?: string;
@@ -54,8 +70,20 @@ export function upsertPosition(phoneNumber: string, data: {
   const driver = data.driverValidated ? undefined : getDriver(phoneNumber);
   if (!data.driverValidated && !driver) return null;
 
+  // Sólo publica un bus que está en el catálogo. Sin esto, el teléfono de un
+  // bus recién borrado seguía mandando y cada posición recreaba su fila en
+  // `positions`: un bus sin dueño que el pasajero veía en el mapa.
+  const bus = busDelCatalogo(data.busId);
+  if (!bus) return null;
+
+  // La ruta la decide el catálogo y no la sesión. La sesión guarda la ruta
+  // con la que el conductor inició turno, y cuando el panel le cambia la
+  // ruta al bus, `updateBus` mueve la posición a la nueva… hasta que la
+  // siguiente publicación, con la ruta vieja de la sesión, la devolvía a
+  // donde estaba. Un bus provisionado desde el alta de conductor no tiene
+  // ruta en el catálogo, y para ése sigue valiendo la de la sesión.
   const now = Date.now();
-  const routeId = data.routeId || driver?.routeId;
+  const routeId = bus.route_id || data.routeId || driver?.routeId;
   if (!routeId) return null;
   const heading = data.heading ?? 0;
   const speedKmh = data.speedKmh ?? 0;
@@ -118,12 +146,16 @@ export function upsertPosition(phoneNumber: string, data: {
   };
 }
 
+// JOIN y no LEFT JOIN: es la lectura pública de una ruta, y una posición
+// sin bus en el catálogo es un bus borrado, no uno sin empresa que haya que
+// enseñar. `visible` NULL sigue contando como visible, igual que en
+// `getBusVisibility`.
 export function getPositionsByRoute(routeId: string): BusPosition[] {
   const db = getDb();
   const rows = db.prepare(`
     SELECT p.*, b.company_id AS bus_company_id
     FROM positions p
-    LEFT JOIN buses b ON b.bus_id = p.bus_id
+    JOIN buses b ON b.bus_id = p.bus_id
     WHERE p.route_id = ? AND (b.visible = 1 OR b.visible IS NULL)
   `).all(routeId) as PositionRow[];
   return rows.map(rowToPosition);

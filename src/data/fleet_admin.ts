@@ -6,6 +6,7 @@ import { queueLifecycleEvent } from './lifecycle_events';
 import { FleetBus, normalizeSentido } from './bus_types';
 import { getPosition } from './positions_store';
 import { isRouteId } from './routes_store';
+import { revokeSessionsForBus } from './sessions';
 
 /**
  * Largo máximo del número interno. Sale en `/api/companies/:id/buses`, que es
@@ -154,6 +155,10 @@ export function createBus(
   const existing = db.prepare('SELECT interno, company_id FROM buses WHERE bus_id = ?')
     .get(busId) as { interno: string | null; company_id: string } | undefined;
   if (existing && existing.company_id !== companyId) return 'taken';
+  // La misma placa puede estar en un bus cuyo id no sale de ella (los de la
+  // demo se llaman B-201, y la edición cambia la placa sin tocar el id).
+  // Sin esto el alta chocaría contra `idx_buses_plate` con un 500.
+  if (placaDeOtroBus(normalized, busId)) return 'taken';
   // El número interno salía de COUNT(*)+1, y eso repite en cuanto se borra un
   // bus: con 001, 002 y 003 dados de alta, borrar el 002 deja el contador en
   // 2 y el siguiente nace como 003, chocando con el que ya existe. Se toma el
@@ -198,10 +203,24 @@ export function createBus(
   };
 }
 
+/** Si la placa ya la lleva un bus distinto de `busId`, de cualquier empresa. */
+function placaDeOtroBus(placa: string, busId: string): boolean {
+  return getDb().prepare('SELECT 1 FROM buses WHERE plate_number = ? AND bus_id <> ?')
+    .get(placa, busId) !== undefined;
+}
+
+/**
+ * Edición de un bus. Devuelve el bus, `null` si no existe o la placa está
+ * mal escrita, o `'taken'` si la placa ya la lleva otro bus. Ese caso no se
+ * miraba: el alta rechazaba la placa ajena y la edición la aceptaba, así que
+ * bastaba con crear un bus cualquiera y cambiarle la placa por la de otro.
+ */
+export type UpdateBusError = 'taken';
+
 export function updateBus(
   busId: string,
   changes: { placa?: string; routeId?: string | null; interno?: string },
-): FleetBus | null {
+): FleetBus | UpdateBusError | null {
   const companyId = getBusCompanyId(busId);
   if (!companyId) return null;
   const db = getDb();
@@ -210,6 +229,7 @@ export function updateBus(
   if (changes.placa !== undefined) {
     newPlaca = normalizePlaca(changes.placa);
     if (!newPlaca) return null;
+    if (placaDeOtroBus(newPlaca, busId)) return 'taken';
   }
   const routeId = changes.routeId !== undefined ? changes.routeId : null;
   const interno = changes.interno !== undefined ? changes.interno.trim() : null;
@@ -220,8 +240,26 @@ export function updateBus(
         .run(newPlaca, Date.now(), busId);
     }
     if (routeId !== null) {
+      const nueva = routeId || null;
       db.prepare('UPDATE buses SET route_id = ?, updated_at = ? WHERE bus_id = ?')
-        .run(routeId || null, Date.now(), busId);
+        .run(nueva, Date.now(), busId);
+      // La posición viva lleva su propia ruta, que es la que lee el
+      // pasajero. Cambiar sólo la del catálogo dejaba el bus en el mapa de
+      // la ruta vieja hasta que el conductor reiniciara turno. Se mueven las
+      // dos en la misma transacción, como hace `removeCompanyRoute`, y la
+      // sala vieja recibe `bus:left` para soltarlo en el acto; en la nueva
+      // aparece con su siguiente posición. Sin ruta nueva no hay mapa donde
+      // ponerlo, y la posición se borra (`positions.route_id` es NOT NULL).
+      const viva = db.prepare('SELECT route_id FROM positions WHERE bus_id = ?')
+        .get(busId) as { route_id: string } | undefined;
+      if (viva && viva.route_id !== nueva) {
+        if (nueva) {
+          db.prepare('UPDATE positions SET route_id = ? WHERE bus_id = ?').run(nueva, busId);
+        } else {
+          db.prepare('DELETE FROM positions WHERE bus_id = ?').run(busId);
+        }
+        queueLifecycleEvent(db, 'bus:left', viva.route_id, { busId, routeId: viva.route_id });
+      }
     }
     if (interno !== null) {
       db.prepare('UPDATE buses SET interno = ?, updated_at = ? WHERE bus_id = ?')
@@ -251,6 +289,9 @@ export function deleteBus(busId: string): { busId: string; routeId: string | nul
     db.prepare('DELETE FROM turn_assignments WHERE bus_id = ?').run(busId);
     db.prepare('DELETE FROM positions WHERE bus_id = ?').run(busId);
     db.prepare('DELETE FROM buses WHERE bus_id = ?').run(busId);
+    // Dentro de la transacción: si el borrado se deshace, el teléfono
+    // conserva su sesión; si se confirma, ya no puede publicar.
+    revokeSessionsForBus(busId);
 
     if (routeId) {
       queueLifecycleEvent(db, 'bus:removed', routeId, { busId, routeId });
@@ -283,6 +324,9 @@ export function deleteAllBuses(companyId: string): number {
           routeId,
         });
       }
+      // Lo mismo que `deleteBus`: sin esto los teléfonos de la flota
+      // borrada seguían publicando.
+      revokeSessionsForBus(bus.bus_id);
     }
     db.prepare('DELETE FROM positions WHERE bus_id IN (SELECT bus_id FROM buses WHERE company_id = ?)').run(companyId);
     db.prepare('DELETE FROM turn_assignments WHERE bus_id IN (SELECT bus_id FROM buses WHERE company_id = ?)').run(companyId);

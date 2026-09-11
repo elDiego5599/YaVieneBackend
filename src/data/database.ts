@@ -503,6 +503,50 @@ function initSchema(): void {
         eliminarEmpresasFantasma(d);
       },
     },
+    {
+      version: 18,
+      apply: () => {
+        // Una placa es de un solo bus. El alta ya lo comprobaba contra otras
+        // empresas, pero la edición no miraba nada: cambiarle la placa a un
+        // bus por la de otro dejaba dos filas con la misma, y el pasajero
+        // leía «Bus SQA223» en dos puntos del mapa. El índice lo cierra en
+        // la base, que es el único sitio donde no hay carrera posible.
+        //
+        // Antes de crearlo hay que deshacer los repetidos que ya existan, o
+        // el CREATE falla y el backend no arranca. El relleno de la
+        // migración 7 reparte placas en ciclo sobre una lista de diez, así
+        // que una base con más de diez buses sin placa las tiene. Se queda
+        // la placa el bus cuyo id sale de ella (BUS-SQA223 para SQA223),
+        // que es el que dio de alta el panel; si ninguno, el más antiguo.
+        // Los demás pierden la placa y el panel les enseña el id, que es lo
+        // que ya hace con cualquier bus sin placa.
+        const repetidas = d.prepare(`
+          SELECT plate_number FROM buses
+          WHERE plate_number IS NOT NULL
+          GROUP BY plate_number HAVING COUNT(*) > 1
+        `).all() as { plate_number: string }[];
+        const duenos = d.prepare(`
+          SELECT bus_id FROM buses WHERE plate_number = ?
+          ORDER BY (bus_id = 'BUS-' || replace(plate_number, '-', '')) DESC,
+                   created_at ASC, bus_id ASC
+        `);
+        const soltar = d.prepare(
+          'UPDATE buses SET plate_number = NULL, updated_at = ? WHERE bus_id = ?',
+        );
+        for (const { plate_number } of repetidas) {
+          const [, ...sobran] = duenos.all(plate_number) as { bus_id: string }[];
+          for (const { bus_id } of sobran) soltar.run(Date.now(), bus_id);
+        }
+        d.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_buses_plate ON buses(plate_number)');
+
+        // Posiciones de buses que ya no están en el catálogo: las dejaba
+        // `deleteBus` cuando el teléfono seguía publicando después del
+        // borrado, y el LEFT JOIN de la lectura pública las enseñaba como
+        // buses sin empresa. `upsertPosition` ya no las crea; éstas son las
+        // que quedaron de antes.
+        d.exec('DELETE FROM positions WHERE bus_id NOT IN (SELECT bus_id FROM buses)');
+      },
+    },
   ];
 
   for (const migration of migrations) {

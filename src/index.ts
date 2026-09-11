@@ -13,6 +13,7 @@ import { closeBroker, PositionHandlingResult, startBroker } from './mqtt/broker'
 import { handleAPI } from './api/routes';
 import {
   getPositionValidationState,
+  busInCatalog,
   BusPosition,
   sweepPositions,
   upsertPosition,
@@ -209,6 +210,14 @@ startBroker(
     lon > 180
   ) {
     return { accepted: false, sequence: positionSequence, reason: 'INVALID_COORDINATES' };
+  }
+
+  // Un bus borrado del catálogo no publica. La sesión ya se revoca al
+  // borrarlo, pero entre el borrado y el barrido del broker cabe alguna
+  // publicación, y `upsertPosition` la descarta devolviendo null, que abajo
+  // se contaría como DUPLICATE aceptado. Mejor decirle al teléfono la verdad.
+  if (!busInCatalog(auth.busId)) {
+    return { accepted: false, sequence: positionSequence, reason: 'BUS_NOT_FOUND' };
   }
 
   const previous = getPositionValidationState(auth.busId);
