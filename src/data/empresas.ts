@@ -11,6 +11,7 @@ export interface EmpresaAdmin {
   companyId: string;
   username: string;
   passwordHash: string;
+  tokenVersion: number;
 }
 
 interface AdminRow {
@@ -18,6 +19,7 @@ interface AdminRow {
   company_id: string;
   username: string;
   password_hash: string;
+  token_version: number;
 }
 
 export function getEmpresa(companyId: string): Empresa | null {
@@ -43,7 +45,7 @@ export function ensureEmpresa(companyId: string, name?: string): void {
 
 export function getCompanyAdminByUsername(username: string): EmpresaAdmin | null {
   const row = getDb().prepare(`
-    SELECT admin_id, company_id, username, password_hash
+    SELECT admin_id, company_id, username, password_hash, token_version
     FROM empresa_admins
     WHERE username = ?
   `).get(username) as AdminRow | undefined;
@@ -60,20 +62,44 @@ export function createOrUpdateCompanyAdmin(
   // aquí para que ningún camino de creación pueda dejarla inservible.
   const normalized = username.trim().toLowerCase();
   const db = getDb();
+  // Actualizar una cuenta siempre es cambiarle la contraseña (el hash lleva
+  // sal, así que ni repetir la misma clave da el mismo) y puede además
+  // moverla de empresa. En los dos casos los tokens firmados antes tienen
+  // que dejar de valer, así que la versión de la credencial sube siempre.
   db.prepare(`
     INSERT INTO empresa_admins (admin_id, company_id, username, password_hash, created_at)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(username) DO UPDATE SET
       company_id = excluded.company_id,
-      password_hash = excluded.password_hash
+      password_hash = excluded.password_hash,
+      token_version = token_version + 1
   `).run(randomUUID(), companyId, normalized, passwordHash, Date.now());
 
   const row = db.prepare(`
-    SELECT admin_id, company_id, username, password_hash
+    SELECT admin_id, company_id, username, password_hash, token_version
     FROM empresa_admins
     WHERE username = ?
   `).get(normalized) as AdminRow;
   return rowToAdmin(row);
+}
+
+/**
+ * ¿Sigue vigente la credencial con la que se firmó este token de panel?
+ *
+ * Una consulta por clave primaria en cada petición del panel, que hace pocas
+ * por minuto. A cambio, cambiarle la contraseña a la cuenta, moverla de
+ * empresa o borrarla (`scripts/borrar-admin-empresa.mjs`) corta el acceso en
+ * la siguiente petición y no cuando el token caduque a las 8 horas.
+ */
+export function isAdminTokenCurrent(
+  adminId: string,
+  companyId: string,
+  tokenVersion: number,
+): boolean {
+  const row = getDb().prepare(
+    'SELECT company_id, token_version FROM empresa_admins WHERE admin_id = ?',
+  ).get(adminId) as { company_id: string; token_version: number } | undefined;
+  return !!row && row.company_id === companyId && row.token_version === tokenVersion;
 }
 
 function rowToAdmin(row: AdminRow): EmpresaAdmin {
@@ -82,5 +108,6 @@ function rowToAdmin(row: AdminRow): EmpresaAdmin {
     companyId: row.company_id,
     username: row.username,
     passwordHash: row.password_hash,
+    tokenVersion: row.token_version,
   };
 }

@@ -47,12 +47,20 @@ db.prepare(`
   VALUES (?, ?, ?)
 `).run(companyId, name ?? companyId, Date.now());
 
+// Igual que createOrUpdateCompanyAdmin en el backend: cambiar la contraseña
+// sube la versión de la credencial y los tokens de panel emitidos con la
+// anterior dejan de valer. La columna la crea la migración 19 al arrancar el
+// backend; si esta base todavía no la tiene, tampoco hay tokens con versión
+// que invalidar y basta con cambiar el hash.
+const conVersion = db.prepare('PRAGMA table_info(empresa_admins)').all()
+  .some((columna) => columna.name === 'token_version');
+
 db.prepare(`
   INSERT INTO empresa_admins (admin_id, company_id, username, password_hash, created_at)
   VALUES (?, ?, ?, ?, ?)
   ON CONFLICT(username) DO UPDATE SET
     company_id = excluded.company_id,
-    password_hash = excluded.password_hash
+    password_hash = excluded.password_hash${conVersion ? ',\n    token_version = token_version + 1' : ''}
 `).run(randomUUID(), companyId, username, hashSecret(password), Date.now());
 
 db.close();

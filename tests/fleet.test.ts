@@ -224,6 +224,25 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
     const admin1 = await adminLogin('boss1');
     const admin2 = await adminLogin('boss2');
 
+    // Cambiar la contraseña del panel echa a quien entró con la anterior.
+    // Antes el token viejo seguía valiendo sus 8 horas, y a una empresa que
+    // cambiaba la clave porque se la habían robado no le servía de nada.
+    await createAdmin(company1, 'rotada');
+    const viejo = await adminLogin('rotada');
+    await fleetPositions(viejo.token);
+    assert.equal(await createAdminConClave(company1, 'rotada', 'clave-nueva-de-prueba'), 201);
+    const conViejo = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/positions`, {
+      headers: { authorization: `Bearer ${viejo.token}` },
+    });
+    assert.equal(conViejo.status, 401, 'el token de antes del cambio ya no entra');
+    const nuevo = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'rotada', password: 'clave-nueva-de-prueba' }),
+    });
+    assert.equal(nuevo.status, 200);
+    await fleetPositions(((await nuevo.json()) as { token: string }).token);
+
     // Flota scoped: cada admin solo ve su empresa
     const fleet1 = await fleetPositions(admin1.token);
     assert.equal(fleet1.buses.length, 1);

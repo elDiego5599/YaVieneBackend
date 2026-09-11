@@ -28,6 +28,15 @@ export interface AdminTokenPayload {
   role: 'admin';
   companyId: string;
   username: string;
+  /**
+   * Versión de la credencial con la que se firmó (`empresa_admins.token_version`).
+   * Sin ella el token del panel valía sus 8 horas pasara lo que pasara: si a
+   * una empresa le robaban la contraseña y la cambiaban, quien la tenía
+   * seguía dentro hasta que el token caducara. Cada cambio de contraseña
+   * sube la versión en la base y `authenticateCompanyAdmin` rechaza los
+   * tokens firmados con una anterior.
+   */
+  tv: number;
 }
 
 export type TokenPayload = DriverTokenPayload | AdminTokenPayload;
@@ -58,6 +67,9 @@ export function verifyToken(token: string): TokenPayload | null {
       if (!required.every((key) => typeof decoded[key] === 'string' && decoded[key])) {
         return null;
       }
+      // Los tokens emitidos antes de que existiera la versión no la traen:
+      // se rechazan y el panel pide entrar otra vez, que es una sola vez.
+      if (!Number.isInteger(decoded.tv)) return null;
       return decoded as AdminTokenPayload;
     }
 

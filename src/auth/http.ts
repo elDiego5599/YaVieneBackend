@@ -2,6 +2,7 @@ import { IncomingMessage } from 'http';
 import { timingSafeEqual } from 'crypto';
 import { TokenPayload, verifyToken, AdminTokenPayload } from './tokens';
 import { getSession } from '../data/sessions';
+import { isAdminTokenCurrent } from '../data/empresas';
 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
 if (!ADMIN_API_KEY && process.env.NODE_ENV === 'production') {
@@ -16,7 +17,10 @@ export function authenticateRequest(req: IncomingMessage): TokenPayload | null {
 
 export function authenticateCompanyAdmin(req: IncomingMessage): AdminTokenPayload | null {
   const auth = authenticateRequest(req);
-  return auth?.role === 'admin' ? auth : null;
+  if (auth?.role !== 'admin') return null;
+  // La firma solo prueba que el token lo emitimos nosotros, no que la
+  // contraseña con la que se entró siga siendo la buena: eso lo dice la base.
+  return isAdminTokenCurrent(auth.sub, auth.companyId, auth.tv) ? auth : null;
 }
 
 /**

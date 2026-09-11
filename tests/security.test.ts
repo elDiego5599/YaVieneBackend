@@ -77,6 +77,15 @@ test('JWT validates canonical claims and rejects tampering', () => {
   assert.equal(verifyToken(`${token}tampered`), null);
 });
 
+// El token del panel lleva la versión de la credencial; uno emitido antes de
+// que existiera no la trae y no debe seguir abriendo la flota.
+test('JWT de panel sin versión de credencial no valida', () => {
+  const admin = { sub: 'admin-1', role: 'admin', companyId: 'EMP-01', username: 'jefa' } as const;
+  assert.equal(verifyToken(signToken({ ...admin, tv: 3 }))?.role, 'admin');
+  assert.equal(verifyToken(signToken(admin as never)), null);
+  assert.equal(verifyToken(signToken({ ...admin, tv: '3' } as never)), null);
+});
+
 test('rate limiter rejects after the configured window budget', () => {
   const limiter = new SlidingWindowRateLimiter(2, 60_000);
   assert.equal(limiter.allow('test-key'), true);

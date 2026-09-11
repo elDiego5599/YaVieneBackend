@@ -547,6 +547,18 @@ function initSchema(): void {
         d.exec('DELETE FROM positions WHERE bus_id NOT IN (SELECT bus_id FROM buses)');
       },
     },
+    {
+      version: 19,
+      apply: () => {
+        // Versión de la credencial del panel. Va dentro del token (`tv`) y
+        // la sube cada cambio de contraseña, para que cambiar la clave eche
+        // a quien entró con la anterior; antes el token seguía valiendo sus
+        // 8 horas. Todas las cuentas arrancan en 0. Los tokens emitidos
+        // antes de esto no traen `tv` y dejan de validar: cada panel abierto
+        // pide entrar una vez después de desplegar.
+        ensureColumn(d, 'empresa_admins', 'token_version', 'INTEGER NOT NULL DEFAULT 0');
+      },
+    },
   ];
 
   for (const migration of migrations) {

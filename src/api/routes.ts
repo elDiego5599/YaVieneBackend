@@ -397,6 +397,7 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
     role: 'admin',
     companyId: admin.companyId,
     username: admin.username,
+    tv: admin.tokenVersion,
   });
 
   writeJson(res, 200, {

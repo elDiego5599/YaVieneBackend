@@ -9,6 +9,7 @@ import {
   getBusCompanyId,
 } from '../data/buses';
 import { isRouteId, routeExists } from '../data/routes_store';
+import { isAdminTokenCurrent } from '../data/empresas';
 import { verifyToken, AdminTokenPayload } from '../auth/tokens';
 import { incrementMetric } from '../observability/metrics';
 
@@ -75,7 +76,10 @@ function adminFromHandshake(auth: unknown): AdminTokenPayload | null {
   const token = (auth as { token?: string } | undefined)?.token;
   if (!token) return null;
   const verified = verifyToken(token);
-  return verified?.role === 'admin' ? verified : null;
+  if (verified?.role !== 'admin') return null;
+  // Misma comprobación que el HTTP (auth/http.ts): con la contraseña ya
+  // cambiada, el token anterior tampoco abre la sala de la flota.
+  return isAdminTokenCurrent(verified.sub, verified.companyId, verified.tv) ? verified : null;
 }
 
 export function setupSocketServer(httpServer: HTTPServer): Server {
