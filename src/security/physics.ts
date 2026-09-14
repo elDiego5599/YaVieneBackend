@@ -1,4 +1,6 @@
 // ── Candado 3: Sanity check de física imposible ─────────────────────
+import { dentroDeZona } from './zona';
+
 export const MAX_SPEED_KMH = 120;
 export const EARTH_RADIUS_KM = 6371;
 export const MAX_CAPTURE_CLOCK_SKEW_MS = 30_000;
@@ -52,6 +54,13 @@ export function sanityCheck(
 
   if (!Number.isFinite(speedKmh) || speedKmh < 0 || speedKmh > MAX_SPEED_KMH) {
     return { accepted: false, reason: 'INVALID_REPORTED_SPEED' };
+  }
+
+  // Antes de mirar si hay posición anterior: la primera de cada sesión
+  // entraba sin más, y con ella un bus podía aparecer en cualquier parte del
+  // mundo. La velocidad calculada solo compara contra la anterior.
+  if (!dentroDeZona(lat, lon)) {
+    return { accepted: false, reason: 'FUERA_DE_ZONA' };
   }
 
   if (!previous || previous.sessionId !== sessionId) {
