@@ -35,12 +35,30 @@ export function getDb(): Database.Database {
  * hoy (3,6 MB) son milisegundos— y si algo no cuadra el arranque se detiene
  * diciendo qué hacer. Un archivo que ni siquiera es una base lanza en vez de
  * devolver texto, y se trata igual.
+ *
+ * No todo lo que hace fallar la revisión es daño: otro proceso con la base
+ * bloqueada, los permisos o un disco lleno también la tumban con el archivo
+ * sano, y mandar a restaurar el backup ahí perdía lo escrito desde la última
+ * copia. Por eso solo `SQLITE_CORRUPT` y `SQLITE_NOTADB`, además del texto
+ * que devuelve `quick_check`, cuentan como base dañada.
  */
 function revisarIntegridad(d: Database.Database): void {
   let estado: unknown;
   try {
     estado = d.pragma('quick_check', { simple: true });
   } catch (error) {
+    const codigo = (error as { code?: unknown } | null)?.code;
+    const esDanio = typeof codigo === 'string'
+      && (codigo.startsWith('SQLITE_CORRUPT') || codigo === 'SQLITE_NOTADB');
+    if (!esDanio) {
+      d.close();
+      const detalle = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `No se pudo revisar la base ${DB_PATH} (${String(codigo ?? 'sin código')}: ${detalle}). `
+        + 'Eso no dice que el archivo tenga daño: revisa que otro proceso no la tenga bloqueada, '
+        + 'los permisos y el espacio en disco, y vuelve a arrancar. No restaures el backup por esto.',
+      );
+    }
     estado = String(error);
   }
   if (estado === 'ok') return;

@@ -223,6 +223,52 @@ test('arranque: una base con páginas corruptas no arranca y el mensaje nombra e
   }
 });
 
+test('arranque: un archivo que no es una base también se da por dañado', { timeout: 60_000 }, async () => {
+  const dbPath = `/tmp/yaviene-arranque-nobase-${process.pid}.db`;
+  borrarBase(dbPath);
+  // Ni la cabecera sirve: SQLite lanza SQLITE_NOTADB en vez de devolver texto.
+  const fd = openSync(dbPath, 'w');
+  writeSync(fd, Buffer.alloc(8192, 0xa5));
+  closeSync(fd);
+  try {
+    const { code, stderr } = await esperarSalida(arrancar({
+      JWT_SECRET: JWT_LARGO, HTTP_PORT: '3157', MQTT_PORT: '8927', YA_VIENE_DB_PATH: dbPath,
+    }), 20_000);
+    assert.notEqual(code, 0, 'con un archivo que no es base no debe arrancar');
+    assert.match(stderr, /dañada/);
+    assert.match(stderr, /backup-db/);
+  } finally {
+    borrarBase(dbPath);
+  }
+});
+
+// Antes cualquier fallo de la revisión salía como «dañada, restaura el
+// backup». Con la base sana y bloqueada por otro proceso, restaurar perdía
+// lo escrito desde la última copia.
+test('arranque: una base bloqueada por otro proceso no se da por dañada ni manda a restaurar', { timeout: 60_000 }, async () => {
+  const dbPath = `/tmp/yaviene-arranque-bloqueada-${process.pid}.db`;
+  borrarBase(dbPath);
+  const bloqueo = new Database(dbPath);
+  bloqueo.exec('CREATE TABLE relleno (id INTEGER PRIMARY KEY)');
+  // En modo de diario por defecto, EXCLUSIVE no deja leer a nadie más: la
+  // revisión espera los 5 s de better-sqlite3 y sale con SQLITE_BUSY.
+  bloqueo.exec('BEGIN EXCLUSIVE');
+  try {
+    const { code, stderr } = await esperarSalida(arrancar({
+      JWT_SECRET: JWT_LARGO, HTTP_PORT: '3155', MQTT_PORT: '8925', YA_VIENE_DB_PATH: dbPath,
+    }), 30_000);
+    assert.notEqual(code, 0, 'sin poder revisar la base no debe arrancar');
+    assert.match(stderr, /No se pudo revisar la base/);
+    assert.match(stderr, /SQLITE_BUSY/, 'el mensaje trae el código de SQLite');
+    assert.doesNotMatch(stderr, /dañada/);
+    assert.doesNotMatch(stderr, /backup-db/, 'no manda a restaurar una base que puede estar sana');
+  } finally {
+    bloqueo.exec('ROLLBACK');
+    bloqueo.close();
+    borrarBase(dbPath);
+  }
+});
+
 test('arranque: humo con base temporal, y el apagado guarda métricas y sale limpio', { timeout: 60_000 }, async () => {
   const port = 3152;
   const dbPath = `/tmp/yaviene-arranque-humo-${process.pid}-${Date.now()}.db`;
