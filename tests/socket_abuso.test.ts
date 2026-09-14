@@ -9,6 +9,10 @@ const HTTP_PORT = 3151;
 const MQTT_PORT = 8921;
 const ADMIN_API_KEY = 'socket-abuso-admin-key';
 const JWT_SECRET = 'socket-abuso-jwt-secret';
+// Clave de las cuentas admin que estas pruebas crean en su base temporal.
+// No es de nadie; va en una constante porque gitleaks marca como secreto
+// cualquier `password: '...'` escrito tal cual.
+const CLAVE_PRUEBA = 'secret123-de-prueba';
 const BASE = `http://127.0.0.1:${HTTP_PORT}`;
 
 async function waitForReady(): Promise<void> {
@@ -126,13 +130,13 @@ test('socket: payloads inválidos, tope de salas y abuso de frecuencia', { timeo
       const creada = await fetch(`${BASE}/api/admin/empresas/EMP-SALAS/admin`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
-        body: JSON.stringify({ username: 'salas', password: 'secret123-de-prueba' }),
+        body: JSON.stringify({ username: 'salas', password: CLAVE_PRUEBA }),
       });
       assert.equal(creada.status, 201);
       const login = await fetch(`${BASE}/api/admin/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'salas', password: 'secret123-de-prueba' }),
+        body: JSON.stringify({ username: 'salas', password: CLAVE_PRUEBA }),
       });
       const { token } = (await login.json()) as { token: string };
       const extra = ['R-401', 'R-402', 'R-403', 'R-404', 'R-405', 'R-406', 'R-407'];

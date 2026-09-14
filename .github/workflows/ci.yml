@@ -1,17 +1,35 @@
 name: Ya Viene Backend CI
 
 on:
+  # `prueba` es donde se trabaja: sin esto, lo que se sube ahí no pasaba
+  # por ninguna prueba hasta llegar a main.
   push:
-    branches: [main]
+    branches: [main, prueba]
   pull_request:
     branches: [main]
 
+# Las acciones van en versiones que corren en Node 24: GitHub quita Node 20
+# de sus runners el 16 de septiembre de 2026 y las @v4 dejan de arrancar.
 jobs:
+  # Barrido de secretos (T3.12). gitleaks-action revisa los commits del push
+  # o del PR, no el árbol: no tiene modo sin git. Necesita el historial
+  # completo, y los falsos positivos ya revisados van en .gitleaksignore.
+  secretos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.30.1
+
   node:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -19,3 +37,6 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm audit --omit=dev --audit-level=high
+      # Las de desarrollo también: tsx, los tipos y el runner corren en esta
+      # máquina con el código del repo, y una rota ahí es una puerta abierta.
+      - run: npm audit --audit-level=high

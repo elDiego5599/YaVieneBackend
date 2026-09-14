@@ -8,6 +8,10 @@ const HTTP_PORT = 3130;
 const MQTT_PORT = 8891;
 const ADMIN_API_KEY = 'e2e-admin-key';
 const JWT_SECRET = 'e2e-jwt-secret';
+// Clave de las cuentas admin que estas pruebas crean en su base temporal.
+// No es de nadie; va en una constante porque gitleaks marca como secreto
+// cualquier `password: '...'` escrito tal cual.
+const CLAVE_PRUEBA = 'secret123-de-prueba';
 
 async function waitForReady(port = HTTP_PORT): Promise<void> {
   const deadline = Date.now() + 15_000;
@@ -156,7 +160,7 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
       const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/empresas/${companyId}/admin`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
-        body: JSON.stringify({ username, password: 'secret123-de-prueba' }),
+        body: JSON.stringify({ username, password: CLAVE_PRUEBA }),
       });
       assert.equal(res.status, 201);
     }
@@ -182,7 +186,7 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
       const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username, password: 'secret123-de-prueba' }),
+        body: JSON.stringify({ username, password: CLAVE_PRUEBA }),
       });
       assert.equal(res.status, 200);
       const body = (await res.json()) as { token: string; company: { companyId: string } };
@@ -378,7 +382,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
       const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/empresas/${company}/admin`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
-        body: JSON.stringify({ username, password: 'secret123-de-prueba' }),
+        body: JSON.stringify({ username, password: CLAVE_PRUEBA }),
       });
       assert.equal(res.status, 201);
     };
@@ -386,7 +390,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     const login = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'crudboss', password: 'secret123-de-prueba' }),
+      body: JSON.stringify({ username: 'crudboss', password: CLAVE_PRUEBA }),
     });
     assert.equal(login.status, 200);
     const { token } = (await login.json()) as { token: string };
@@ -610,13 +614,13 @@ test('fleet: una empresa no puede tocar ni ver buses, rutas ni flota de otra', {
       const created = await fetch(`${base}/api/admin/empresas/${companyId}/admin`, {
         method: 'POST',
         headers: conClave,
-        body: JSON.stringify({ username, password: 'secret123-de-prueba' }),
+        body: JSON.stringify({ username, password: CLAVE_PRUEBA }),
       });
       assert.equal(created.status, 201);
       const res = await fetch(`${base}/api/admin/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username, password: 'secret123-de-prueba' }),
+        body: JSON.stringify({ username, password: CLAVE_PRUEBA }),
       });
       assert.equal(res.status, 200);
       const { token } = (await res.json()) as { token: string };

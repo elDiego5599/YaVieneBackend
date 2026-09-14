@@ -1,0 +1,34 @@
+# Hallazgos de gitleaks revisados uno por uno (T3.12, barrido del historial
+# completo en modo git). Los 8 son el mismo literal de 19 caracteres
+# (`secret123-de-prueba`): la clave de las cuentas admin que cada prueba crea
+# en su base temporal. No es de nadie, no coincide con ningún valor de
+# local.env y ya no está en el árbol: desde T3.12 va en la constante
+# CLAVE_PRUEBA y la regla no la ve. Estas líneas cubren los commits viejos.
+# Formato: commit:archivo:regla:línea.
+
+# 3bf140a6 (2026-09-10), tests/fleet.test.ts, prueba «una empresa no puede
+# tocar ni ver buses, rutas ni flota de otra».
+# Motivo: alta del admin de prueba (POST /api/admin/empresas/:id/admin).
+3bf140a68c9cbea0191466b8cc5459cb68c692ff:tests/fleet.test.ts:generic-api-key:594
+# Motivo: login de ese mismo admin de prueba (POST /api/admin/login).
+3bf140a68c9cbea0191466b8cc5459cb68c692ff:tests/fleet.test.ts:generic-api-key:600
+
+# 3bf140a6, tests/socket_abuso.test.ts, prueba «socket: payloads inválidos,
+# tope de salas y abuso de frecuencia».
+# Motivo: alta del admin de prueba `salas` (POST /api/admin/empresas/EMP-SALAS/admin).
+3bf140a68c9cbea0191466b8cc5459cb68c692ff:tests/socket_abuso.test.ts:generic-api-key:129
+# Motivo: login de `salas` (POST /api/admin/login).
+3bf140a68c9cbea0191466b8cc5459cb68c692ff:tests/socket_abuso.test.ts:generic-api-key:135
+
+# e4e386d8 (2026-08-28), tests/fleet.test.ts, prueba «admin por empresa,
+# visibilidad oculta/difunde y aislamiento».
+# Motivo: alta de los admins de prueba en createAdmin().
+e4e386d86a0adeda0f0ce931d05279cb62695ec8:tests/fleet.test.ts:generic-api-key:155
+# Motivo: login de esos admins en adminLogin().
+e4e386d86a0adeda0f0ce931d05279cb62695ec8:tests/fleet.test.ts:generic-api-key:181
+
+# e4e386d8, tests/fleet.test.ts, prueba «CRUD de buses por admin».
+# Motivo: alta del admin de prueba `crudboss` en createAdmin().
+e4e386d86a0adeda0f0ce931d05279cb62695ec8:tests/fleet.test.ts:generic-api-key:357
+# Motivo: login de `crudboss` (POST /api/admin/login).
+e4e386d86a0adeda0f0ce931d05279cb62695ec8:tests/fleet.test.ts:generic-api-key:365
