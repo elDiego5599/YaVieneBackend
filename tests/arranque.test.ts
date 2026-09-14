@@ -38,12 +38,23 @@ test('validateConfig: secretos ausentes o en blanco', () => {
     validateConfig({ NODE_ENV: 'production', JWT_SECRET: JWT_LARGO }).errores[0],
     /ADMIN_API_KEY es obligatoria/,
   );
-  // Cortos en producción avisan, no paran: rotarlos es decisión de quien despliega.
+  // La clave de admin corta en producción avisa; el JWT corto ya no (abajo).
   const cortos = validateConfig({
-    NODE_ENV: 'production', JWT_SECRET: 'corto', ADMIN_API_KEY: 'corta', HTTP_TLS_EXTERNO: '1',
+    NODE_ENV: 'production', JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: 'corta', HTTP_TLS_EXTERNO: '1',
   });
   assert.deepEqual(cortos.errores, []);
-  assert.equal(cortos.avisos.length, 2);
+  assert.equal(cortos.avisos.length, 1);
+});
+
+// Con un JWT_SECRET corto cualquiera que vea un token puede probar secretos
+// por fuerza bruta sin conexión y firmarse uno de admin. Avisar no bastaba:
+// el aviso se pierde en el log y el servidor sigue firmando con él.
+test('validateConfig: JWT_SECRET de menos de 32 caracteres no arranca en producción', () => {
+  const prod = { NODE_ENV: 'production', ADMIN_API_KEY: CLAVE_LARGA, HTTP_TLS_EXTERNO: '1' };
+  assert.match(validateConfig({ ...prod, JWT_SECRET: 'j'.repeat(31) }).errores[0], /JWT_SECRET/);
+  assert.deepEqual(validateConfig({ ...prod, JWT_SECRET: 'j'.repeat(32) }).errores, []);
+  // Fuera de producción (ngrok, tests) sigue valiendo uno corto.
+  assert.deepEqual(validateConfig({ JWT_SECRET: 'corto' }).errores, []);
 });
 
 test('validateConfig: TLS a medias no arranca en claro sin avisar', () => {

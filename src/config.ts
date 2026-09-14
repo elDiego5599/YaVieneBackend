@@ -56,7 +56,10 @@ export function validateConfig(
   if (!jwtSecret.trim()) {
     errores.push('JWT_SECRET es obligatorio y no puede estar vacío: arranca con local.env cargado');
   } else if (produccion && jwtSecret.length < 32) {
-    avisos.push('JWT_SECRET tiene menos de 32 caracteres; en producción conviene uno largo y aleatorio');
+    // Era un aviso, y un aviso se pierde en el log mientras el servidor
+    // sigue firmando: con un secreto corto, quien vea un token puede probar
+    // secretos sin conexión hasta dar con él y firmarse uno de admin.
+    errores.push('JWT_SECRET tiene menos de 32 caracteres: en producción tiene que ser largo y aleatorio (64 recomendado)');
   }
 
   const adminKey = env.ADMIN_API_KEY;
