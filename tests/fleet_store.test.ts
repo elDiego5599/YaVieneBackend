@@ -4,10 +4,12 @@
 // que aceptaba guiones sueltos, y el fallback 'R-101' inventado al borrar la
 // última ruta de una empresa.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import Database from 'better-sqlite3';
 
 const tmp = mkdtempSync(join(tmpdir(), 'yaviene-fleet-'));
 process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
@@ -83,7 +85,7 @@ test('el identificador de ruta rechaza guiones sueltos', () => {
   assert.equal(addCompanyRoute(empresa, '-R-', 'Ruta rara'), null);
   assert.equal(addCompanyRoute(empresa, 'R-', 'Ruta rara'), null);
   assert.equal(addCompanyRoute(empresa, 'R', 'Muy corta'), null);
-  assert.equal(addCompanyRoute(empresa, 'R-106', 'Buena')?.routeId, 'R-106');
+  assert.equal(addCompanyRoute(empresa, 'R-940', 'Buena')?.routeId, 'R-940');
   assert.equal(addCompanyRoute(empresa, 'RUTA-1A', 'Buena')?.routeId, 'RUTA-1A');
 });
 
@@ -266,4 +268,57 @@ test('dar de alta una ruta con un id que ya existe no la renombra', () => {
   // Antes el ON CONFLICT pisaba el nombre y respondía como un alta.
   assert.equal(addCompanyRoute(empresa, 'R-830', 'Pisada'), 'taken');
   assert.equal(getCompanyRoutes(empresa).find((r) => r.routeId === 'R-830')?.name, 'Original');
+});
+
+// ── Código de ruta único entre empresas ──────────────────────────────
+// La sala del pasajero es `route:{id}`, sin empresa. Desde ahora un índice
+// único lo impide, pero una base que ya trae el choque no se arregla sola:
+// decidir de quién es la ruta es cosa de una persona, así que el arranque se
+// detiene y dice cuál.
+
+test('una ruta de otra empresa o de la demo no se puede dar de alta', () => {
+  const empresa = 'EMP-GLOBAL';
+  nuevaEmpresa(empresa);
+  assert.equal(addCompanyRoute(empresa, 'R-106', 'La de la demo'), 'taken');
+  assert.equal(addCompanyRoute(empresa, 'R-900', 'La de EMP-INT'), 'taken');
+  assert.equal(getCompanyRoutes(empresa).length, 0);
+  // La base lo impide aunque alguien se salte la comprobación.
+  assert.throws(
+    () => getDb().prepare(
+      'INSERT INTO company_routes (company_id, route_id, name, created_at) VALUES (?, ?, ?, ?)',
+    ).run(empresa, 'R-101', 'Colada', Date.now()),
+    /UNIQUE/,
+  );
+});
+
+test('la migración se niega a arrancar con ids de ruta repetidos entre empresas', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'yaviene-dup-'));
+  const ruta = join(dir, 'dup.db');
+  const modulo = join(__dirname, '..', 'src', 'data', 'database.ts');
+  const abrir = () => spawnSync(
+    process.execPath,
+    ['--import', 'tsx', '--eval', `require(${JSON.stringify(modulo)}).getDb()`],
+    { env: { ...process.env, YA_VIENE_DB_PATH: ruta }, encoding: 'utf8', timeout: 30_000 },
+  );
+  try {
+    const nueva = abrir();
+    assert.equal(nueva.status, 0, `una base nueva tiene que arrancar: ${nueva.stderr}`);
+
+    // Una base de antes del índice, con R-101 en dos empresas.
+    const d = new Database(ruta);
+    d.exec('DROP INDEX IF EXISTS idx_company_routes_route_id');
+    d.prepare('DELETE FROM schema_migrations WHERE version = 20').run();
+    d.prepare(
+      'INSERT INTO company_routes (company_id, route_id, name, created_at) VALUES (?, ?, ?, ?)',
+    ).run('EMP-COPIA', 'R-101', 'Copia', Date.now());
+    d.close();
+
+    const vieja = abrir();
+    assert.notEqual(vieja.status, 0, 'con el choque dentro no arranca');
+    assert.match(vieja.stderr, /R-101/);
+    assert.match(vieja.stderr, /EMP-01/);
+    assert.match(vieja.stderr, /EMP-COPIA/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

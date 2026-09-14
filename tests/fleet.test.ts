@@ -418,7 +418,9 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     const newRoute = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/routes`, {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ routeId: 'R-104', name: 'Ruta 4 · La Esperanza' }),
+      // R-104 ya es de EMP-01 (la demo): el código de ruta es único entre
+      // empresas, así que la ruta nueva de esta empresa lleva uno propio.
+      body: JSON.stringify({ routeId: 'R-140', name: 'Ruta 4 · La Esperanza' }),
     });
     assert.equal(newRoute.status, 201);
 
@@ -443,7 +445,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     assert.equal(routesRes.status, 200);
     const { routes } = (await routesRes.json()) as { routes: any[] };
     assert.ok(routes.some((r) => r.routeId === 'R-101'), 'catálogo incluye R-101');
-    assert.ok(routes.some((r) => r.routeId === 'R-104'), 'catálogo incluye R-104 creada');
+    assert.ok(routes.some((r) => r.routeId === 'R-140'), 'catálogo incluye R-140 creada');
     const r101 = routes.find((r) => r.routeId === 'R-101');
     assert.equal(r101.name, 'Tcherassi');
     assert.ok(r101.total >= 1);
@@ -568,7 +570,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     const fleet3 = await fleet();
     const moved = fleet3.buses.find((b) => b.placa === 'BBB111');
     assert.ok(moved, 'bus reasignado sigue en la flota');
-    assert.equal(moved.routeId, 'R-104', 'se movió a la primera ruta restante (orden alfabético)');
+    assert.equal(moved.routeId, 'R-140', 'se movió a la primera ruta restante (orden alfabético)');
     const routesAfterDelete = (await (
       await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/routes`, { headers: auth })
     ).json()) as { routes: any[] };
@@ -749,6 +751,90 @@ test('fleet: una empresa no puede tocar ni ver buses, rutas ni flota de otra', {
     assert.equal((await call(malas, 'POST', '/api/admin/drivers', {})).status, 429);
   } finally {
     for (const socket of sockets) socket.close();
+    await stopProcess(backend);
+  }
+});
+
+// La sala del pasajero y la consulta de posiciones van por `routeId` a secas
+// (`route:{id}` en socket/handler.ts): si dos empresas tienen el mismo
+// código, los pasajeros de una ven los buses de la otra.
+test('fleet: el código de ruta es único entre empresas', { timeout: 60_000 }, async () => {
+  const HTTP_PORT = 3156;
+  const MQTT_PORT = 8926;
+  const base = `http://127.0.0.1:${HTTP_PORT}`;
+  const suffix = Date.now().toString().slice(-6);
+  const backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+    env: {
+      ...process.env,
+      HTTP_PORT: String(HTTP_PORT),
+      MQTT_PORT: String(MQTT_PORT),
+      JWT_SECRET,
+      ADMIN_API_KEY,
+      MQTT_DEBUG_LOGS: 'false',
+      YA_VIENE_FLOTA_DEMO: '0',
+      YA_VIENE_DB_PATH: `/tmp/yaviene-rutas-${process.pid}-${suffix}.db`,
+    },
+    stdio: 'ignore',
+  });
+
+  try {
+    await waitForReady(HTTP_PORT);
+    const login = async (companyId: string, username: string): Promise<Record<string, string>> => {
+      const created = await fetch(`${base}/api/admin/empresas/${companyId}/admin`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
+        body: JSON.stringify({ username, password: CLAVE_PRUEBA }),
+      });
+      assert.equal(created.status, 201);
+      const res = await fetch(`${base}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password: CLAVE_PRUEBA }),
+      });
+      const { token } = (await res.json()) as { token: string };
+      return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    };
+    const alta = async (headers: Record<string, string>, routeId: string, name: string) => {
+      const res = await fetch(`${base}/api/fleet/routes`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ routeId, name }),
+      });
+      return { status: res.status, body: (await res.json()) as any };
+    };
+
+    const a = await login(`EMP-UA-${suffix}`, `ua${suffix}`);
+    const b = await login(`EMP-UB-${suffix}`, `ub${suffix}`);
+
+    // Dos empresas nuevas autonumeran rutas distintas. Antes la cuenta era
+    // por empresa y las dos nacían con R-001, en la misma sala.
+    const primeraA = await alta(a, '', 'Primera de A');
+    const primeraB = await alta(b, '', 'Primera de B');
+    assert.equal(primeraA.status, 201);
+    assert.equal(primeraB.status, 201);
+    assert.notEqual(primeraA.body.routeId, primeraB.body.routeId);
+    // La cuenta sigue desde las de la demo (R-101 a R-106 de EMP-01).
+    assert.equal(primeraA.body.routeId, 'R-107');
+    assert.equal(primeraB.body.routeId, 'R-108');
+
+    // Una empresa no puede crear un id que ya usa otra, ni uno de la demo.
+    const copia = await alta(b, primeraA.body.routeId, 'Copia de A');
+    assert.equal(copia.status, 409);
+    assert.equal(copia.body.error.code, 'ROUTE_EXISTS');
+    assert.equal(JSON.stringify(copia.body).includes(`EMP-UA-${suffix}`), false, 'el 409 no dice de quién es');
+    assert.equal((await alta(b, 'r-101', 'Tcherassi de B')).status, 409);
+    const rutasB = (await (await fetch(`${base}/api/fleet/routes`, { headers: b })).json()) as any;
+    assert.deepEqual(rutasB.routes.map((r: any) => r.routeId), ['R-108']);
+
+    // Después de R-999 viene R-1000 y luego R-1001. Antes el máximo salía de
+    // ordenar texto: 'R-999' > 'R-1000', así que la tercera volvía a pedir
+    // R-1000 y chocaba para siempre.
+    assert.equal((await alta(a, 'R-999', 'Novecientos')).status, 201);
+    const mil = await alta(a, '', 'Mil');
+    assert.equal(mil.body.routeId, 'R-1000');
+    const milUno = await alta(b, '', 'Mil uno');
+    assert.equal(milUno.body.routeId, 'R-1001');
+  } finally {
     await stopProcess(backend);
   }
 });

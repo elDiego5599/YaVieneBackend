@@ -585,6 +585,34 @@ function initSchema(): void {
         ensureColumn(d, 'empresa_admins', 'token_version', 'INTEGER NOT NULL DEFAULT 0');
       },
     },
+    {
+      version: 20,
+      apply: () => {
+        // Un código de ruta es de una sola empresa. La sala del pasajero
+        // (`route:{id}`) y la consulta de posiciones van por identificador a
+        // secas: con R-001 en dos empresas, los pasajeros de una veían los
+        // buses de la otra. La clave (empresa, ruta) no lo impedía.
+        //
+        // Si la base ya trae el choque, no se arregla sola: decidir de quién
+        // es la ruta es cosa de una persona. El arranque se detiene con la
+        // lista y no crea el índice a medias.
+        const repetidas = d.prepare(`
+          SELECT route_id, GROUP_CONCAT(company_id, ', ') AS empresas
+          FROM company_routes
+          GROUP BY route_id
+          HAVING COUNT(DISTINCT company_id) > 1
+          ORDER BY route_id
+        `).all() as { route_id: string; empresas: string }[];
+        if (repetidas.length > 0) {
+          const lista = repetidas.map((r) => `${r.route_id} (${r.empresas})`).join('; ');
+          throw new Error(
+            `Hay códigos de ruta en más de una empresa: ${lista}. Deja cada código en una `
+            + 'sola empresa (renombra o borra la de sobra en company_routes) y vuelve a arrancar.',
+          );
+        }
+        d.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_company_routes_route_id ON company_routes(route_id)');
+      },
+    },
   ];
 
   for (const migration of migrations) {

@@ -146,16 +146,27 @@ export const MAX_NOMBRE_RUTA = 60;
 
 /**
  * Alta de una ruta en el catálogo de la empresa. Devuelve la ruta, `null` si
- * el nombre o el identificador no valen, o `'taken'` si la empresa ya tiene
- * una ruta con ese identificador.
+ * el nombre o el identificador no valen, o `'taken'` si el identificador ya
+ * es de una ruta, de esta empresa o de cualquier otra, o de la demo.
  *
- * Ese último caso se resolvía con `ON CONFLICT DO UPDATE SET name`: un alta
- * con un identificador repetido renombraba en silencio la ruta que ya
- * existía —con sus buses y sus pasajeros suscritos— y respondía 201 como si
- * hubiera creado otra. Renombrar tiene su propio PATCH; aquí un choque es un
- * choque.
+ * El choque con la misma empresa se resolvía con `ON CONFLICT DO UPDATE SET
+ * name`: un alta con un identificador repetido renombraba en silencio la ruta
+ * que ya existía —con sus buses y sus pasajeros suscritos— y respondía 201
+ * como si hubiera creado otra. Renombrar tiene su propio PATCH; aquí un
+ * choque es un choque.
+ *
+ * Y el choque con otra empresa ni siquiera se miraba: la sala del pasajero
+ * (`route:{id}`) y la consulta de posiciones van por identificador a secas,
+ * así que dos empresas con R-001 enseñaban cada una los buses de la otra. El
+ * índice único `idx_company_routes_route_id` (migración 20) lo garantiza en
+ * la base; el 409 no dice de quién es la ruta.
  */
 export type AddRouteError = 'taken';
+
+/** El número más alto de las rutas de la demo (R-106): la cuenta sigue desde ahí. */
+const MAYOR_RUTA_DEMO = Math.max(
+  ...Object.keys(routeNameMap).map((id) => parseInt(id.slice(2), 10)),
+);
 
 export function addCompanyRoute(
   companyId: string,
@@ -164,20 +175,30 @@ export function addCompanyRoute(
 ): { routeId: string; name: string } | AddRouteError | null {
   const cleanedName = name.trim();
   if (!cleanedName || cleanedName.length > MAX_NOMBRE_RUTA) return null;
+  const db = getDb();
   let cleanedId = routeId.trim().toUpperCase();
   if (!cleanedId) {
-    const last = getDb().prepare(
-      'SELECT route_id FROM company_routes WHERE company_id = ? ORDER BY route_id DESC LIMIT 1',
-    ).get(companyId) as { route_id: string } | undefined;
-    const match = last?.route_id.match(/^R-(\d+)$/);
-    const next = match ? parseInt(match[1], 10) + 1 : 1;
+    // Global y numérica. Antes era por empresa —toda empresa nueva empezaba
+    // en R-001— y ordenaba texto: tras R-999 venía R-1000, pero el mayor
+    // como texto seguía siendo 'R-999' y la siguiente volvía a pedir R-1000.
+    const { mayor } = db.prepare(`
+      SELECT MAX(CAST(substr(route_id, 3) AS INTEGER)) AS mayor
+      FROM company_routes
+      WHERE route_id GLOB 'R-[0-9]*' AND substr(route_id, 3) NOT GLOB '*[^0-9]*'
+    `).get() as { mayor: number | null };
+    const next = Math.max(mayor ?? 0, MAYOR_RUTA_DEMO) + 1;
     cleanedId = `R-${String(next).padStart(3, '0')}`;
   }
   if (!isRouteId(cleanedId)) return null;
-  const result = getDb().prepare(`
+  // Las de la demo tienen su recorrido dibujado en la app del pasajero
+  // (assets/data/rutas.json): otra empresa con ese código heredaría el mapa.
+  if (Object.prototype.hasOwnProperty.call(routeNameMap, cleanedId)) return 'taken';
+  // Sin columna en el ON CONFLICT: vale para la clave (empresa, ruta) y para
+  // el índice único de `route_id` solo.
+  const result = db.prepare(`
     INSERT INTO company_routes (company_id, route_id, name, created_at)
     VALUES (?, ?, ?, ?)
-    ON CONFLICT(company_id, route_id) DO NOTHING
+    ON CONFLICT DO NOTHING
   `).run(companyId, cleanedId, cleanedName, Date.now());
   if (result.changes === 0) return 'taken';
   return { routeId: cleanedId, name: cleanedName };
