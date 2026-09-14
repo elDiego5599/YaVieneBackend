@@ -3,6 +3,7 @@ import { ChildProcess, spawn } from 'node:child_process';
 import test from 'node:test';
 import net from 'node:net';
 
+import Database from 'better-sqlite3';
 import { io, Socket } from 'socket.io-client';
 import mqtt from 'mqtt';
 
@@ -18,6 +19,7 @@ const JWT_SECRET = 'chaos-jwt-secret';
 let backend: ChildProcess | undefined;
 let ctx: Ctx = { httpPort: 3130, mqttPort: 8900, dbName: 'x' };
 const healthUrl = (): string => `http://127.0.0.1:${ctx.httpPort}/api/health`;
+const dbPathFor = (file: string): string => `/tmp/yaviene-chaos-${file}-${process.pid}.db`;
 
 async function waitForReady(ctx: Ctx): Promise<void> {
   const deadline = Date.now() + 15_000;
@@ -49,7 +51,7 @@ function stopProcess(child: ChildProcess | undefined): Promise<void> {
   });
 }
 
-async function withBackend(file: string, httpPort: number, mqttPort: number, fn: () => Promise<void>, timeoutMs = 60_000): Promise<void> {
+async function withBackend(file: string, httpPort: number, mqttPort: number, fn: () => Promise<void>, timeoutMs = 60_000, env: Record<string, string> = {}): Promise<void> {
   ctx = { httpPort, mqttPort, dbName: file };
   backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     env: {
@@ -63,8 +65,9 @@ async function withBackend(file: string, httpPort: number, mqttPort: number, fn:
       // test: doce simuladores publicando encima de este vuelven ruido
       // cada aserción sobre la flota.
       YA_VIENE_FLOTA_DEMO: '0',
-      YA_VIENE_DB_PATH: `/tmp/yaviene-chaos-${file}-${process.pid}.db`,
+      YA_VIENE_DB_PATH: dbPathFor(file),
       YA_VIENE_GHOST_MS: '2000',
+      ...env,
     },
     stdio: 'ignore',
   });
@@ -109,6 +112,16 @@ function waitForSocketEvent(
     };
     socket.on(event, listener);
   });
+}
+
+async function esperar<T>(leer: () => T | undefined, ms: number, que: string): Promise<T> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    const valor = leer();
+    if (valor !== undefined) return valor;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out esperando ${que}`);
 }
 
 test('basura en el puerto MQTT no tumba el broker y el cliente real sigue entrando', async () => {
@@ -294,6 +307,60 @@ test('tormenta de suscripciones socket + publicaciones mientras se mueve', async
     for (const s of sockets) s.close();
     client.end(true);
   });
+});
+
+// T1.4 protegió el barrido y el despacho del outbox, pero la limpieza de
+// sesiones y el volcado de métricas también escriben en SQLite desde un
+// setInterval, y ahí una excepción no tenía quien la atrapara: el proceso
+// moría y no volvía. Con el servidor entero, entra una fila corrupta al
+// outbox y la base rechaza el volcado (un trigger hace de disco que falla).
+// El proceso tiene que seguir vivo, contar el fallo y volcar en cuanto la
+// base vuelve a aceptar.
+test('fila corrupta en el outbox y volcado de métricas que falla: el proceso sigue vivo', async () => {
+  await withBackend('volcado', 3136, 8906, async () => {
+    const db = new Database(dbPathFor('volcado'));
+    try {
+      db.pragma('busy_timeout = 5000');
+      db.exec(`
+        CREATE TRIGGER metrics_falla_insert BEFORE INSERT ON metrics
+        BEGIN SELECT RAISE(ABORT, 'volcado rechazado por la prueba'); END;
+        CREATE TRIGGER metrics_falla_update BEFORE UPDATE ON metrics
+        BEGIN SELECT RAISE(ABORT, 'volcado rechazado por la prueba'); END;
+      `);
+      db.prepare(`
+        INSERT INTO lifecycle_events (event_id, event_type, route_id, payload, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run('ev-caos', 'bus:left', 'R-CAOS', '{"busId": "B-CAOS"', Date.now());
+
+      // La corrupta muere sola (T1.4) y deja `outbox.corrupto` en memoria:
+      // desde ahí cada volcado tiene algo que escribir y choca con el trigger.
+      await esperar(() => {
+        const fila = db.prepare('SELECT dead_at FROM lifecycle_events WHERE event_id = ?')
+          .get('ev-caos') as { dead_at: number | null } | undefined;
+        return fila?.dead_at ? true : undefined;
+      }, 5_000, 'que la fila corrupta quede muerta');
+      // Varias vueltas del volcado (cada 200 ms aquí) fallando seguidas.
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      assert.equal(backend?.exitCode, null, 'el proceso murió con el volcado fallando');
+      assert.equal((await fetch(healthUrl())).status, 200);
+
+      // La base vuelve a aceptar: la siguiente vuelta vuelca, y con ella el
+      // contador de los fallos de antes.
+      db.exec('DROP TRIGGER metrics_falla_insert; DROP TRIGGER metrics_falla_update;');
+      const fallos = await esperar(() => {
+        const fila = db.prepare("SELECT value FROM metrics WHERE name = 'metrics.flush.error'")
+          .get() as { value: number } | undefined;
+        return fila?.value;
+      }, 5_000, 'el volcado después de quitar el trigger');
+      assert.ok(fallos >= 1, 'los volcados rechazados quedan contados');
+      const corruptas = db.prepare("SELECT value FROM metrics WHERE name = 'outbox.corrupto'")
+        .get() as { value: number } | undefined;
+      assert.ok((corruptas?.value ?? 0) >= 1, 'la fila corrupta queda contada');
+      assert.equal((await fetch(healthUrl())).status, 200);
+    } finally {
+      db.close();
+    }
+  }, 60_000, { YA_VIENE_METRICS_FLUSH_MS: '200' });
 });
 
 async function spawnBackendOnly(): Promise<void> {

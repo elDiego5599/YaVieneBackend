@@ -153,9 +153,11 @@ function emitLifecycleEvent(event: LifecycleEvent): void {
 }
 
 // Una excepción dentro de un setInterval sube sin dueño y tumba el proceso
-// entero (Node termina ante un error no capturado). Un fallo puntual del
-// barrido o del despacho —disco lleno, base bloqueada— se registra y la
-// siguiente vuelta lo reintenta, en vez de apagar el tiempo real.
+// entero (Node termina ante un error no capturado). Un fallo puntual de
+// cualquiera de los cuatro relojes que escriben en SQLite —barrido, despacho,
+// limpieza de sesiones y volcado de métricas—, por disco lleno o base
+// bloqueada, se registra y la siguiente vuelta lo reintenta, en vez de apagar
+// el tiempo real.
 function vueltaProtegida(nombre: string, metrica: string, trabajo: () => void): () => void {
   return () => {
     try {
@@ -176,9 +178,9 @@ const lifecycleDispatchTimer = setInterval(vueltaProtegida('Outbox', 'outbox.dis
   dispatchLifecycleEvents(emitLifecycleEvent);
 }), 250);
 lifecycleDispatchTimer.unref();
-const sessionCleanupTimer = setInterval(() => {
+const sessionCleanupTimer = setInterval(vueltaProtegida('Sesiones', 'sessions.cleanup.error', () => {
   cleanupRevokedSessions();
-}, 60 * 60 * 1000);
+}), 60 * 60 * 1000);
 sessionCleanupTimer.unref();
 
 startBroker(
@@ -307,8 +309,16 @@ console.log(
 );
 if (FLOTA_DEMO) arrancarFlotaDemo();
 // Los contadores viven en memoria; a disco cada 30s para que un reinicio
-// no borre la señal operativa.
-const metricsFlushTimer = setInterval(flushMetrics, 30_000);
+// no borre la señal operativa. YA_VIENE_METRICS_FLUSH_MS existe para las
+// pruebas, que no esperan medio minuto.
+const METRICS_FLUSH_MS = (() => {
+  const ms = Number(process.env.YA_VIENE_METRICS_FLUSH_MS);
+  return Number.isFinite(ms) && ms >= 100 ? ms : 30_000;
+})();
+const metricsFlushTimer = setInterval(
+  vueltaProtegida('Métricas', 'metrics.flush.error', flushMetrics),
+  METRICS_FLUSH_MS,
+);
 metricsFlushTimer.unref();
 
 // Los contadores se vuelcan cada 30 s, así que apagar el servidor tiraba
