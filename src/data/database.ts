@@ -12,7 +12,9 @@ export function getDb(): Database.Database {
     if (!fs.existsSync(DB_DIR)) {
       fs.mkdirSync(DB_DIR, { recursive: true });
     }
-    db = new Database(DB_PATH);
+    const abierta = new Database(DB_PATH);
+    revisarIntegridad(abierta);
+    db = abierta;
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     db.pragma('busy_timeout = 5000');
@@ -23,6 +25,30 @@ export function getDb(): Database.Database {
     console.log(`[DB] SQLite abierta en ${DB_PATH} (WAL mode)`);
   }
   return db;
+}
+
+/**
+ * SQLite abre sin quejarse un archivo con la cabecera sana y páginas rotas
+ * (un apagón a mitad de escritura, un disco que falla): el daño aparecía
+ * después, en la primera consulta que tocara esa página, con el servidor ya
+ * aceptando buses. `quick_check` recorre la base entera al abrir —en la de
+ * hoy (3,6 MB) son milisegundos— y si algo no cuadra el arranque se detiene
+ * diciendo qué hacer. Un archivo que ni siquiera es una base lanza en vez de
+ * devolver texto, y se trata igual.
+ */
+function revisarIntegridad(d: Database.Database): void {
+  let estado: unknown;
+  try {
+    estado = d.pragma('quick_check', { simple: true });
+  } catch (error) {
+    estado = String(error);
+  }
+  if (estado === 'ok') return;
+  d.close();
+  throw new Error(
+    `La base ${DB_PATH} está dañada (${String(estado)}). Restaura el último backup `
+    + '(scripts/backup-db.mjs) y vuelve a arrancar.',
+  );
 }
 
 export function closeDb(): void {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { ChildProcess, spawn } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { closeSync, openSync, rmSync, writeSync } from 'node:fs';
 import test from 'node:test';
 
 import Database from 'better-sqlite3';
@@ -190,6 +190,34 @@ test('arranque: una configuración insegura no llega a levantar el servidor', { 
       assert.notEqual(code, 0, `debió negarse a arrancar con ${JSON.stringify(caso)}`);
       assert.match(stderr, /\[Config\]/, 'el motivo sale en el registro');
     }
+  } finally {
+    borrarBase(dbPath);
+  }
+});
+
+// SQLite abre sin quejarse un archivo con la cabecera sana y páginas rotas:
+// el daño salía después, en la primera consulta que tocara esa página, con
+// el servidor ya aceptando buses. Mejor no arrancar y decir qué hacer.
+test('arranque: una base con páginas corruptas no arranca y el mensaje nombra el backup', { timeout: 60_000 }, async () => {
+  const dbPath = `/tmp/yaviene-arranque-corrupta-${process.pid}.db`;
+  borrarBase(dbPath);
+  const sana = new Database(dbPath);
+  sana.exec('CREATE TABLE relleno (id INTEGER PRIMARY KEY, texto TEXT)');
+  const insertar = sana.prepare('INSERT INTO relleno (texto) VALUES (?)');
+  for (let i = 0; i < 200; i++) insertar.run('x'.repeat(200));
+  sana.close();
+  // Página 2 = bytes 4096-8191 con el tamaño de página por defecto (4096).
+  // La página 1 lleva la cabecera y queda intacta.
+  const fd = openSync(dbPath, 'r+');
+  writeSync(fd, Buffer.alloc(4096, 0xa5), 0, 4096, 4096);
+  closeSync(fd);
+  try {
+    const { code, stderr } = await esperarSalida(arrancar({
+      JWT_SECRET: JWT_LARGO, HTTP_PORT: '3154', MQTT_PORT: '8924', YA_VIENE_DB_PATH: dbPath,
+    }), 20_000);
+    assert.notEqual(code, 0, 'con la base dañada no debe arrancar');
+    assert.match(stderr, /dañada/);
+    assert.match(stderr, /backup-db/, 'el mensaje dice con qué restaurar');
   } finally {
     borrarBase(dbPath);
   }
