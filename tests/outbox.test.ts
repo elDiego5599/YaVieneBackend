@@ -94,6 +94,37 @@ test('outbox: un venenoso no revienta el despacho del lote', () => {
   assert.equal(herido.delivered_at, null);
 });
 
+// El payload se parseaba dentro de la transacción que reclama el lote: una
+// sola fila con JSON roto hacía lanzar al reclamo, la transacción se
+// deshacía (sin sumar intentos) y el despacho entero moría cada 250 ms para
+// siempre, con todos los eventos detrás de ella atascados.
+test('outbox: una fila con payload corrupto muere sola y no atasca el lote', () => {
+  const db = database.getDb();
+  db.prepare(`
+    INSERT INTO lifecycle_events (event_id, event_type, route_id, payload, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run('ev-corrupto', 'bus:left', 'RUTA-4', '{"busId": "B-4"', Date.now());
+  outbox.queueLifecycleEvent(db, 'bus:left', 'RUTA-5', { busId: 'B-5' });
+
+  const entregadas: string[] = [];
+  assert.doesNotThrow(() =>
+    outbox.dispatchLifecycleEvents((event) => {
+      entregadas.push(event.routeId);
+    }),
+  );
+
+  // RUTA-3 (el herido del test anterior) también vuelve a salir: solo
+  // importan la corrupta y la de detrás.
+  assert.ok(entregadas.includes('RUTA-5'), 'el evento sano de detrás se entrega');
+  assert.ok(!entregadas.includes('RUTA-4'), 'la corrupta no llega al suscriptor');
+  const corrupto = db.prepare(
+    'SELECT dead_at, last_error, delivered_at FROM lifecycle_events WHERE route_id = ?',
+  ).get('RUTA-4') as { dead_at: number | null; last_error: string | null; delivered_at: number | null };
+  assert.ok(corrupto.dead_at, 'un payload ilegible no mejora reintentando: muere al primer intento');
+  assert.ok(corrupto.last_error?.includes('payload corrupto'));
+  assert.equal(corrupto.delivered_at, null);
+});
+
 test('cleanup', () => {
   database.closeDb();
   fs.rmSync(tmpDir, { recursive: true, force: true });

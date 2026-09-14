@@ -25,7 +25,7 @@ import {
 import { closeDb } from './data/database';
 import { cleanupRevokedSessions } from './data/sessions';
 import { dispatchLifecycleEvents, LifecycleEvent } from './data/lifecycle_events';
-import { flushMetrics, restoreMetrics } from './observability/metrics';
+import { flushMetrics, incrementMetric, restoreMetrics } from './observability/metrics';
 import { arrancarFlotaDemo, detenerFlotaDemo } from './demo/flota_demo';
 import { DriverTokenPayload } from './auth/tokens';
 import {
@@ -151,14 +151,29 @@ function emitLifecycleEvent(event: LifecycleEvent): void {
   }, true);
 }
 
-const sweepTimer = setInterval(() => {
+// Una excepción dentro de un setInterval sube sin dueño y tumba el proceso
+// entero (Node termina ante un error no capturado). Un fallo puntual del
+// barrido o del despacho —disco lleno, base bloqueada— se registra y la
+// siguiente vuelta lo reintenta, en vez de apagar el tiempo real.
+function vueltaProtegida(nombre: string, metrica: string, trabajo: () => void): () => void {
+  return () => {
+    try {
+      trabajo();
+    } catch (error) {
+      incrementMetric(metrica);
+      console.error(`[${nombre}] Falló una vuelta; se reintenta en la siguiente:`, error);
+    }
+  };
+}
+
+const sweepTimer = setInterval(vueltaProtegida('Sweep', 'sweep.error', () => {
   sweepPositions(GHOST_MS);
   dispatchLifecycleEvents(emitLifecycleEvent);
-}, 10_000);
+}), 10_000);
 sweepTimer.unref();
-const lifecycleDispatchTimer = setInterval(() => {
+const lifecycleDispatchTimer = setInterval(vueltaProtegida('Outbox', 'outbox.dispatch.error', () => {
   dispatchLifecycleEvents(emitLifecycleEvent);
-}, 250);
+}), 250);
 lifecycleDispatchTimer.unref();
 const sessionCleanupTimer = setInterval(() => {
   cleanupRevokedSessions();

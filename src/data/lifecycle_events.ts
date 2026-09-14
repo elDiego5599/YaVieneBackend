@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import Database from 'better-sqlite3';
 import { getDb } from './database';
+import { incrementMetric } from '../observability/metrics';
 
 export interface LifecycleEvent {
   id: number;
@@ -42,7 +43,10 @@ export function queueLifecycleEvent(
   return eventId;
 }
 
-function claimPendingEvents(limit: number): LifecycleEvent[] {
+/** Una fila reclamada, con el payload aún como texto: se parsea al despachar. */
+type ClaimedEvent = Omit<LifecycleEvent, 'payload'> & { rawPayload: string };
+
+function claimPendingEvents(limit: number): ClaimedEvent[] {
   const db = getDb();
   const now = Date.now();
   const staleClaim = now - 30_000;
@@ -73,12 +77,15 @@ function claimPendingEvents(limit: number): LifecycleEvent[] {
       `).run(now, row.id);
     }
 
+    // El payload NO se parsea aquí: un JSON roto lanzaba dentro de la
+    // transacción, el reclamo se deshacía sin sumar intentos y el despacho
+    // entero moría en cada vuelta, con todo el lote atascado detrás.
     return rows.map((row) => ({
       id: row.id,
       eventId: row.event_id,
       eventType: row.event_type,
       routeId: row.route_id,
-      payload: JSON.parse(row.payload) as Record<string, unknown>,
+      rawPayload: row.payload,
       createdAt: row.created_at,
       attempts: row.attempts + 1,
     }));
@@ -90,7 +97,22 @@ function claimPendingEvents(limit: number): LifecycleEvent[] {
 export function dispatchLifecycleEvents(emit: (event: LifecycleEvent) => void): void {
   const db = getDb();
   maybePurge(db);
-  for (const event of claimPendingEvents(100)) {
+  for (const { rawPayload, ...claimed } of claimPendingEvents(100)) {
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(rawPayload) as Record<string, unknown>;
+    } catch (error) {
+      // Reintentar no arregla un texto ilegible: muere al primer intento y
+      // queda con su error para la autopsia.
+      db.prepare(`
+        UPDATE lifecycle_events
+        SET claimed_at = NULL, last_error = ?, dead_at = ?
+        WHERE id = ?
+      `).run(`payload corrupto: ${String(error)}`, Date.now(), claimed.id);
+      incrementMetric('outbox.corrupto');
+      continue;
+    }
+    const event: LifecycleEvent = { ...claimed, payload };
     try {
       emit(event);
       db.prepare(`
