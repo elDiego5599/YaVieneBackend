@@ -97,17 +97,34 @@ function startRevisionPaneles(): void {
     for (const socket of io.sockets.sockets.values()) {
       const admin = socket.data.admin as AdminEnSocket | undefined;
       if (!admin) continue;
-      try {
-        const caducado = (admin.exp ?? 0) * 1000 <= ahora;
-        if (!caducado && isAdminTokenCurrent(admin.sub, admin.companyId, admin.tv)) continue;
-        console.warn(
-          `[WS] Panel ${admin.username} fuera de admin:${admin.companyId} — ${caducado ? 'token caducado' : 'credencial cambiada'}`,
-        );
-        incrementMetric('socket.admin.expulsado');
-        socket.disconnect(true);
-      } catch {
-        // socket ya cerrado o base ocupada: se mira en la siguiente vuelta
+      // La caducidad sale del propio token y no necesita la base.
+      const caducado = (admin.exp ?? 0) * 1000 <= ahora;
+      let vigente = false;
+      if (!caducado) {
+        try {
+          vigente = isAdminTokenCurrent(admin.sub, admin.companyId, admin.tv);
+        } catch (error) {
+          // Falla ABIERTA, a propósito: si la base no responde, el panel se
+          // queda dentro hasta la siguiente vuelta. Cerrarla sacaría a la vez
+          // a todos los paneles de todas las empresas por un tropiezo de la
+          // base, y al reconectar tampoco entrarían, porque el handshake
+          // consulta la misma tabla. El riesgo tiene tope: la caducidad (8 h
+          // como mucho) se sigue aplicando sin base, y una contraseña
+          // cambiada saca al panel en la primera vuelta en que la base
+          // conteste. Por eso el fallo deja log y métrica, no silencio.
+          incrementMetric('panel.revision.error');
+          console.error(
+            `[WS] Panel ${admin.username} sin revisar en admin:${admin.companyId}: la base no respondió (${String(error)})`,
+          );
+          continue;
+        }
       }
+      if (vigente) continue;
+      console.warn(
+        `[WS] Panel ${admin.username} fuera de admin:${admin.companyId} — ${caducado ? 'token caducado' : 'credencial cambiada'}`,
+      );
+      incrementMetric('socket.admin.expulsado');
+      socket.disconnect(true);
     }
   }, REVISION_PANEL_MS);
   revisionPanelTimer.unref();

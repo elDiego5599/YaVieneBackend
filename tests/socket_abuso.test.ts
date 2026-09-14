@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { ChildProcess, spawn } from 'node:child_process';
 import test from 'node:test';
 
+import Database from 'better-sqlite3';
 import jwt from 'jsonwebtoken';
 import { io, Socket } from 'socket.io-client';
 
@@ -15,6 +16,7 @@ const JWT_SECRET = 'socket-abuso-jwt-secret';
 // cualquier `password: '...'` escrito tal cual.
 const CLAVE_PRUEBA = 'secret123-de-prueba';
 const BASE = `http://127.0.0.1:${HTTP_PORT}`;
+const DB_PATH = `/tmp/yaviene-socket-abuso-${process.pid}-${Date.now()}.db`;
 
 async function waitForReady(): Promise<void> {
   const deadline = Date.now() + 15_000;
@@ -96,9 +98,14 @@ test('socket: payloads inválidos, tope de salas y abuso de frecuencia', { timeo
       // La revisión de los paneles conectados va cada 60 s; aquí cada 200 ms
       // para no esperar un minuto por prueba.
       YA_VIENE_REVISION_PANEL_MS: '200',
-      YA_VIENE_DB_PATH: `/tmp/yaviene-socket-abuso-${process.pid}-${Date.now()}.db`,
+      YA_VIENE_DB_PATH: DB_PATH,
     },
-    stdio: 'ignore',
+    // La salida de errores se guarda: una de las pruebas busca ahí su log.
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let salidaErrores = '';
+  backend.stderr?.on('data', (chunk) => {
+    salidaErrores += String(chunk);
   });
   const sockets: Socket[] = [];
 
@@ -256,6 +263,52 @@ test('socket: payloads inválidos, tope de salas y abuso de frecuencia', { timeo
       // Decenas de revisiones después, el que está en regla sigue dentro.
       await new Promise((resolve) => setTimeout(resolve, 1_000));
       assert.equal(sano.connected, true);
+    });
+
+    // Si la base no responde, la revisión falla ABIERTA (el porqué está en
+    // startRevisionPaneles): el panel se queda, pero el fallo deja log y
+    // métrica. Renombrar la tabla desde otra conexión hace que la consulta
+    // lance, como lanzaría con la base bloqueada o el disco con errores, sin
+    // congelar el proceso los 5 s del busy_timeout.
+    await t.test('si la base no responde, el panel se queda y el fallo deja log y métrica', async () => {
+      const cuenta = (clave: string) => fetch(`${BASE}/api/admin/empresas/EMP-PANEL/admin`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
+        body: JSON.stringify({ username: 'panel-sin-base', password: clave }),
+      });
+      assert.equal((await cuenta(CLAVE_PRUEBA)).status, 201);
+      const login = await fetch(`${BASE}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'panel-sin-base', password: CLAVE_PRUEBA }),
+      });
+      const { token } = (await login.json()) as { token: string };
+      const socket = await conectar({ token });
+      sockets.push(socket);
+      const lote = new Promise((resolve) => socket.once('fleet:batch', resolve));
+      socket.emit('subscribe:fleet');
+      await lote;
+
+      const externa = new Database(DB_PATH);
+      externa.pragma('busy_timeout = 5000');
+      externa.exec('ALTER TABLE empresa_admins RENAME TO empresa_admins_apartada');
+      try {
+        // Cinco vueltas de la revisión con la tabla fuera.
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        assert.equal(socket.connected, true, 'falla abierta: el panel sigue dentro');
+        const res = await fetch(`${BASE}/api/metrics`, { headers: { 'x-admin-key': ADMIN_API_KEY } });
+        const { counters } = (await res.json()) as { counters: Record<string, number> };
+        assert.ok((counters['panel.revision.error'] ?? 0) >= 1, 'el fallo suma panel.revision.error');
+        assert.match(salidaErrores, /Panel panel-sin-base sin revisar/);
+      } finally {
+        externa.exec('ALTER TABLE empresa_admins_apartada RENAME TO empresa_admins');
+        externa.close();
+      }
+
+      // Con la base de vuelta, la revisión sigue: la contraseña cambiada lo saca.
+      const fuera = esperarDesconexion(socket);
+      assert.equal((await cuenta('otra-clave-de-prueba')).status, 201);
+      assert.equal(await fuera, 'io server disconnect');
     });
   } finally {
     for (const socket of sockets) socket.close();
