@@ -72,6 +72,47 @@ function sampleEmitLatency(position: BusPosition): void {
   }
 }
 
+// ── Revisión de los paneles conectados ──────────────────────────────
+// El token del panel se miraba solo al conectarse y al pedir la flota: con
+// la sala `admin:{empresa}` ya abierta, el socket seguía recibiendo las
+// posiciones de toda la flota aunque el token caducara a las 8 horas o se
+// cambiara la contraseña. Y la contraseña también cambia desde otro proceso
+// (scripts/crear-admin-empresa.mjs, scripts/borrar-admin-empresa.mjs), así
+// que no hay evento que avisar: se revisa cada minuto. Es una consulta por
+// clave primaria por panel conectado, que son un puñado.
+// YA_VIENE_REVISION_PANEL_MS existe para las pruebas, que no esperan un minuto.
+const REVISION_PANEL_MS = (() => {
+  const ms = Number(process.env.YA_VIENE_REVISION_PANEL_MS);
+  return Number.isFinite(ms) && ms >= 100 ? ms : 60_000;
+})();
+let revisionPanelTimer: NodeJS.Timeout | null = null;
+
+// `exp` lo pone jsonwebtoken al firmar; el tipo del token no lo declara.
+type AdminEnSocket = AdminTokenPayload & { exp?: number };
+
+function startRevisionPaneles(): void {
+  revisionPanelTimer = setInterval(() => {
+    if (!io) return;
+    const ahora = Date.now();
+    for (const socket of io.sockets.sockets.values()) {
+      const admin = socket.data.admin as AdminEnSocket | undefined;
+      if (!admin) continue;
+      try {
+        const caducado = (admin.exp ?? 0) * 1000 <= ahora;
+        if (!caducado && isAdminTokenCurrent(admin.sub, admin.companyId, admin.tv)) continue;
+        console.warn(
+          `[WS] Panel ${admin.username} fuera de admin:${admin.companyId} — ${caducado ? 'token caducado' : 'credencial cambiada'}`,
+        );
+        incrementMetric('socket.admin.expulsado');
+        socket.disconnect(true);
+      } catch {
+        // socket ya cerrado o base ocupada: se mira en la siguiente vuelta
+      }
+    }
+  }, REVISION_PANEL_MS);
+  revisionPanelTimer.unref();
+}
+
 function adminFromHandshake(auth: unknown): AdminTokenPayload | null {
   const token = (auth as { token?: string } | undefined)?.token;
   if (!token) return null;
@@ -104,6 +145,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
 
     const admin = adminFromHandshake(socket.handshake.auth);
     if (admin) {
+      socket.data.admin = admin;
       socket.join(`admin:${admin.companyId}`);
       console.log(`[WS] Admin ${admin.username} joined room admin:${admin.companyId}`);
     }
@@ -156,6 +198,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
         socket.disconnect(true);
         return;
       }
+      socket.data.admin = admin;
       socket.join(`admin:${admin.companyId}`);
       socket.emit('fleet:batch', {
         companyId: admin.companyId,
@@ -202,6 +245,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
   });
 
   startSlowConsumerGuard();
+  startRevisionPaneles();
   return io;
 }
 

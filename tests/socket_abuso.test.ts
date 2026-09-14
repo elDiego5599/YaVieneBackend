@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { ChildProcess, spawn } from 'node:child_process';
 import test from 'node:test';
 
+import jwt from 'jsonwebtoken';
 import { io, Socket } from 'socket.io-client';
 
 // Puertos propios: los archivos de test corren en paralelo.
@@ -47,8 +48,8 @@ function stopProcess(child: ChildProcess | undefined): Promise<void> {
 
 // Sin reconexión: aquí se quiere ver que el servidor corta, no que el
 // cliente vuelve solo.
-async function conectar(): Promise<Socket> {
-  const socket = io(BASE, { path: '/ws', transports: ['websocket'], reconnection: false });
+async function conectar(auth?: Record<string, string>): Promise<Socket> {
+  const socket = io(BASE, { path: '/ws', transports: ['websocket'], reconnection: false, auth });
   await new Promise<void>((resolve, reject) => {
     socket.once('connect', () => resolve());
     socket.once('connect_error', reject);
@@ -92,6 +93,9 @@ test('socket: payloads inválidos, tope de salas y abuso de frecuencia', { timeo
       ADMIN_API_KEY,
       MQTT_DEBUG_LOGS: 'false',
       YA_VIENE_FLOTA_DEMO: '0',
+      // La revisión de los paneles conectados va cada 60 s; aquí cada 200 ms
+      // para no esperar un minuto por prueba.
+      YA_VIENE_REVISION_PANEL_MS: '200',
       YA_VIENE_DB_PATH: `/tmp/yaviene-socket-abuso-${process.pid}-${Date.now()}.db`,
     },
     stdio: 'ignore',
@@ -205,6 +209,53 @@ test('socket: payloads inválidos, tope de salas y abuso de frecuencia', { timeo
       const lote = esperarLote(sano, 'R-102');
       sano.emit('subscribe:route', 'R-102');
       await lote;
+    });
+
+    // El token del panel se miraba solo al conectar: con la sala de la flota
+    // ya abierta, ni caducar ni cambiar la contraseña lo sacaban. Y la
+    // contraseña también cambia desde otro proceso
+    // (scripts/crear-admin-empresa.mjs), así que el servidor no se entera
+    // por evento: lo ve en la revisión periódica.
+    await t.test('el panel sale cuando su token caduca o cambia la contraseña, y solo entonces', async () => {
+      const cuenta = (usuario: string, clave: string) => fetch(`${BASE}/api/admin/empresas/EMP-PANEL/admin`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
+        body: JSON.stringify({ username: usuario, password: clave }),
+      });
+      const entrar = async (usuario: string): Promise<string> => {
+        assert.equal((await cuenta(usuario, CLAVE_PRUEBA)).status, 201);
+        const res = await fetch(`${BASE}/api/admin/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ username: usuario, password: CLAVE_PRUEBA }),
+        });
+        return ((await res.json()) as { token: string }).token;
+      };
+      const panel = async (token: string): Promise<Socket> => {
+        const socket = await conectar({ token });
+        sockets.push(socket);
+        const lote = new Promise((resolve) => socket.once('fleet:batch', resolve));
+        socket.emit('subscribe:fleet');
+        await lote;
+        return socket;
+      };
+
+      const sano = await panel(await entrar('panel-sano'));
+      const rotado = await panel(await entrar('panel-rotado'));
+      // El mismo token, pero caducando en 3 s: firmarlo a mano es la única
+      // forma de no esperar las 8 horas de verdad.
+      const { iat: _iat, exp: _exp, ...claims } = jwt.decode(await entrar('panel-vence')) as Record<string, unknown>;
+      const vence = await panel(jwt.sign(claims, JWT_SECRET, { expiresIn: 3 }));
+      const fueraVence = esperarDesconexion(vence, 8_000);
+
+      const fueraRotado = esperarDesconexion(rotado);
+      assert.equal((await cuenta('panel-rotado', 'otra-clave-de-prueba')).status, 201);
+      assert.equal(await fueraRotado, 'io server disconnect');
+      assert.equal(await fueraVence, 'io server disconnect');
+
+      // Decenas de revisiones después, el que está en regla sigue dentro.
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      assert.equal(sano.connected, true);
     });
   } finally {
     for (const socket of sockets) socket.close();
