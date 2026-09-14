@@ -262,6 +262,61 @@ test('reinicio del backend en plena sesion: el cliente socket se auto-recupera',
   }, 120_000);
 });
 
+// T2.11. El pasajero pide su ruta en cada `connect` (`RealtimeService`), sin
+// que nadie se lo recuerde. Tras un reinicio sobre la misma base, esa
+// suscripción tiene que devolver sola el lote con el bus que ya estaba, sin
+// esperar a que el conductor vuelva a publicar.
+test('reinicio del backend: el pasajero se resuscribe y recibe positions:batch', async () => {
+  await withBackend('resuscribe', 3137, 8907, async () => {
+    const phone = '3000000004';
+    const busId = 'B-REINICIO';
+    const provision = await fetch(`http://127.0.0.1:${ctx.httpPort}/api/admin/drivers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
+      body: JSON.stringify({ phoneNumber: phone, name: 'Restart Driver', pin: '2468', companyId: 'EMP-01', busId, routeId: 'R-101' }),
+    });
+    assert.equal(provision.status, 201);
+    const login = await fetch(`http://127.0.0.1:${ctx.httpPort}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phoneNumber: phone, pin: '2468' }),
+    });
+    const { token } = (await login.json()) as { token: string };
+    const client = await connectDriver(token, 'chaos-restart-driver');
+
+    const socket = io(`http://127.0.0.1:${ctx.httpPort}`, { path: '/ws', transports: ['websocket'], autoConnect: false });
+    // Los dos se cierran pase lo que pase: si la prueba falla con alguno
+    // abierto, node --test se queda esperándolo y no termina nunca.
+    try {
+      const lotes: Array<{ routeId?: string; buses?: Array<{ busId?: string }> }> = [];
+      // Como la app: la suscripción sale del `connect`, también al reconectar.
+      socket.on('connect', () => socket.emit('subscribe:route', 'R-101'));
+      socket.on('positions:batch', (lote) => lotes.push(lote));
+      socket.connect();
+      await esperar(() => (lotes.length > 0 ? true : undefined), 10_000, 'el lote de la primera suscripción');
+
+      const enVivo = waitForSocketEvent(socket, 'bus:position', (p) => p?.busId === busId, 10_000);
+      client.publish(`empresa/EMP-01/bus/${busId}/posicion`, JSON.stringify({ protocolVersion: 1, sequence: 1, lat: 10.94, lon: -74.78, speedKmh: 30, capturedAt: Date.now() }));
+      await enVivo;
+      client.end(true);
+
+      const antes = lotes.length;
+      await stopProcess(backend);
+      backend = undefined;
+      await spawnBackendOnly(dbPathFor('resuscribe'));
+      const lote = await esperar(
+        () => lotes.slice(antes).find((l) => l.routeId === 'R-101'),
+        20_000,
+        'el lote después del reinicio',
+      );
+      assert.ok(lote.buses?.some((b) => b.busId === busId), 'el bus de antes del reinicio no volvió en el lote');
+    } finally {
+      socket.close();
+      if (!client.disconnecting) client.end(true);
+    }
+  }, 120_000);
+});
+
 test('tormenta de suscripciones socket + publicaciones mientras se mueve', async () => {
   await withBackend('storm', 3135, 8905, async () => {
     const phone = '3000000003';
@@ -363,7 +418,7 @@ test('fila corrupta en el outbox y volcado de métricas que falla: el proceso si
   }, 60_000, { YA_VIENE_METRICS_FLUSH_MS: '200' });
 });
 
-async function spawnBackendOnly(): Promise<void> {
+async function spawnBackendOnly(dbPath = `/tmp/yaviene-chaos-restart-${process.pid}-2.db`): Promise<void> {
   backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     env: {
       ...process.env,
@@ -376,7 +431,7 @@ async function spawnBackendOnly(): Promise<void> {
       // test: doce simuladores publicando encima de este vuelven ruido
       // cada aserción sobre la flota.
       YA_VIENE_FLOTA_DEMO: '0',
-      YA_VIENE_DB_PATH: `/tmp/yaviene-chaos-restart-${process.pid}-2.db`,
+      YA_VIENE_DB_PATH: dbPath,
       YA_VIENE_GHOST_MS: '2000',
     },
     stdio: 'ignore',
