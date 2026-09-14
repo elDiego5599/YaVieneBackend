@@ -51,7 +51,7 @@ YA_VIENE_FLOTA_DEMO=0 npm start
 | `MQTT_TLS_CERT_PATH` + `MQTT_TLS_KEY_PATH` | TLS del MQTT por TCP. Van juntas |
 | `CORS_ORIGINS` | Orígenes web autorizados, separados por coma. Sin ella no se emite CORS |
 | `YA_VIENE_DB_PATH` | Ruta del archivo SQLite |
-| `YA_VIENE_FLOTA_DEMO` | `0` apaga la flota simulada |
+| `YA_VIENE_FLOTA_DEMO` | `0` apaga la flota simulada, `1` la enciende. Sin la variable: encendida en desarrollo, apagada con `NODE_ENV=production` |
 
 Producción es `NODE_ENV=production` (lo pone el Dockerfile). El arranque
 **se detiene** con un mensaje `[Config]` si:

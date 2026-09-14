@@ -19,6 +19,7 @@
 import { ChildProcess, spawn } from 'child_process';
 import { join } from 'path';
 import { getDb } from '../data/database';
+import { flotaDemoHabilitada } from '../config';
 
 /** Un bus simulado: dónde arranca y cada cuánto publica. */
 interface BusDemo {
@@ -30,7 +31,9 @@ interface BusDemo {
   intervaloMs: string;
 }
 
-const HABILITADA = process.env.YA_VIENE_FLOTA_DEMO !== '0';
+// Misma regla que decide index.ts: apagada en producción salvo que el
+// despliegue escriba YA_VIENE_FLOTA_DEMO=1.
+const HABILITADA = flotaDemoHabilitada();
 const EMPRESA_ID = process.env.YA_VIENE_FLOTA_EMPRESA || 'EMP-01';
 
 // La ruta que se mira de cerca en la presentación publica cada 400 ms, que

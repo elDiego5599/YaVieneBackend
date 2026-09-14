@@ -7,6 +7,7 @@ import {
   HTTP_TLS_KEY_PATH,
   BUS_TIMEOUT_MS,
   CORS_ORIGINS,
+  flotaDemoHabilitada,
   validateConfig,
 } from './config';
 import { closeBroker, PositionHandlingResult, startBroker } from './mqtt/broker';
@@ -296,17 +297,18 @@ restoreMetrics();
 // Backend encendido = buses rodando. Va después de `listen` porque los
 // simuladores se autentican contra este mismo servidor por HTTP.
 //
-// Encendida por defecto: la demo es lo que se enseña, y arrancar el backend
-// sin buses moviéndose deja la app y el panel vacíos. Pero el día que esto
-// lleve tráfico de verdad, la flota simulada publica posiciones falsas en el
-// mismo canal que las reales, así que se apaga con
-// YA_VIENE_FLOTA_DEMO=0 sin tocar código ni recompilar.
-const FLOTA_DEMO = (process.env.YA_VIENE_FLOTA_DEMO ?? '1') !== '0';
-if (FLOTA_DEMO) {
-  arrancarFlotaDemo();
-} else {
-  console.log('[Demo] Flota simulada apagada por YA_VIENE_FLOTA_DEMO=0');
-}
+// Encendida por defecto en desarrollo: la demo es lo que se enseña, y
+// arrancar el backend sin buses moviéndose deja la app y el panel vacíos. En
+// producción viene apagada salvo YA_VIENE_FLOTA_DEMO=1 escrito en el
+// despliegue, porque la flota simulada publica en el mismo canal que los
+// buses reales (ver flotaDemoHabilitada en config.ts).
+const FLOTA_DEMO = flotaDemoHabilitada();
+console.log(
+  `[Demo] Flota simulada ${FLOTA_DEMO ? 'ENCENDIDA' : 'apagada'} `
+  + `(YA_VIENE_FLOTA_DEMO=${process.env.YA_VIENE_FLOTA_DEMO ?? 'sin definir'}, `
+  + `NODE_ENV=${process.env.NODE_ENV ?? 'sin definir'})`,
+);
+if (FLOTA_DEMO) arrancarFlotaDemo();
 // Los contadores viven en memoria; a disco cada 30s para que un reinicio
 // no borre la señal operativa.
 const metricsFlushTimer = setInterval(flushMetrics, 30_000);

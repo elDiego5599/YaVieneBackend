@@ -20,6 +20,13 @@ primary_region = "iad"
   # le llega el tráfico por la red privada de Fly. Sin esta línea el backend
   # se niega a arrancar en producción sin certificado propio (src/config.ts).
   HTTP_TLS_EXTERNO = "1"
+  # En producción la flota simulada viene apagada (src/config.ts,
+  # flotaDemoHabilitada). Aquí se enciende a propósito: para el pitch, Fly es
+  # un espejo de la demo de ngrok y sin buses rodando el respaldo enseñaría un
+  # mapa vacío (decisión D1 del plan de remediación). Cuando Fly pase a ser el
+  # respaldo real del piloto, esta línea se cambia a "0". El arranque deja un
+  # aviso en el log mientras esté en "1".
+  YA_VIENE_FLOTA_DEMO = "1"
 
 # El volumen es lo que hace persistente a SQLite. Se siembra sola al
 # arrancar (src/data/database.ts crea el esquema e inserta Sobusa EMP-01 con

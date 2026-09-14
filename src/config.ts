@@ -123,5 +123,23 @@ export function validateConfig(
     }
   }
 
+  if (produccion && flotaDemoHabilitada(env)) {
+    avisos.push('flota demo ENCENDIDA en producción (YA_VIENE_FLOTA_DEMO=1): los buses simulados publican en el mismo canal que los reales');
+  }
+
   return { errores, avisos };
+}
+
+/**
+ * Si arrancan los buses simulados. Antes estaban encendidos siempre que
+ * nadie escribiera YA_VIENE_FLOTA_DEMO=0, también en producción: el día que
+ * el backend lleve buses de verdad, un despliegue sin la variable mezclaba
+ * posiciones inventadas con las reales en el mismo canal. Ahora en
+ * producción vienen apagados y encenderlos es una línea escrita en el
+ * despliegue (fly.toml). En desarrollo —el backend de ngrok— siguen
+ * encendidos por defecto, que es lo que se enseña.
+ */
+export function flotaDemoHabilitada(env: NodeJS.ProcessEnv = process.env): boolean {
+  const valor = env.YA_VIENE_FLOTA_DEMO ?? (env.NODE_ENV === 'production' ? '0' : '1');
+  return valor !== '0';
 }

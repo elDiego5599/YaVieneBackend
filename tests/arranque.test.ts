@@ -6,7 +6,7 @@ import test from 'node:test';
 import Database from 'better-sqlite3';
 import { io } from 'socket.io-client';
 
-import { validateConfig } from '../src/config';
+import { flotaDemoHabilitada, validateConfig } from '../src/config';
 
 const JWT_LARGO = 'j'.repeat(64);
 const CLAVE_LARGA = 'k'.repeat(48);
@@ -55,6 +55,27 @@ test('validateConfig: JWT_SECRET de menos de 32 caracteres no arranca en producc
   assert.deepEqual(validateConfig({ ...prod, JWT_SECRET: 'j'.repeat(32) }).errores, []);
   // Fuera de producción (ngrok, tests) sigue valiendo uno corto.
   assert.deepEqual(validateConfig({ JWT_SECRET: 'corto' }).errores, []);
+});
+
+// La flota simulada publica en el mismo canal que los buses reales: en
+// producción se enciende solo si el despliegue lo escribe.
+test('flotaDemoHabilitada: apagada en producción salvo que se pida', () => {
+  assert.equal(flotaDemoHabilitada({ NODE_ENV: 'production' }), false);
+  assert.equal(flotaDemoHabilitada({ NODE_ENV: 'production', YA_VIENE_FLOTA_DEMO: '1' }), true);
+  assert.equal(flotaDemoHabilitada({}), true, 'en desarrollo (ngrok) la demo sigue por defecto');
+  assert.equal(flotaDemoHabilitada({ YA_VIENE_FLOTA_DEMO: '0' }), false);
+});
+
+test('validateConfig: flota demo encendida en producción deja aviso', () => {
+  const prod = {
+    NODE_ENV: 'production', JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA, HTTP_TLS_EXTERNO: '1',
+  };
+  const encendida = validateConfig({ ...prod, YA_VIENE_FLOTA_DEMO: '1' });
+  assert.deepEqual(encendida.errores, []);
+  assert.equal(encendida.avisos.length, 1);
+  assert.match(encendida.avisos[0], /flota demo ENCENDIDA en producción/);
+  assert.deepEqual(validateConfig(prod).avisos, []);
+  assert.deepEqual(validateConfig({ JWT_SECRET: JWT_LARGO, YA_VIENE_FLOTA_DEMO: '1' }).avisos, []);
 });
 
 test('validateConfig: TLS a medias no arranca en claro sin avisar', () => {
