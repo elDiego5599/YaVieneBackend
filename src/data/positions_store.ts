@@ -85,7 +85,9 @@ export function upsertPosition(phoneNumber: string, data: {
   const now = Date.now();
   const routeId = bus.route_id || data.routeId || driver?.routeId;
   if (!routeId) return null;
-  const heading = data.heading ?? 0;
+  // Sin rumbo va NULL y no 0: 0 es el norte, y el mapa dibujaba apuntando
+  // hacia arriba un bus del que no se sabe hacia dónde va.
+  const heading = data.heading ?? null;
   const speedKmh = data.speedKmh ?? 0;
   const sentido = normalizeSentido(data.sentido ?? null);
   const companyId = data.companyId || driver?.companyId || '';

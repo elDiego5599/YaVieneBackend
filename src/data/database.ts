@@ -75,7 +75,7 @@ function initSchema(): void {
       route_id TEXT NOT NULL,
       lat REAL NOT NULL,
       lon REAL NOT NULL,
-      heading REAL NOT NULL DEFAULT 0,
+      heading REAL,
       speed_kmh REAL NOT NULL DEFAULT 0,
       timestamp INTEGER NOT NULL,
       driver_phone TEXT NOT NULL,
@@ -611,6 +611,58 @@ function initSchema(): void {
           );
         }
         d.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_company_routes_route_id ON company_routes(route_id)');
+      },
+    },
+    {
+      version: 21,
+      apply: () => {
+        // El rumbo que falta se guarda como NULL. La columna era NOT NULL
+        // DEFAULT 0, y un rumbo que no llegaba (el equipo no lo manda, o la
+        // validación lo descarta por estar fuera de [0, 360)) quedaba en 0,
+        // que es el norte: el mapa dibujaba el bus apuntando hacia arriba.
+        // SQLite no quita un NOT NULL con ALTER TABLE, así que la tabla se
+        // rehace con las mismas filas y los mismos índices. Los ceros que ya
+        // había se quedan: no hay forma de saber cuáles eran norte de verdad.
+        const columnas = d.prepare('PRAGMA table_info(positions)').all() as {
+          name: string;
+          notnull: number;
+        }[];
+        if (columnas.find((c) => c.name === 'heading')?.notnull !== 1) return;
+        const lista = [
+          'bus_id', 'route_id', 'lat', 'lon', 'heading', 'speed_kmh', 'timestamp',
+          'driver_phone', 'session_id', 'captured_at', 'sequence', 'is_ghost', 'sentido',
+        ];
+        // Una columna que esta lista no conoce se perdería al copiar: mejor
+        // no arrancar que tirar datos sin avisar.
+        const extra = columnas.map((c) => c.name).filter((nombre) => !lista.includes(nombre));
+        if (extra.length > 0) {
+          throw new Error(`positions trae columnas que la migración 21 no conoce: ${extra.join(', ')}`);
+        }
+        const indices = d.prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'positions' AND sql IS NOT NULL",
+        ).all() as { sql: string }[];
+        d.exec(`
+          CREATE TABLE positions_nueva (
+            bus_id TEXT PRIMARY KEY,
+            route_id TEXT NOT NULL,
+            lat REAL NOT NULL,
+            lon REAL NOT NULL,
+            heading REAL,
+            speed_kmh REAL NOT NULL DEFAULT 0,
+            timestamp INTEGER NOT NULL,
+            driver_phone TEXT NOT NULL,
+            session_id TEXT,
+            captured_at INTEGER,
+            sequence INTEGER,
+            is_ghost INTEGER NOT NULL DEFAULT 0,
+            sentido TEXT,
+            FOREIGN KEY (driver_phone) REFERENCES drivers(phone_number) ON DELETE CASCADE
+          );
+          INSERT INTO positions_nueva (${lista.join(', ')}) SELECT ${lista.join(', ')} FROM positions;
+          DROP TABLE positions;
+          ALTER TABLE positions_nueva RENAME TO positions;
+        `);
+        for (const { sql } of indices) d.exec(sql);
       },
     },
   ];

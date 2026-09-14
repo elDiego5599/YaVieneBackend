@@ -5,7 +5,8 @@ export interface BusPosition {
   routeId: string;
   lat: number;
   lon: number;
-  heading: number;
+  /** Grados en [0, 360); null si el bus no lo mandó o llegó fuera de rango. */
+  heading: number | null;
   speedKmh: number;
   /** Sentido de marcha reportado por el bus: 'ida' | 'venida' | null. */
   sentido: 'ida' | 'venida' | null;
@@ -65,7 +66,7 @@ export interface PositionRow {
   route_id: string;
   lat: number;
   lon: number;
-  heading: number;
+  heading: number | null;
   speed_kmh: number;
   sentido: string | null;
   timestamp: number;

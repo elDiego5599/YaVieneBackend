@@ -16,11 +16,11 @@ process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
 
 // Los módulos se cargan con require y no con import porque abren la base al
 // evaluarse: el import se izaría por encima de la línea que fija la ruta.
-const { createBus, deleteBus, updateBus, getCompanyBuses, getBusCompanyId } =
+const { createBus, deleteBus, updateBus, getCompanyBuses, getBusCompanyId, getFleetPositions } =
   require('../src/data/fleet_admin') as typeof import('../src/data/fleet_admin');
 const { addCompanyRoute, removeCompanyRoute, getCompanyRoutes, routeExists } =
   require('../src/data/routes_store') as typeof import('../src/data/routes_store');
-const { upsertPosition } =
+const { upsertPosition, getPosition } =
   require('../src/data/positions_store') as typeof import('../src/data/positions_store');
 const { createDriverSession, getSession } =
   require('../src/data/sessions') as typeof import('../src/data/sessions');
@@ -318,6 +318,117 @@ test('la migración se niega a arrancar con ids de ruta repetidos entre empresas
     assert.match(vieja.stderr, /R-101/);
     assert.match(vieja.stderr, /EMP-01/);
     assert.match(vieja.stderr, /EMP-COPIA/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── Rumbo que falta ──────────────────────────────────────────────────
+// La validación descarta el rumbo fuera de [0, 360), y el que no llega no
+// existe. Guardarlo como 0 lo volvía el norte, y el mapa dibujaba el bus
+// apuntando hacia arriba.
+
+test('una posición sin rumbo lo guarda vacío, y el 0 sigue siendo el norte', () => {
+  const empresa = 'EMP-RUMBO';
+  const telefono = '3000000840';
+  nuevaEmpresa(empresa);
+  addCompanyRoute(empresa, 'R-840', 'Rumbos');
+  const bus = alta(empresa, 'OOO111', 'R-840');
+  conductor(telefono);
+  const guardado = () => (getDb().prepare('SELECT heading FROM positions WHERE bus_id = ?')
+    .get(bus.busId) as { heading: number | null }).heading;
+
+  assert.equal(publicar(bus.busId, 'R-840', telefono, 1)?.heading, null);
+  assert.equal(guardado(), null);
+  assert.equal(getPosition(bus.busId)?.heading, null);
+  assert.equal(getFleetPositions(empresa).find((b) => b.busId === bus.busId)?.heading, null);
+
+  const norte = upsertPosition(telefono, {
+    busId: bus.busId,
+    routeId: 'R-840',
+    lat: 10.98,
+    lon: -74.8,
+    heading: 0,
+    sessionId: `ses-${bus.busId}`,
+    sequence: 2,
+    driverValidated: true,
+  });
+  assert.equal(norte?.heading, 0);
+  assert.equal(guardado(), 0);
+});
+
+test('la migración 21 deja el rumbo opcional sin perder posiciones ni índices', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'yaviene-rumbo-'));
+  const ruta = join(dir, 'rumbo.db');
+  const modulo = join(__dirname, '..', 'src', 'data', 'database.ts');
+  const abrir = () => spawnSync(
+    process.execPath,
+    ['--import', 'tsx', '--eval', `require(${JSON.stringify(modulo)}).getDb()`],
+    { env: { ...process.env, YA_VIENE_DB_PATH: ruta }, encoding: 'utf8', timeout: 30_000 },
+  );
+  try {
+    const nueva = abrir();
+    assert.equal(nueva.status, 0, `una base nueva tiene que arrancar: ${nueva.stderr}`);
+
+    // Una base de antes: `heading` NOT NULL DEFAULT 0 y una posición dentro.
+    const d = new Database(ruta);
+    d.exec(`
+      DROP TABLE positions;
+      CREATE TABLE positions (
+        bus_id TEXT PRIMARY KEY,
+        route_id TEXT NOT NULL,
+        lat REAL NOT NULL,
+        lon REAL NOT NULL,
+        heading REAL NOT NULL DEFAULT 0,
+        speed_kmh REAL NOT NULL DEFAULT 0,
+        timestamp INTEGER NOT NULL,
+        driver_phone TEXT NOT NULL,
+        session_id TEXT,
+        captured_at INTEGER,
+        sequence INTEGER,
+        is_ghost INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (driver_phone) REFERENCES drivers(phone_number) ON DELETE CASCADE
+      );
+      ALTER TABLE positions ADD COLUMN sentido TEXT;
+      CREATE INDEX idx_positions_timestamp ON positions(timestamp);
+      CREATE INDEX idx_positions_route_id ON positions(route_id);
+      CREATE INDEX idx_positions_session_id ON positions(session_id);
+      CREATE INDEX idx_positions_sequence ON positions(bus_id, sequence);
+      DELETE FROM schema_migrations WHERE version = 21;
+    `);
+    d.prepare(`
+      INSERT INTO drivers (phone_number, driver_id, name, route_id, registered_at)
+      VALUES ('3000000850', '3000000850', 'Conductor de prueba', 'R-101', ?)
+    `).run(Date.now());
+    d.prepare(`
+      INSERT INTO positions (bus_id, route_id, lat, lon, heading, timestamp, driver_phone, sentido)
+      VALUES ('BUS-VIEJO', 'R-101', 10.98, -74.8, 45, ?, '3000000850', 'ida')
+    `).run(Date.now());
+    d.close();
+
+    const vieja = abrir();
+    assert.equal(vieja.status, 0, `la base vieja tiene que arrancar: ${vieja.stderr}`);
+
+    const despues = new Database(ruta);
+    try {
+      const columnas = despues.prepare('PRAGMA table_info(positions)').all() as
+        { name: string; notnull: number }[];
+      assert.equal(columnas.find((c) => c.name === 'heading')?.notnull, 0);
+      const filas = despues.prepare('SELECT bus_id, heading, sentido FROM positions').all() as
+        { bus_id: string; heading: number | null; sentido: string | null }[];
+      assert.deepEqual(filas.map((f) => [f.bus_id, f.heading, f.sentido]), [['BUS-VIEJO', 45, 'ida']]);
+      const indices = (despues.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'positions' AND sql IS NOT NULL ORDER BY name",
+      ).all() as { name: string }[]).map((i) => i.name);
+      assert.deepEqual(indices, [
+        'idx_positions_route_id',
+        'idx_positions_sequence',
+        'idx_positions_session_id',
+        'idx_positions_timestamp',
+      ]);
+    } finally {
+      despues.close();
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
