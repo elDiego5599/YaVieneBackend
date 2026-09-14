@@ -5,6 +5,7 @@ import * as fc from 'fast-check';
 import { haversineDistanceKm, sanityCheck, MAX_SPEED_KMH, EARTH_RADIUS_KM } from '../src/security/physics';
 import { SlidingWindowRateLimiter } from '../src/security/rate_limiter';
 import { hashPin, verifyPin } from '../src/auth/passwords';
+import { validarPayloadPosicion } from '../src/security/payload';
 
 const lat = fc.float({ min: -90, max: 90, noNaN: true, noInteger: true });
 const lon = fc.float({ min: -180, max: 180, noNaN: true, noInteger: true });
@@ -148,4 +149,132 @@ test('passwords: hash nunca valida otro PIN, incluso con PINs casi identicos', (
     }),
     { numRuns: 200, verbose: 1 },
   );
+});
+
+// ── El payload MQTT, campo por campo ─────────────────────────────────
+// Antes `heading` pasaba con el tipo que trajera (`as number`): un texto o
+// un objeto llegaba a SQLite y a la app del pasajero. Aquí cada campo recibe
+// basura de todos los tipos y lo que sale aceptado cumple el contrato.
+
+const CAMPOS = ['protocolVersion', 'sequence', 'capturedAt', 'lat', 'lon', 'speedKmh', 'heading', 'sentido'] as const;
+
+const basura = fc.oneof(
+  fc.constantFrom(undefined, null, NaN, Infinity, -Infinity, 1e308, -1e308, -1, 0, 360, -0.0001, true, '', '90', 'ida '),
+  fc.string(),
+  fc.double(),
+  fc.integer(),
+  fc.object(),
+  fc.array(fc.anything(), { maxLength: 3 }),
+);
+
+const valido = () => ({
+  protocolVersion: 1,
+  sequence: 7,
+  capturedAt: Date.now(),
+  lat: 10.97,
+  lon: -74.8,
+  speedKmh: 30,
+  heading: 90,
+  sentido: 'ida',
+});
+
+function cumpleContrato(p: Record<string, unknown>): void {
+  const permitidos = new Set(['sequence', 'capturedAt', 'lat', 'lon', 'speedKmh', 'heading', 'sentido']);
+  for (const campo of Object.keys(p)) assert.ok(permitidos.has(campo), `campo de más: ${campo}`);
+  assert.ok(Number.isSafeInteger(p.sequence) && (p.sequence as number) >= 1, `sequence ${String(p.sequence)}`);
+  assert.ok(Number.isSafeInteger(p.capturedAt) && (p.capturedAt as number) >= 1, `capturedAt ${String(p.capturedAt)}`);
+  assert.ok(Number.isFinite(p.lat) && Math.abs(p.lat as number) <= 90, `lat ${String(p.lat)}`);
+  assert.ok(Number.isFinite(p.lon) && Math.abs(p.lon as number) <= 180, `lon ${String(p.lon)}`);
+  assert.ok(
+    p.speedKmh === undefined || (Number.isFinite(p.speedKmh) && (p.speedKmh as number) >= 0),
+    `speedKmh ${String(p.speedKmh)}`,
+  );
+  assert.ok(
+    p.heading === undefined || (Number.isFinite(p.heading) && (p.heading as number) >= 0 && (p.heading as number) < 360),
+    `heading ${String(p.heading)}`,
+  );
+  assert.ok(p.sentido === undefined || p.sentido === 'ida' || p.sentido === 'venida', `sentido ${String(p.sentido)}`);
+}
+
+test('payload: un campo con basura se rechaza o se descarta, nunca pasa con otro tipo', () => {
+  fc.assert(
+    fc.property(fc.constantFrom(...CAMPOS), basura, (campo, valor) => {
+      const r = validarPayloadPosicion({ ...valido(), [campo]: valor });
+      if (!r.ok) {
+        assert.equal(typeof r.reason, 'string');
+        return true;
+      }
+      cumpleContrato(r.posicion);
+      return true;
+    }),
+    { numRuns: 2_000 },
+  );
+});
+
+test('payload: con todos los campos a la vez al azar, lo aceptado cumple el contrato', () => {
+  const campo = <T>(bueno: fc.Arbitrary<T>) => fc.oneof(bueno, basura);
+  fc.assert(
+    fc.property(
+      fc.record({
+        protocolVersion: campo(fc.constant(1)),
+        sequence: campo(fc.integer({ min: 1 })),
+        capturedAt: campo(fc.constant(Date.now())),
+        lat: campo(fc.double({ min: -90, max: 90, noNaN: true })),
+        lon: campo(fc.double({ min: -180, max: 180, noNaN: true })),
+        speedKmh: campo(fc.double({ min: 0, max: 120, noNaN: true })),
+        heading: campo(fc.double({ min: 0, max: 359.99, noNaN: true })),
+        sentido: campo(fc.constantFrom('ida', 'venida')),
+      }),
+      (payload) => {
+        const r = validarPayloadPosicion(payload);
+        if (r.ok) cumpleContrato(r.posicion);
+        return true;
+      },
+    ),
+    { numRuns: 2_000 },
+  );
+});
+
+test('payload: un rumbo inválido se descarta y la posición sigue valiendo', () => {
+  for (const heading of [-1, 360, 1e308, NaN, Infinity, '90', {}, [], null, true]) {
+    const r = validarPayloadPosicion({ ...valido(), heading });
+    assert.ok(r.ok, `rumbo ${String(heading)} no debió tumbar la posición`);
+    assert.equal(r.posicion.heading, undefined, `rumbo ${String(heading)}`);
+  }
+  fc.assert(
+    fc.property(fc.double({ min: 0, max: 359.999, noNaN: true }), (heading) => {
+      const r = validarPayloadPosicion({ ...valido(), heading });
+      assert.ok(r.ok);
+      assert.equal(r.posicion.heading, heading);
+      return true;
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test('payload: una velocidad no numérica, no finita o negativa rechaza la posición', () => {
+  for (const speedKmh of [-0.1, -1e308, NaN, Infinity, -Infinity, '30', {}, [30], true]) {
+    const r = validarPayloadPosicion({ ...valido(), speedKmh });
+    assert.equal(r.ok, false, `velocidad ${String(speedKmh)}`);
+    if (!r.ok) assert.equal(r.reason, 'INVALID_REPORTED_SPEED');
+  }
+  // Sin velocidad el equipo aún puede publicar: la física la calcula.
+  for (const speedKmh of [undefined, null]) {
+    const r = validarPayloadPosicion({ ...valido(), speedKmh });
+    assert.ok(r.ok);
+    assert.equal(r.posicion.speedKmh, undefined);
+  }
+});
+
+test('payload: sentido fuera de ida/venida se descarta; lo que no es un objeto se rechaza', () => {
+  for (const sentido of ['IDA', 'vuelta', '', 1, {}, null]) {
+    const r = validarPayloadPosicion({ ...valido(), sentido });
+    assert.ok(r.ok);
+    assert.equal(r.posicion.sentido, undefined);
+  }
+  for (const payload of [null, 42, 'texto', [valido()], true]) {
+    const r = validarPayloadPosicion(payload);
+    assert.equal(r.ok, false, `payload ${JSON.stringify(payload)}`);
+    if (!r.ok) assert.equal(r.reason, 'INVALID_PAYLOAD');
+  }
 });

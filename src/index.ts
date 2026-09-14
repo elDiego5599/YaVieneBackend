@@ -28,6 +28,7 @@ import { dispatchLifecycleEvents, LifecycleEvent } from './data/lifecycle_events
 import { flushMetrics, incrementMetric, restoreMetrics } from './observability/metrics';
 import { arrancarFlotaDemo, detenerFlotaDemo } from './demo/flota_demo';
 import { DriverTokenPayload } from './auth/tokens';
+import { validarPayloadPosicion } from './security/payload';
 import {
   setupSocketServer,
   broadcastBusPosition,
@@ -195,38 +196,21 @@ startBroker(
     return;
   }
 
-  const sequence = payload.sequence;
-  const capturedAt = payload.capturedAt;
-  if (payload.protocolVersion !== 1) {
-    return {
-      accepted: false,
-      sequence: Number.isSafeInteger(sequence) ? sequence as number : undefined,
-      reason: 'UNSUPPORTED_PROTOCOL_VERSION',
-    };
+  // Tipo y rango de cada campo, en security/payload.ts: de aquí para abajo
+  // ya no hay `as number` sobre lo que mandó el equipo.
+  const validado = validarPayloadPosicion(payload);
+  if (!validado.ok) {
+    return { accepted: false, sequence: validado.sequence, reason: validado.reason };
   }
-  if (!Number.isSafeInteger(sequence) || (sequence as number) < 1) {
-    return { accepted: false, reason: 'INVALID_SEQUENCE' };
-  }
-  if (!Number.isSafeInteger(capturedAt) || (capturedAt as number) < 1) {
-    return { accepted: false, sequence: sequence as number, reason: 'INVALID_CAPTURE_TIME' };
-  }
-
-  const positionSequence = sequence as number;
-  const captureTime = capturedAt as number;
-  const lat = payload.lat as number;
-  const lon = payload.lon as number;
-  const speedKmh = payload.speedKmh as number | undefined;
-
-  if (
-    !Number.isFinite(lat) ||
-    !Number.isFinite(lon) ||
-    lat < -90 ||
-    lat > 90 ||
-    lon < -180 ||
-    lon > 180
-  ) {
-    return { accepted: false, sequence: positionSequence, reason: 'INVALID_COORDINATES' };
-  }
+  const {
+    sequence: positionSequence,
+    capturedAt: captureTime,
+    lat,
+    lon,
+    speedKmh,
+    heading,
+    sentido,
+  } = validado.posicion;
 
   // Un bus borrado del catálogo no publica. La sesión ya se revoca al
   // borrarlo, pero entre el borrado y el barrido del broker cabe alguna
@@ -264,11 +248,9 @@ startBroker(
     routeId: auth.routeId,
     lat,
     lon,
-    heading: payload.heading as number | undefined,
-    speedKmh: speedKmh,
-    sentido: payload.sentido === 'ida' || payload.sentido === 'venida'
-      ? payload.sentido
-      : undefined,
+    heading,
+    speedKmh,
+    sentido,
     sessionId: auth.sessionId,
     capturedAt: captureTime,
     sequence: positionSequence,
