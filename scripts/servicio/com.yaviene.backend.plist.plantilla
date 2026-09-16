@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Plantilla: instalar-servicios.sh reemplaza @@SCRIPTS@@, @@REPO@@, @@LOGS@@
+  y @@PATH@@ por las rutas de este Mac y deja el resultado en
+  ~/Library/LaunchAgents. No se edita a mano el archivo instalado: se edita
+  esta plantilla y se vuelve a instalar.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.yaviene.backend</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@@SCRIPTS@@/arrancar-backend.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>@@REPO@@</string>
+
+  <!-- Arranca al iniciar sesión y vuelve a arrancar si se cae. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Si el arranque falla (dist/ sin compilar, local.env ausente), esto
+       evita el bucle cerrado: 30 s entre intentos, y el motivo queda en el
+       log de abajo. -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <!-- Interactive: sin esto macOS lo trata como trabajo de fondo y le baja
+       la prioridad de CPU y de disco, justo mientras la demo publica
+       posiciones cada 400 ms. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>StandardOutPath</key>
+  <string>@@LOGS@@/backend.log</string>
+  <key>StandardErrorPath</key>
+  <string>@@LOGS@@/backend.log</string>
+
+  <!-- launchd no hereda el PATH del terminal: sin esto `node` no aparece. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@@PATH@@</string>
+  </dict>
+</dict>
+</plist>

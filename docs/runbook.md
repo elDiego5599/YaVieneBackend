@@ -238,11 +238,66 @@ petición, con un arranque en frío de unos segundos —por eso las apps esperan
 dejarla despierta antes de empezar: con la máquina parada no hay buses
 simulados rodando y el respaldo enseñaría un mapa vacío.
 
+## Que el Mac se levante solo
+
+Hoy el backend y el túnel viven de dos terminales abiertas, y el `caffeinate`
+que impide dormir al Mac se muere con la terminal que lo lanzó. Si el Mac se
+reinicia de madrugada —una actualización, un corte de luz—, la demo amanece
+caída y nadie se entera hasta que alguien abre la app.
+
+`scripts/servicio/` trae tres servicios de launchd para eso: el backend, el
+túnel y la rotación de logs. Se instalan una vez:
+
+```bash
+bash scripts/servicio/instalar-servicios.sh
+```
+
+Eso escribe los tres `.plist` en `~/Library/LaunchAgents` con las rutas de este
+Mac resueltas, pero **no los activa**: activarlos mientras hay un backend a
+mano deja dos procesos peleando por el puerto 3000 y por el mismo dominio de
+ngrok. Se activan con el sistema en reposo, apagando antes lo que esté a mano:
+
+```bash
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.backend.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.ngrok.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.rotar-logs.plist
+```
+
+`launchctl print gui/$UID/com.yaviene.backend` dice cómo va uno y
+`launchctl bootout gui/$UID/com.yaviene.backend` lo para. Van por separado a
+propósito: se caen por motivos distintos —el backend por un error del
+programa, el túnel porque se fue el wifi— y así uno se reinicia sin arrastrar
+al otro. Los dos vuelven solos, con 30 s entre intentos.
+
+Los servicios no compilan nada: si `dist/` no existe, el backend no arranca y
+lo dice en el log. Después de cambiar código sigue siendo `npm run build` y
+`launchctl kickstart -k gui/$UID/com.yaviene.backend`.
+
+Los logs pasan a `~/Library/Logs/YaViene/` (`backend.log`, `ngrok.log`), que es
+una ruta fija que launchd puede abrir en cada arranque, y ya no a `/tmp`. Se
+rotan de madrugada cuando pasan de 10 MB, guardando cinco generaciones; la
+rotación copia y vacía el archivo en vez de renombrarlo, porque el proceso
+escribe por un descriptor ya abierto y seguiría escribiendo en el archivo
+viejo.
+
+Lo que launchd no arregla, y toca a mano antes de un pitch:
+
+- **Corriente**: el Mac enchufado. Con batería, macOS duerme el disco y la red
+  aunque el proceso siga vivo.
+- **Que no se duerma**: `sudo pmset -a sleep 0 disksleep 0` mientras dure el
+  piloto, o dejar un `caffeinate -d -i -s` corriendo. Hoy el Mac tiene `sleep 1`
+  y solo lo salva un `caffeinate` lanzado a mano.
+- **Red de respaldo**: el punto de acceso del teléfono, probado antes y no el
+  día de la demo. El dominio de ngrok no cambia al cambiar de red, así que no
+  hay que recompilar nada; el túnel se reconecta solo.
+
 ## Lo que este runbook todavía no puede prometer
 
 - Copias automáticas y restauración cronometrada (T2.8).
 - Vigilancia externa que avise al teléfono del dueño cuando `/api/health` deje
   de responder (T10.2): hoy, si nadie mira, nadie se entera.
-- Arranque automático del backend y del túnel al encender el Mac, y que el Mac
-  no se duerma (T10.3).
+- Los servicios de launchd están escritos y probados en seco, pero todavía no
+  cargados en este Mac (T10.3): hacerlo reinicia backend y túnel, así que
+  espera a un rato sin demo. Los ajustes de energía y la prueba del punto de
+  acceso siguen siendo manuales.
 - Alta y revocación de dispositivos GPS (T4.3).

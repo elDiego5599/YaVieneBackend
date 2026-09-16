@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Plantilla: la instala instalar-servicios.sh reemplazando @@SCRIPTS@@ y
+  @@LOGS@@. Rota los logs de los otros dos servicios.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.yaviene.rotar-logs</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@@SCRIPTS@@/rotar-logs.sh</string>
+    <string>@@LOGS@@</string>
+  </array>
+
+  <!-- Una vez al día, de madrugada. Si el Mac está apagado a esa hora,
+       launchd lo corre en cuanto vuelve. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <!-- No al cargar: rotar nada más iniciar sesión no aporta y estrenaría
+       archivo justo cuando el log recién abierto está vacío. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>@@LOGS@@/rotacion.log</string>
+  <key>StandardErrorPath</key>
+  <string>@@LOGS@@/rotacion.log</string>
+</dict>
+</plist>

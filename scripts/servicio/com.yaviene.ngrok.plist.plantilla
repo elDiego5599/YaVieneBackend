@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Plantilla: la instala instalar-servicios.sh reemplazando @@SCRIPTS@@,
+  @@LOGS@@ y @@PATH@@.
+
+  El túnel va en su propio servicio, no dentro del backend: se caen por
+  motivos distintos (el backend por un error del programa, el túnel porque se
+  fue el wifi) y así uno puede reiniciarse sin arrastrar al otro.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.yaviene.ngrok</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@@SCRIPTS@@/arrancar-ngrok.sh</string>
+    <string>yaviene</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Sin red, ngrok sale enseguida. 30 s entre intentos evita el bucle
+       cerrado mientras vuelve el wifi (o mientras se enchufa el teléfono
+       como punto de acceso). -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>StandardOutPath</key>
+  <string>@@LOGS@@/ngrok.log</string>
+  <key>StandardErrorPath</key>
+  <string>@@LOGS@@/ngrok.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@@PATH@@</string>
+  </dict>
+</dict>
+</plist>
