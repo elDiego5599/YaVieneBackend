@@ -93,6 +93,9 @@ Qué hacer:
    desplegado** por decisión del dueño (se despliega el día anterior a
    presentar). Sin Fly y sin túnel, la demo solo funciona contra el Mac en la
    misma red.
+4. Y si lo que falta es la red del sitio entero —ni túnel, ni respaldo, ni
+   datos—, no hay nada que reiniciar: se enseña la grabación y se dice lo que
+   está escrito en [`contingencia-pitch.md`](contingencia-pitch.md).
 
 ## Si se cae el backend
 
