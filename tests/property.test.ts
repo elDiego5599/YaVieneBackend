@@ -116,25 +116,48 @@ test('physics: avance realista (~30 km/h) siempre es aceptado', () => {
   );
 });
 
-test('rate limiter: el presupuesto exacto pasa, el primero extra se bloquea y la ventana se resetea', async () => {
+// El reloj va puesto a mano (`allow(key, now)`) y no es un detalle de estilo.
+// Con `Date.now()`, esta prueba armaba ventanas de hasta 30 ms y daba por
+// hecho que sus cuatro llamadas cabían dentro; con la suite entera en marcha
+// —ocho archivos a la vez— el proceso se distrae entre llamada y llamada, la
+// primera marca vence y el cuarto intento pasa. Falló así una vez y a la
+// siguiente corrida salió verde, que es la peor clase de prueba: la que a
+// veces miente. El limitador no tenía nada que ver (en producción las
+// ventanas son de 60 s). Con el reloj a mano se mide el limitador y no al
+// planificador del sistema operativo, y de paso se puede comprobar el borde
+// exacto de la ventana, que con esperas de verdad no se podía.
+test('rate limiter: el presupuesto exacto pasa, el primero extra se bloquea y la ventana se resetea', () => {
   fc.assert(
     fc.property(fc.nat({ max: 30 }), fc.nat({ max: 50 }), (windowMs, leadMs) => {
-      const limiter = new SlidingWindowRateLimiter(3, Math.max(windowMs, 5));
-      assert.equal(limiter.allow('k'), true);
-      assert.equal(limiter.allow('k'), true);
-      assert.equal(limiter.allow('k'), true);
-      assert.equal(limiter.allow('k'), false, 'el 4o en la misma ventana debe bloquearse');
-      assert.equal(limiter.allow('otra-clave'), true, 'claves independientes no se afectan');
+      const ventana = Math.max(windowMs, 5);
+      const limiter = new SlidingWindowRateLimiter(3, ventana);
+      // `leadMs` corre el origen del reloj: al limitador le da igual en qué
+      // instante absoluto empiece la ventana, y así queda comprobado.
+      const t0 = 1_000_000 + leadMs;
+      assert.equal(limiter.allow('k', t0), true);
+      assert.equal(limiter.allow('k', t0), true);
+      assert.equal(limiter.allow('k', t0), true);
+      assert.equal(limiter.allow('k', t0), false, 'el 4o en la misma ventana debe bloquearse');
+      assert.equal(limiter.allow('otra-clave', t0), true, 'claves independientes no se afectan');
+      assert.equal(
+        limiter.allow('k', t0 + ventana - 1),
+        false,
+        'un milisegundo antes de vencer la ventana sigue bloqueado',
+      );
+      assert.equal(
+        limiter.allow('k', t0 + ventana),
+        true,
+        'al vencer la ventana el presupuesto se renueva',
+      );
       return true;
     }),
     { numRuns: 50 },
   );
   const limiter = new SlidingWindowRateLimiter(2, 30);
-  assert.equal(limiter.allow('k'), true);
-  assert.equal(limiter.allow('k'), true);
-  assert.equal(limiter.allow('k'), false);
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  assert.equal(limiter.allow('k'), true, 'tras vencer la ventana el presupuesto se renueva');
+  assert.equal(limiter.allow('k', 5_000), true);
+  assert.equal(limiter.allow('k', 5_000), true);
+  assert.equal(limiter.allow('k', 5_000), false);
+  assert.equal(limiter.allow('k', 5_040), true, 'tras vencer la ventana el presupuesto se renueva');
 });
 
 test('passwords: hash nunca valida otro PIN, incluso con PINs casi identicos', () => {
