@@ -31,12 +31,12 @@ import { DriverTokenPayload } from './auth/tokens';
 import { validarPayloadPosicion } from './security/payload';
 import {
   setupSocketServer,
+  closeSocketServer,
   broadcastBusPosition,
   broadcastBusLeft,
   broadcastBusRemoved,
   broadcastBusHidden,
   broadcastBusVisible,
-  getIO,
 } from './socket/handler';
 
 // ── Guardia de arranque ──────────────────────────────────────────────
@@ -375,7 +375,7 @@ const shutdown = async (signal: string): Promise<void> => {
     clearInterval(sessionCleanupTimer);
     clearInterval(lifecycleDispatchTimer);
     clearInterval(metricsFlushTimer);
-    getIO()?.close();
+    closeSocketServer();
     await closeBroker();
     await new Promise<void>((resolve) => {
       if (!server.listening) {

@@ -28,6 +28,9 @@ const MAX_EVENTOS_POR_VENTANA = 30;
 // ── Guard anti-Slowloris: clientes que no consumen el socket se acumulan
 //    en el búfer de ws (bufferedAmount). Superado el umbral → terminate. ──
 function startSlowConsumerGuard(): void {
+  // Montar el socket dos veces dejaba el reloj anterior corriendo y sin nadie
+  // que guardara su handle: no había forma de pararlo.
+  if (slowConsumerTimer) clearInterval(slowConsumerTimer);
   slowConsumerTimer = setInterval(() => {
     if (!io) return;
     for (const socket of io.sockets.sockets.values()) {
@@ -91,6 +94,7 @@ let revisionPanelTimer: NodeJS.Timeout | null = null;
 type AdminEnSocket = AdminTokenPayload & { exp?: number };
 
 function startRevisionPaneles(): void {
+  if (revisionPanelTimer) clearInterval(revisionPanelTimer);
   revisionPanelTimer = setInterval(() => {
     if (!io) return;
     const ahora = Date.now();
@@ -377,4 +381,33 @@ export function broadcastBusVisible(
 
 export function getIO(): Server | null {
   return io;
+}
+
+/*
+  Cierre ordenado del módulo. El apagado hacía `getIO()?.close()`, que cierra
+  el servidor pero deja vivos los relojes de aquí: los dos de vigilancia
+  —llevan `unref`, así que no asoman como handles del proceso y por eso no se
+  notaban, aunque siguen despertándolo— y el del lote de cada ruta, que ni
+  siquiera lo lleva y despertaba 100 ms después contra un socket ya cerrado.
+  Se limpian todos y el módulo queda como antes de montarlo.
+*/
+export function closeSocketServer(): void {
+  if (slowConsumerTimer) {
+    clearInterval(slowConsumerTimer);
+    slowConsumerTimer = null;
+  }
+  if (revisionPanelTimer) {
+    clearInterval(revisionPanelTimer);
+    revisionPanelTimer = null;
+  }
+  for (const reloj of flushTimers.values()) clearTimeout(reloj);
+  flushTimers.clear();
+  pendingPositions.clear();
+  io?.close();
+  io = null;
+}
+
+/** Relojes vivos del módulo. Uso en pruebas: apagar tiene que dejarlo en cero. */
+export function activeTimerCount(): number {
+  return (slowConsumerTimer ? 1 : 0) + (revisionPanelTimer ? 1 : 0) + flushTimers.size;
 }
