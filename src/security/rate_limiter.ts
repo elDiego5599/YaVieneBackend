@@ -91,6 +91,19 @@ export const fleetWriteRateLimiter = new SlidingWindowRateLimiter(60, 60_000);
 // su propia key con una cabecera falsa.
 const TRUSTED_PROXY_ADDRESSES = new Set(['127.0.0.1', '::1']);
 
+// El servidor escucha en '::', así que una conexión IPv4 llega como IPv4
+// mapeada en IPv6: '::ffff:127.0.0.1' es el mismo 127.0.0.1 de siempre. Sin
+// quitar el prefijo, el túnel en loopback no se reconoce como de confianza
+// —se ignora X-Forwarded-For— y todos los que entran por él comparten una
+// sola clave. Solo se quita cuando lo que sigue tiene forma de IPv4: en una
+// IPv6 legítima el mismo prefijo puede ir seguido de hexadecimal.
+const IPV4_MAPEADA = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
+
+function normalizarIp(direccion: string): string {
+  const mapeada = IPV4_MAPEADA.exec(direccion);
+  return mapeada ? mapeada[1] : direccion;
+}
+
 export function requestKey(req: IncomingMessage, suffix = ''): string {
   // En Fly (el respaldo) no hay túnel en loopback: todo llega desde el
   // proxy de Fly por su red privada, así que la IP del socket era la del
@@ -104,10 +117,11 @@ export function requestKey(req: IncomingMessage, suffix = ''): string {
     const ip = flyClientIp.trim();
     return suffix ? `${ip}:${suffix}` : ip;
   }
-  const trustedProxy = TRUSTED_PROXY_ADDRESSES.has(req.socket.remoteAddress ?? '');
+  const remota = normalizarIp(req.socket.remoteAddress ?? '');
+  const trustedProxy = TRUSTED_PROXY_ADDRESSES.has(remota);
   const forwarded = trustedProxy ? req.headers['x-forwarded-for'] : undefined;
   const ip = typeof forwarded === 'string'
     ? forwarded.split(',').pop()!.trim() // último hop = el que agregó el proxy
-    : req.socket.remoteAddress ?? 'unknown';
+    : remota || 'unknown';
   return suffix ? `${ip}:${suffix}` : ip;
 }

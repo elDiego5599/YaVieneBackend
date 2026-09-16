@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { IncomingMessage } from 'node:http';
+import { createServer, IncomingMessage, request } from 'node:http';
 import test from 'node:test';
 
 process.env.JWT_SECRET = 'test-jwt-secret';
@@ -52,6 +52,61 @@ test('requestKey: en Fly cuenta por Fly-Client-IP, y fuera de Fly la cabecera no
     if (previo === undefined) delete process.env.FLY_APP_NAME;
     else process.env.FLY_APP_NAME = previo;
   }
+});
+
+// El servidor escucha en '::', así que una conexión IPv4 desde loopback no
+// llega como '127.0.0.1' sino como '::ffff:127.0.0.1' (IPv4 mapeada). Si la
+// comparación mira la cadena tal cual, el túnel deja de ser de confianza
+// —se ignora X-Forwarded-For— y todos los que entren por él comparten una
+// sola clave: 120 lecturas por minuto entre todas las apps.
+test('requestKey: loopback IPv4 mapeado es el mismo túnel de confianza', () => {
+  assert.equal(
+    requestKey(peticionFalsa('::ffff:127.0.0.1', { 'x-forwarded-for': '9.9.9.9, 1.2.3.4' }), 'read'),
+    '1.2.3.4:read',
+  );
+  // Y sin cabecera, la clave va sin el prefijo: si no, el mismo cliente
+  // ocupa dos cupos distintos según por dónde entre.
+  assert.equal(requestKey(peticionFalsa('::ffff:203.0.113.5')), '203.0.113.5');
+});
+
+// La de arriba usa una petición construida a mano; esta comprueba contra un
+// socket de verdad que el sistema produce esa forma, que es justo lo que la
+// anterior da por supuesto. Vale para cualquiera de las dos formas: lo que
+// se exige es que una conexión real por loopback sea de confianza.
+test('requestKey: socket real por loopback IPv4 contra listen(::)', async () => {
+  const visto: { direccion?: string; clave?: string } = {};
+  const server = createServer((req, res) => {
+    visto.direccion = req.socket.remoteAddress ?? undefined;
+    visto.clave = requestKey(req, 'read');
+    res.end('ok');
+  });
+  await new Promise<void>((listo) => server.listen(0, '::', listo));
+  const { port } = server.address() as { port: number };
+  try {
+    await new Promise<void>((listo, falla) => {
+      const req = request(
+        {
+          host: '127.0.0.1',
+          port,
+          family: 4,
+          headers: { 'x-forwarded-for': '9.9.9.9, 1.2.3.4' },
+        },
+        (res) => {
+          res.resume();
+          res.on('end', listo);
+        },
+      );
+      req.on('error', falla);
+      req.end();
+    });
+  } finally {
+    await new Promise<void>((listo) => server.close(() => listo()));
+  }
+  assert.equal(
+    visto.clave,
+    '1.2.3.4:read',
+    `el socket llegó como ${visto.direccion}, así que el túnel no contó como de confianza`,
+  );
 });
 
 test('PIN hashing never validates the wrong PIN', () => {
