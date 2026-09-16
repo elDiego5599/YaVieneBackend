@@ -8,8 +8,19 @@ on:
   pull_request:
     branches: [main]
 
-# Las acciones van en versiones que corren en Node 24: GitHub quita Node 20
-# de sus runners el 16 de septiembre de 2026 y las @v4 dejan de arrancar.
+# El token de la corrida se le presta a código de terceros, así que va con lo
+# mínimo: ningún job de aquí escribe en el repositorio. Sin este bloque iba
+# con los permisos por omisión, que incluyen escritura.
+permissions:
+  contents: read
+
+# Cada acción va clavada al commit y no a la etiqueta: una etiqueta se mueve
+# sin avisar y con ella cambia el código de terceros que corre con ese token.
+# La versión legible queda al lado; para subir una se resuelve la etiqueta con
+# `gh api repos/DUEÑO/ACCION/commits/ETIQUETA --jq .sha` y se cambian el SHA y
+# el comentario en el mismo commit. Las elegidas corren en Node 24: GitHub
+# quita Node 20 de sus runners el 16 de septiembre de 2026 y las @v4 dejan de
+# arrancar.
 jobs:
   # Barrido de secretos (T3.12). gitleaks-action revisa los commits del push
   # o del PR, no el árbol: no tiene modo sin git. Necesita el historial
@@ -17,10 +28,10 @@ jobs:
   secretos:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v3
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_VERSION: 8.30.1
@@ -28,8 +39,8 @@ jobs:
   node:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: npm
