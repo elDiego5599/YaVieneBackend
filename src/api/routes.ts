@@ -797,7 +797,12 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
     };
 
     if (req.method === 'POST' || req.method === 'PATCH' || req.method === 'PUT') {
-      let body = '';
+      // Los trozos se guardan tal cual y se decodifican de una vez al
+      // final. Decodificar trozo a trozo partía por la mitad cualquier
+      // letra de dos bytes que cayera en el borde —una eñe, una tilde— y
+      // la dejaba en dos rombos: «Muñoz» entraba a la base como «Mu??oz»,
+      // sin vuelta atrás. El corte lo decide la red, no el cliente.
+      const trozos: Buffer[] = [];
       let bodyBytes = 0;
       let tooLarge = false;
       req.on('data', (chunk: Buffer) => {
@@ -813,14 +818,15 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
             writeError(res, 413, 'REQUEST_TOO_LARGE', 'Request body is too large');
           }
           res.once('finish', () => req.destroy());
-          body = '';
+          trozos.length = 0;
           return;
         }
-        body += chunk.toString();
+        trozos.push(chunk);
       });
       req.on('end', () => {
         if (tooLarge) return;
 
+        const body = Buffer.concat(trozos).toString('utf8');
         let parsedBody: Record<string, unknown>;
         try {
           parsedBody = body ? JSON.parse(body) as Record<string, unknown> : {};
