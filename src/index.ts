@@ -11,7 +11,7 @@ import {
   validateConfig,
 } from './config';
 import { closeBroker, PositionHandlingResult, startBroker } from './mqtt/broker';
-import { handleAPI } from './api/routes';
+import { handleAPI, metodosHttpRegistrados } from './api/routes';
 import {
   getPositionValidationState,
   busInCatalog,
@@ -72,7 +72,12 @@ const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => 
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  // Los métodos salen de las rutas registradas, no de una lista escrita a
+  // mano: la de antes decía `GET, POST` y dejaba fuera el PATCH y el
+  // DELETE de la flota, así que un panel servido desde otro origen no
+  // pasaba del preflight al apagar o borrar un bus.
+  const metodos = [...metodosHttpRegistrados(), 'OPTIONS'].join(', ');
+  res.setHeader('Access-Control-Allow-Methods', metodos);
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
 
   if (req.method === 'OPTIONS') {

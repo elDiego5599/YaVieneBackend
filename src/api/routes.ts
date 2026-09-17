@@ -757,6 +757,21 @@ addRoute('DELETE', '/api/fleet/buses/:busId', (req, res, params) => {
   writeJson(res, 200, { status: 'deleted', ...result });
 });
 
+/**
+ * Los métodos que la API atiende de verdad, en el orden en que se
+ * registran. La cabecera `Access-Control-Allow-Methods` sale de aquí y no
+ * de una lista escrita a mano: esa lista decía `GET, POST` mucho después
+ * de que la flota estrenara sus rutas PATCH y DELETE, y una cabecera corta
+ * no rompe nada hasta que el panel se sirve desde otro origen y el
+ * navegador se niega a mandar la petición. Añadir una ruta con un método
+ * nuevo la anuncia sola.
+ */
+export function metodosHttpRegistrados(): string[] {
+  const vistos: string[] = [];
+  for (const h of handlers) if (!vistos.includes(h.method)) vistos.push(h.method);
+  return vistos;
+}
+
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
   const url = req.url?.split('?')[0] || '';
 
