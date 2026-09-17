@@ -180,6 +180,16 @@ addRoute('GET', '/api/companies/:id/buses', (req, res, params) => {
 
 addRoute('GET', '/api/routes/:routeId/positions', (req, res, params) => {
   if (!guardPublicRead(req, res)) return;
+  // La misma revisión que hace el socket antes de abrir sala: si la ruta no
+  // tiene forma de ruta, la consulta no llega a la base. Lo que se evita no
+  // es la consulta —saldría vacía— sino la respuesta: el `routeId` se
+  // devuelve escrito en el cuerpo, y sin esto cualquiera elige qué contesta
+  // el servidor. Además el pasajero recibe un 400 y sabe que preguntó mal,
+  // en vez de un 200 con la lista vacía que parece "no hay buses".
+  if (!isRouteId(params.routeId)) {
+    writeError(res, 400, 'INVALID_ROUTE', 'routeId debe tener forma de ruta (ej. R-101)');
+    return;
+  }
   const positions = getPositionsByRoute(params.routeId).map(toPublicPosition);
   writeJson(res, 200, { routeId: params.routeId, buses: positions });
 });
