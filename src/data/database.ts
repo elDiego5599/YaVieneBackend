@@ -683,6 +683,45 @@ function initSchema(): void {
         for (const { sql } of indices) d.exec(sql);
       },
     },
+    {
+      version: 22,
+      apply: () => {
+        // Índices para las consultas que corren todo el tiempo y recorrían la
+        // tabla entera. Con la flota demo no se nota; con una flota real cada
+        // recorrido crece con ella, y varias de estas corren por cada
+        // suscripción o cada vuelta de un barrido:
+        //
+        // - `buses(company_id, route_id)`: el panel pide su flota, sus rutas y
+        //   el borrado de una ruta por empresa (y por ruta dentro de ella).
+        //   Sin índice cada pedido del panel leía los buses de todas las
+        //   empresas para quedarse con los suyos.
+        // - `buses(route_id)`: `routeExists` corre en cada `subscribe:route`
+        //   del pasajero; la parte de buses era la única de las tres que no
+        //   tenía índice por ruta.
+        // - `lifecycle_events(dead_at)` y `driver_sessions(revoked_at)`: las
+        //   purgas periódicas. Son parciales porque solo miran las filas
+        //   muertas o revocadas, que son pocas; las vivas no pagan el índice
+        //   al escribirse.
+        // - `turn_assignments(bus_id)`: borrar un bus borra sus turnos, todos
+        //   y no solo el activo, y el índice parcial de los activos no sirve
+        //   para eso.
+        //
+        // La prueba de `fleet_store.test.ts` pasa estas consultas por EXPLAIN
+        // QUERY PLAN: si una vuelve a recorrer la tabla, falla.
+        d.exec(`
+          CREATE INDEX IF NOT EXISTS idx_buses_company_route
+            ON buses(company_id, route_id);
+          CREATE INDEX IF NOT EXISTS idx_buses_route
+            ON buses(route_id);
+          CREATE INDEX IF NOT EXISTS idx_lifecycle_dead
+            ON lifecycle_events(dead_at) WHERE dead_at IS NOT NULL;
+          CREATE INDEX IF NOT EXISTS idx_sessions_revoked
+            ON driver_sessions(revoked_at) WHERE status = 'revoked';
+          CREATE INDEX IF NOT EXISTS idx_assignments_bus
+            ON turn_assignments(bus_id);
+        `);
+      },
+    },
   ];
 
   for (const migration of migrations) {

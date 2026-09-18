@@ -479,3 +479,77 @@ test('«ocultar todos» no deja media flota oculta si falla por el camino', () =
   assert.equal(setAllBusVisibility(empresa, false), 3);
   assert.deepEqual(getCompanyBuses(empresa).map((bus) => bus.visible), [false, false, false]);
 });
+
+// Las consultas que corren a cada rato —cada posición, cada suscripción del
+// pasajero, cada barrido, cada vuelta del despachador— tienen que buscar por
+// índice, no recorrer la tabla. Con la flota demo no se nota; con una flota
+// real, un `SCAN` en `routeExists` (que corre en cada `subscribe:route`) o
+// en las purgas es un recorrido entero por cada llamada. El SQL va copiado
+// de su función, que se nombra al lado: si una cambia, esta lista también.
+test('las consultas calientes buscan por índice, sin recorrer tablas', () => {
+  const calientes: Record<string, [string, unknown[]]> = {
+    // routes_store.ts · routeExists
+    routeExists: [`
+      SELECT 1 FROM company_routes WHERE route_id = ?
+      UNION ALL SELECT 1 FROM buses WHERE route_id = ?
+      UNION ALL SELECT 1 FROM positions WHERE route_id = ?
+      LIMIT 1`, ['R-1', 'R-1', 'R-1']],
+    // positions_store.ts · getPositionsByRoute
+    getPositionsByRoute: [`
+      SELECT p.*, b.company_id AS bus_company_id
+      FROM positions p
+      JOIN buses b ON b.bus_id = p.bus_id
+      WHERE p.route_id = ? AND (b.visible = 1 OR b.visible IS NULL)`, ['R-1']],
+    // fleet_admin.ts · getFleetPositions
+    getFleetPositions: [`
+      SELECT b.bus_id FROM buses b
+      LEFT JOIN positions p ON p.bus_id = b.bus_id
+      LEFT JOIN drivers d ON d.phone_number = p.driver_phone
+      WHERE b.company_id = ?
+      ORDER BY b.bus_id ASC`, ['EMP-1']],
+    // fleet_admin.ts · borrado y «ocultar todos» por empresa
+    busesDeEmpresa: ['SELECT bus_id FROM buses WHERE company_id = ?', ['EMP-1']],
+    // routes_store.ts · removeCompanyRoute
+    busesDeRuta: ['SELECT bus_id FROM buses WHERE company_id = ? AND route_id = ?', ['EMP-1', 'R-1']],
+    // positions_store.ts · sweepPositions
+    sweepPositions: ['UPDATE positions SET is_ghost = 1 WHERE is_ghost = 0 AND timestamp < ?', [0]],
+    // lifecycle_events.ts · el claim del despachador
+    claim: [`
+      SELECT id FROM lifecycle_events
+      WHERE delivered_at IS NULL AND dead_at IS NULL
+        AND (claimed_at IS NULL OR claimed_at < ?)
+      ORDER BY id ASC LIMIT ?`, [0, 10]],
+    // lifecycle_events.ts · las dos purgas
+    purgaEntregados: ['DELETE FROM lifecycle_events WHERE delivered_at IS NOT NULL AND delivered_at < ?', [0]],
+    purgaMuertos: ['DELETE FROM lifecycle_events WHERE dead_at IS NOT NULL AND dead_at < ?', [0]],
+    // sessions.ts · getSession y cleanupRevokedSessions
+    getSession: ['SELECT * FROM driver_sessions WHERE session_id = ?', ['s']],
+    limpiezaSesiones: [`
+      DELETE FROM driver_sessions
+      WHERE status = 'revoked' AND revoked_at IS NOT NULL AND revoked_at < ?`, [0]],
+    // fleet_admin.ts · deleteBus
+    turnosDelBus: ['DELETE FROM turn_assignments WHERE bus_id = ?', ['B-1']],
+    // drivers_store.ts · registerDriver y endAssignment
+    cierraTurnos: [`
+      UPDATE turn_assignments SET status = 'ended', ended_at = ?
+      WHERE status = 'active' AND (driver_id = ? OR bus_id = ?)`, [0, 'D-1', 'B-1']],
+    endAssignment: [`
+      UPDATE turn_assignments SET status = 'ended', ended_at = ?
+      WHERE driver_id = ? AND bus_id = ? AND status = 'active'`, [0, 'D-1', 'B-1']],
+  };
+  const db = getDb();
+  for (const [nombre, [sql, args]] of Object.entries(calientes)) {
+    const pasos = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args) as { detail: string }[])
+      .map((p) => p.detail)
+      .filter((d) => /^(SCAN|SEARCH) /.test(d));
+    assert.ok(pasos.length > 0, `${nombre}: el plan no toca ninguna tabla`);
+    for (const paso of pasos) {
+      // Recorrer un índice parcial de turnos activos es recorrer solo los
+      // turnos abiertos, uno por bus en servicio como mucho: no crece con el
+      // historial. Es lo que hace SQLite con el `driver_id = ? OR bus_id = ?`
+      // de `cierraTurnos`, y está bien.
+      if (/^SCAN turn_assignments USING INDEX idx_active_assignment_/.test(paso)) continue;
+      assert.match(paso, /^SEARCH .* USING (COVERING )?INDEX /, `${nombre}: «${paso}»`);
+    }
+  }
+});
