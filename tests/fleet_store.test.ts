@@ -16,8 +16,10 @@ process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
 
 // Los módulos se cargan con require y no con import porque abren la base al
 // evaluarse: el import se izaría por encima de la línea que fija la ruta.
-const { createBus, deleteBus, updateBus, getCompanyBuses, getBusCompanyId, getFleetPositions } =
-  require('../src/data/fleet_admin') as typeof import('../src/data/fleet_admin');
+const {
+  createBus, deleteBus, updateBus, getCompanyBuses, getBusCompanyId, getFleetPositions,
+  setAllBusVisibility,
+} = require('../src/data/fleet_admin') as typeof import('../src/data/fleet_admin');
 const { addCompanyRoute, removeCompanyRoute, getCompanyRoutes, routeExists } =
   require('../src/data/routes_store') as typeof import('../src/data/routes_store');
 const { upsertPosition, getPosition } =
@@ -432,4 +434,48 @@ test('la migración 21 deja el rumbo opcional sin perder posiciones ni índices'
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('«ocultar todos» no deja media flota oculta si falla por el camino', () => {
+  // El panel tiene un botón que oculta la flota entera. Lo hacía bus por bus,
+  // cada uno en su transacción: si el tercero fallaba —un disco lleno, un
+  // bloqueo, un disparador— los dos primeros ya estaban ocultos y nadie los
+  // devolvía. El dueño de la flota veía la mitad de sus buses desaparecer y
+  // el botón contestando error, sin saber qué quedó de qué lado.
+  const empresa = 'EMP-TODOS';
+  nuevaEmpresa(empresa);
+  addCompanyRoute(empresa, 'R-901', 'Ruta de prueba');
+  const buses = ['PPP111', 'QQQ222', 'RRR333'].map((placa) => alta(empresa, placa, 'R-901'));
+  const db = getDb();
+
+  // Un bus recién dado de alta nace oculto, así que primero se muestran los
+  // tres: lo que se prueba es el camino de vuelta.
+  assert.equal(setAllBusVisibility(empresa, true), 3);
+  assert.deepEqual(getCompanyBuses(empresa).map((bus) => bus.visible), [true, true, true]);
+
+  // El fallo del medio, provocado: el tercer bus se niega a actualizarse.
+  // Da igual el motivo; lo que se prueba es qué pasa con los otros dos.
+  db.exec(`
+    CREATE TRIGGER bus_terco BEFORE UPDATE ON buses WHEN NEW.bus_id = '${buses[2].busId}'
+    BEGIN SELECT RAISE(ABORT, 'bus terco'); END;
+  `);
+
+  const antes = (db.prepare('SELECT count(*) AS n FROM lifecycle_events').get() as { n: number }).n;
+  assert.throws(() => setAllBusVisibility(empresa, false), /terco/);
+
+  // Ni un bus oculto ni un evento en la cola: o se ocultan los tres o ninguno.
+  assert.deepEqual(
+    getCompanyBuses(empresa).map((bus) => bus.visible),
+    [true, true, true],
+    'quedaron buses ocultos después de un fallo a la mitad',
+  );
+  assert.equal(
+    (db.prepare('SELECT count(*) AS n FROM lifecycle_events').get() as { n: number }).n,
+    antes,
+    'quedaron eventos de un cambio que no ocurrió',
+  );
+
+  db.exec('DROP TRIGGER bus_terco');
+  assert.equal(setAllBusVisibility(empresa, false), 3);
+  assert.deepEqual(getCompanyBuses(empresa).map((bus) => bus.visible), [false, false, false]);
 });

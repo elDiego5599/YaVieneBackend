@@ -386,6 +386,30 @@ export function getCompanyBuses(companyId: string): {
   }));
 }
 
+/**
+ * El cambio de un bus, sin transacción propia y sin tocar las cachés: quien
+ * llame decide dónde empieza y dónde acaba la transacción, y actualiza las
+ * cachés sólo cuando esa transacción ya cerró. Si se escribieran aquí, un
+ * fallo posterior dejaría la caché diciendo lo contrario que la base.
+ */
+function aplicarVisibilidad(
+  db: ReturnType<typeof getDb>,
+  busId: string,
+  visible: boolean,
+): string {
+  db.prepare('UPDATE buses SET visible = ?, updated_at = ? WHERE bus_id = ?')
+    .run(visible ? 1 : 0, Date.now(), busId);
+
+  const position = getPosition(busId);
+  const routeId = position?.routeId ?? '';
+  queueLifecycleEvent(db, visible ? 'bus:visible' : 'bus:hidden', routeId, {
+    busId,
+    routeId,
+    ...(visible && position ? { position: { ...position, visible } } : {}),
+  });
+  return routeId;
+}
+
 export function setBusVisibility(
   busId: string,
   visible: boolean,
@@ -394,31 +418,33 @@ export function setBusVisibility(
   if (!companyId) return null;
 
   const db = getDb();
-  const update = db.transaction(() => {
-    db.prepare('UPDATE buses SET visible = ?, updated_at = ? WHERE bus_id = ?')
-      .run(visible ? 1 : 0, Date.now(), busId);
-
-    const position = getPosition(busId);
-    const routeId = position?.routeId ?? '';
-    queueLifecycleEvent(db, visible ? 'bus:visible' : 'bus:hidden', routeId, {
-      busId,
-      routeId,
-      ...(visible && position ? { position: { ...position, visible } } : {}),
-    });
-  });
-  update();
+  let routeId = '';
+  db.transaction(() => {
+    routeId = aplicarVisibilidad(db, busId, visible);
+  })();
 
   visibilityCache.set(busId, visible);
   busCompanyCache.set(busId, companyId);
-  return { busId, routeId: getPosition(busId)?.routeId ?? '', visible };
+  return { busId, routeId, visible };
 }
 
 export function setAllBusVisibility(companyId: string, visible: boolean): number {
   const db = getDb();
   const buses = db.prepare('SELECT bus_id FROM buses WHERE company_id = ?')
     .all(companyId) as { bus_id: string }[];
+
+  // Una sola transacción para toda la flota: antes era una por bus, y si
+  // fallaba el tercero los dos primeros quedaban ocultos con el botón
+  // contestando error. O se ocultan todos o no se oculta ninguno.
+  db.transaction(() => {
+    for (const bus of buses) aplicarVisibilidad(db, bus.bus_id, visible);
+  })();
+
+  // Las cachés, después del commit y no dentro: si la transacción se hubiera
+  // deshecho, esto no llega a correr y la caché sigue contando lo que hay.
   for (const bus of buses) {
-    setBusVisibility(bus.bus_id, visible);
+    visibilityCache.set(bus.bus_id, visible);
+    busCompanyCache.set(bus.bus_id, companyId);
   }
   return buses.length;
 }
