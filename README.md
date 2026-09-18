@@ -203,7 +203,9 @@ posición `{ protocolVersion: 1, sequence, accepted, reason? }`.
 | `scripts/simulate-bus.mjs` | Un bus simulado que se provisiona, inicia sesión y publica por MQTT |
 | `scripts/demo-buses.sh` | Levanta varios simuladores |
 | `scripts/crear-admin-empresa.mjs` / `borrar-admin-empresa.mjs` | Cuentas de panel |
-| `npm run backup` | Copia de la base SQLite |
+| `npm run backup` | Copia de la base SQLite a un destino concreto |
+| `npm run respaldo` | Copia por hora con poda (48 horarias, 30 diarias) |
+| `npm run respaldo:probar` | Abre la última copia y la compara con la base viva |
 
 ## Pruebas
 

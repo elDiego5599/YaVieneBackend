@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Plantilla: instalar-servicios.sh reemplaza @@SCRIPTS@@, @@REPO@@, @@LOGS@@
+  y @@PATH@@ por las rutas de este Mac. Copia la base cada hora y poda las
+  viejas; el archivo instalado no se edita a mano.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.yaviene.respaldo</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@@SCRIPTS@@/respaldar.sh</string>
+  </array>
+
+  <!-- La base vive en data/ dentro del repo: sin esto el script buscaría
+       data/yaviene.db en la carpeta desde la que launchd arranca. -->
+  <key>WorkingDirectory</key>
+  <string>@@REPO@@</string>
+
+  <!-- Cada hora. Con StartInterval launchd cuenta desde que se carga el
+       servicio, así que no hace falta clavar el minuto: lo que importa es
+       que entre copia y copia pase una hora. Si el Mac estaba dormido,
+       launchd la corre en cuanto despierta, una sola vez y no una por
+       cada hora perdida. -->
+  <key>StartInterval</key>
+  <integer>3600</integer>
+
+  <!-- Al cargar no: cargar el servicio no es motivo para copiar, y la
+       primera copia llega una hora después. Para una copia ya mismo está
+       `npm run respaldo`. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- Background: copiar la base es trabajo de fondo y no tiene por qué
+       pelear disco con el backend, que sí publica posiciones cada 400 ms. -->
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>@@LOGS@@/respaldo.log</string>
+  <key>StandardErrorPath</key>
+  <string>@@LOGS@@/respaldo.log</string>
+
+  <!-- launchd no hereda el PATH del terminal: sin esto `node` no aparece. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@@PATH@@</string>
+  </dict>
+</dict>
+</plist>

@@ -1,6 +1,7 @@
 #!/bin/bash
-# Genera los tres servicios de launchd de este Mac a partir de las plantillas
-# de al lado, con las rutas reales resueltas aquí (repo, node, ngrok).
+# Genera los cuatro servicios de launchd de este Mac a partir de las
+# plantillas de al lado, con las rutas reales resueltas aquí (repo, node,
+# ngrok).
 #
 # Instala, pero NO carga: cargar ahora mataría o duplicaría el backend y el
 # túnel que estén corriendo a mano. Al final imprime los dos comandos que
@@ -53,6 +54,7 @@ Para activarlos (cada uno, cuando no haya demo en curso):
   launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.backend.plist
   launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.ngrok.plist
   launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.rotar-logs.plist
+  launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.respaldo.plist
 
 Antes de cargarlos, apaga el backend y el túnel que estén a mano, o habrá dos
 procesos peleando por el puerto 3000 y por el mismo dominio de ngrok.

@@ -1,0 +1,113 @@
+// Copia de la base, con poda.
+//
+// `backup-db.mjs` hace una copia y nada más: sin nombre con fecha, sin
+// revisar que la copia sirva y sin borrar las viejas. Una copia por hora
+// con ese script llena el disco del Mac en unas semanas —la base de hoy
+// pesa unos 3,6 MB— y el día del apuro hay que adivinar cuál de los
+// cuatrocientos archivos es el bueno.
+//
+// Esto es lo que corre launchd cada hora (ver scripts/servicio). Copia con
+// el backup en línea de SQLite, que es seguro con WAL y con el servidor
+// escribiendo; revisa la copia recién hecha, porque una copia corrupta que
+// nadie abre es peor que no tenerla; y poda: se quedan las últimas
+// RETENCION_HORARIOS y, de lo más viejo, la última de cada día hasta
+// RETENCION_DIARIOS días. La copia que se acaba de hacer nunca se borra.
+//
+// Uso:
+//   node scripts/respaldar.mjs
+//   DB_PATH=... BACKUP_DIR=... RETENCION_HORARIOS=48 RETENCION_DIARIOS=30
+import Database from 'better-sqlite3';
+import { existsSync, mkdirSync, rmSync, readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
+
+// YA_VIENE_DB_PATH es la que mira el backend: si algún día local.env la
+// fija, la copia tiene que salir de esa base y no de la de por defecto.
+const DB_PATH =
+  process.env.DB_PATH || process.env.YA_VIENE_DB_PATH || path.join(process.cwd(), 'data', 'yaviene.db');
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(path.dirname(DB_PATH), 'backups');
+const HORARIOS = Number(process.env.RETENCION_HORARIOS ?? 48);
+const DIARIOS = Number(process.env.RETENCION_DIARIOS ?? 30);
+
+const PATRON = /^yaviene-(\d{8})-\d{6}\.db$/;
+
+function sello(fecha) {
+  // En UTC a propósito: el nombre ordena igual que el reloj del archivo y no
+  // se repite ni se salta una hora cuando cambia la hora del sistema.
+  const iso = fecha.toISOString();
+  return `${iso.slice(0, 10).replace(/-/g, '')}-${iso.slice(11, 19).replace(/:/g, '')}`;
+}
+
+function copias(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((nombre) => PATRON.test(nombre))
+    .map((nombre) => ({ nombre, dia: nombre.match(PATRON)[1], mtime: statSync(path.join(dir, nombre)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime || b.nombre.localeCompare(a.nombre));
+}
+
+function podar(dir, reciente) {
+  const todas = copias(dir);
+  // Las más nuevas se quedan tal cual; de lo que queda, la más nueva de cada
+  // día que no esté ya representado, hasta DIARIOS días. Así una semana
+  // tranquila no ocupa lo mismo que una semana de pruebas.
+  const recientes = todas.slice(0, HORARIOS);
+  const guardadas = new Set(recientes.map((copia) => copia.nombre));
+  const dias = new Set(recientes.map((copia) => copia.dia));
+  guardadas.add(reciente);
+
+  let diarios = 0;
+  for (const copia of todas.slice(HORARIOS)) {
+    if (diarios >= DIARIOS) break;
+    if (dias.has(copia.dia)) continue;
+    guardadas.add(copia.nombre);
+    dias.add(copia.dia);
+    diarios += 1;
+  }
+
+  let borradas = 0;
+  for (const copia of todas) {
+    if (guardadas.has(copia.nombre)) continue;
+    rmSync(path.join(dir, copia.nombre), { force: true });
+    borradas += 1;
+  }
+  return { guardadas: guardadas.size, borradas };
+}
+
+if (!existsSync(DB_PATH)) {
+  console.error(`No existe la base ${DB_PATH}.`);
+  process.exit(1);
+}
+
+mkdirSync(BACKUP_DIR, { recursive: true });
+
+const desde = Date.now();
+const nombre = `yaviene-${sello(new Date())}.db`;
+const destino = path.join(BACKUP_DIR, nombre);
+
+const viva = new Database(DB_PATH, { readonly: true });
+await viva.backup(destino);
+viva.close();
+
+// Una copia que no se abre no es una copia. Se revisa aquí y no en el
+// arranque de dentro de dos meses, que es cuando hace falta.
+//
+// Se abre para escritura, no de sólo lectura: la copia hereda el modo WAL
+// de la base viva, y una conexión de sólo lectura no puede volcar el -wal
+// ni barrer el -shm al cerrar. Quedarían tres archivos por copia en vez de
+// uno, y el día de restaurar hay que adivinar cuáles van juntos.
+const copia = new Database(destino);
+const estado = copia.pragma('integrity_check', { simple: true });
+copia.pragma('wal_checkpoint(TRUNCATE)');
+copia.pragma('journal_mode = DELETE');
+copia.close();
+for (const sufijo of ['-wal', '-shm']) rmSync(`${destino}${sufijo}`, { force: true });
+if (estado !== 'ok') {
+  rmSync(destino, { force: true });
+  console.error(`La copia recién hecha no pasa la revisión (${estado}); se borró. La base ${DB_PATH} puede estar dañada.`);
+  process.exit(1);
+}
+
+const bytes = statSync(destino).size;
+const { guardadas, borradas } = podar(BACKUP_DIR, nombre);
+console.log(`Respaldo ${destino} (${bytes} bytes, ${Date.now() - desde} ms), integridad ok.`);
+console.log(`Guardados: ${guardadas} (hasta ${HORARIOS} recientes y ${DIARIOS} diarios) · borrados: ${borradas}`);

@@ -129,20 +129,43 @@ mensajes no significan lo mismo:
 
 ## Copias de seguridad y restauración
 
-Hacer una copia (con el backend encendido; usa el respaldo en línea de SQLite,
-así que no hace falta parar nada):
+Las copias las hace solo el servicio `com.yaviene.respaldo` de launchd, una
+cada hora, mientras el Mac esté encendido. Cada pasada copia la base en
+caliente —respaldo en línea de SQLite, no hay que parar el backend— y acto
+seguido abre la copia recién hecha para comprobar que sirve: `integrity_check`
+y las tablas contadas contra la base viva. Lo que salga queda en
+`~/Library/Logs/YaViene/respaldo.log`.
+
+Se instala y se carga con los otros servicios (ver «Servicios de launchd»):
+
+```bash
+bash scripts/servicio/instalar-servicios.sh
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.respaldo.plist
+```
+
+Dónde quedan y cuántas se guardan: `data/backups/`, con nombre
+`yaviene-<AAAAMMDD>-<HHMMSS>.db` en UTC. Se conservan las **48 últimas** (dos
+días de copias por hora) y, de las más viejas, **una por día hasta 30 días**.
+Con la base de hoy eso ocupa unos pocos cientos de megas; los topes se cambian
+con `RETENCION_HORARIOS` y `RETENCION_DIARIOS`.
+
+A mano, sin esperar a la hora:
 
 ```bash
 cd /Users/diegoangarita/YaViene/YaVieneBackend
-bash scripts/make-backup.sh
+npm run respaldo          # copia y poda
+npm run respaldo:probar   # abre la última copia y la compara con la viva
 ```
 
-Guarda en `~/Desktop/YaViene_Backups/`, conserva las diez últimas y verifica
-cada copia con `PRAGMA integrity_check`. A un destino concreto:
+`npm run respaldo:probar` falla —y sale distinto de cero— si no hay ninguna
+copia, si la más nueva tiene más de tres horas (`MAX_EDAD_HORAS`), si no pasa
+`integrity_check`, si le falta una tabla o si una tabla con datos en la base
+viva sale vacía en la copia. Es la comprobación que conviene correr el día
+antes de presentar.
 
-```bash
-npm run backup -- /ruta/destino.db
-```
+Las copias viven en el mismo Mac que la base: una copia de `data/backups/` a
+iCloud o a una USB sigue siendo parte del trabajo, porque un disco que se
+muera se lleva las dos cosas.
 
 Restaurar, paso a paso:
 
@@ -155,7 +178,7 @@ cd /Users/diegoangarita/YaViene/YaVieneBackend/data
 mv yaviene.db yaviene.db.roto; rm -f yaviene.db-wal yaviene.db-shm
 
 # 3. Poner la copia en su lugar y comprobarla antes de arrancar.
-cp ~/Desktop/YaViene_Backups/yaviene-<fecha>.db yaviene.db
+cp backups/yaviene-<fecha>-<hora>.db yaviene.db
 sqlite3 yaviene.db 'PRAGMA integrity_check;'   # debe decir: ok
 
 # 4. Arrancar y confirmar.
@@ -169,10 +192,27 @@ pegarlos a una copia distinta la corrompe. La base restaurada no trae las
 posiciones que llegaron después de la copia; los buses vuelven a poblarla en
 cuanto publiquen.
 
-Lo que todavía no está resuelto (tarea T2.8 del plan): las copias son manuales y
-viven en el mismo Mac que la base, así que una copia a iCloud o a una USB es
-parte del trabajo. Falta automatizarlas por hora con retención, y falta
-comprobar qué retención tienen los snapshots del volumen de Fly.
+El camino entero —base sana, copia, base rota a propósito, arranque rechazado,
+restauración, arranque bueno— lo corre la prueba `tests/respaldo.test.ts` en
+carpetas temporales y con puertos propios, así que no hay que ensayarlo a mano
+sobre la base viva.
+
+### La base de Fly
+
+El volumen `yaviene_data` de `ya-viene-backend` tiene los snapshots
+automáticos encendidos y una retención de **5 días**:
+
+```bash
+fly volumes show vol_rkgm21mjdxk5n064          # retención y si están activos
+fly volumes snapshots list vol_rkgm21mjdxk5n064
+fly volumes snapshots create vol_rkgm21mjdxk5n064   # uno a mano, antes de desplegar
+```
+
+Cinco días son suficientes para una demo, pero no son un archivo: lo que haya
+que conservar más tiempo se guarda desde el Mac. La base de Fly no es la del
+Mac —`.dockerignore` deja `data/` fuera de la imagen a propósito—, así que
+ninguna de las dos copias cubre a la otra.
+
 
 ## Quitarle el panel a alguien
 
@@ -248,14 +288,14 @@ que impide dormir al Mac se muere con la terminal que lo lanzó. Si el Mac se
 reinicia de madrugada —una actualización, un corte de luz—, la demo amanece
 caída y nadie se entera hasta que alguien abre la app.
 
-`scripts/servicio/` trae tres servicios de launchd para eso: el backend, el
-túnel y la rotación de logs. Se instalan una vez:
+`scripts/servicio/` trae cuatro servicios de launchd para eso: el backend, el
+túnel, la rotación de logs y el respaldo por hora. Se instalan una vez:
 
 ```bash
 bash scripts/servicio/instalar-servicios.sh
 ```
 
-Eso escribe los tres `.plist` en `~/Library/LaunchAgents` con las rutas de este
+Eso escribe los cuatro `.plist` en `~/Library/LaunchAgents` con las rutas de este
 Mac resueltas, pero **no los activa**: activarlos mientras hay un backend a
 mano deja dos procesos peleando por el puerto 3000 y por el mismo dominio de
 ngrok. Se activan con el sistema en reposo, apagando antes lo que esté a mano:
@@ -264,6 +304,7 @@ ngrok. Se activan con el sistema en reposo, apagando antes lo que esté a mano:
 launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.backend.plist
 launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.ngrok.plist
 launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.rotar-logs.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.yaviene.respaldo.plist
 ```
 
 `launchctl print gui/$UID/com.yaviene.backend` dice cómo va uno y
@@ -276,7 +317,8 @@ Los servicios no compilan nada: si `dist/` no existe, el backend no arranca y
 lo dice en el log. Después de cambiar código sigue siendo `npm run build` y
 `launchctl kickstart -k gui/$UID/com.yaviene.backend`.
 
-Los logs pasan a `~/Library/Logs/YaViene/` (`backend.log`, `ngrok.log`), que es
+Los logs pasan a `~/Library/Logs/YaViene/` (`backend.log`, `ngrok.log`,
+`respaldo.log`), que es
 una ruta fija que launchd puede abrir en cada arranque, y ya no a `/tmp`. Se
 rotan de madrugada cuando pasan de 10 MB, guardando cinco generaciones; la
 rotación copia y vacía el archivo en vez de renombrarlo, porque el proceso
