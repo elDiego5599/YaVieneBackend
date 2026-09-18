@@ -25,6 +25,7 @@ process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
 // require y no import: estos módulos abren la base al evaluarse, y un import
 // se izaría por encima de la línea que fija la ruta.
 const { handleAPI } = require('../src/api/routes') as typeof import('../src/api/routes');
+const { addCompanyRoute } = require('../src/data/routes_store') as typeof import('../src/data/routes_store');
 
 const servidor: Server = createServer((req, res) => {
   if (!handleAPI(req, res)) {
@@ -78,4 +79,21 @@ test('una ruta bien formada sigue contestando, exista o no', async () => {
   assert.equal(estado, 200);
   assert.equal(cuerpo.routeId, 'R-101');
   assert.deepEqual(cuerpo.buses, []);
+});
+
+test('las rutas de una empresa traen su identificador como routeId', async () => {
+  // El resto del contrato —posiciones, panel, sockets— lo llama `routeId`, y
+  // esta lista era la única que lo llamaba `id`. Durante una versión van los
+  // dos con el mismo valor: las apps ya instaladas leen `id`, las nuevas
+  // leen `routeId`. Cuando no quede una app vieja, `id` se retira.
+  assert.deepEqual(addCompanyRoute('EMP-CONTRATO', 'R-777', 'Contrato'), {
+    routeId: 'R-777',
+    name: 'Contrato',
+  });
+  const r = await fetch(`${base}/api/companies/EMP-CONTRATO/routes`);
+  assert.equal(r.status, 200);
+  const [ruta] = (await r.json()) as Record<string, unknown>[];
+  assert.equal(ruta.routeId, 'R-777');
+  assert.equal(ruta.id, 'R-777');
+  assert.equal(ruta.companyId, 'EMP-CONTRATO');
 });

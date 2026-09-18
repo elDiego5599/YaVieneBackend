@@ -157,7 +157,11 @@ addRoute('GET', '/api/companies', (req, res) => {
 
 addRoute('GET', '/api/companies/:id/routes', (req, res, params) => {
   if (!guardPublicRead(req, res)) return;
+  // `routeId` es el nombre que usa el resto del contrato. `id` lleva el mismo
+  // valor para las apps ya instaladas, que leen ese; se retira cuando todas
+  // lean `routeId`.
   const routes = getCompanyRoutes(params.id).map((route) => ({
+    routeId: route.routeId,
     id: route.routeId,
     name: route.name,
     companyId: params.id,
