@@ -181,7 +181,13 @@ test('probar-restauracion: falla si no hay copia, si está rota o si está vieja
   rmSync(tmp, { recursive: true, force: true });
 });
 
-test('el servicio de launchd sale instalable y apunta a este repo', () => {
+// launchd y plutil son de macOS: en la CI, que corre en Linux, el
+// instalador ni encuentra ngrok ni tiene con qué validar el plist, y la
+// prueba fallaba por el sistema, no por el servicio. Se corre en el Mac,
+// que es la única máquina donde este servicio existe.
+const SOLO_MAC = process.platform === 'darwin' ? false : 'launchd solo existe en macOS';
+
+test('el servicio de launchd sale instalable y apunta a este repo', { skip: SOLO_MAC }, () => {
   // Sin esto, el error del plist —una marca sin reemplazar, un XML mal
   // cerrado— sólo se ve el día que se carga el servicio, que es el día de
   // la demo. `DESTINO` lo manda a una carpeta de usar y tirar: esta prueba
