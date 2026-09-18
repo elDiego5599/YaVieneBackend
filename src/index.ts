@@ -24,7 +24,8 @@ import {
 } from './data/buses';
 import { closeDb } from './data/database';
 import { cleanupRevokedSessions } from './data/sessions';
-import { dispatchLifecycleEvents, LifecycleEvent } from './data/lifecycle_events';
+import { dispatchBusEvents } from './data/despacho';
+import { LifecycleEvent } from './data/lifecycle_events';
 import { flushMetrics, incrementMetric, restoreMetrics } from './observability/metrics';
 import { arrancarFlotaDemo, detenerFlotaDemo } from './demo/flota_demo';
 import { DriverTokenPayload } from './auth/tokens';
@@ -176,11 +177,11 @@ function vueltaProtegida(nombre: string, metrica: string, trabajo: () => void): 
 
 const sweepTimer = setInterval(vueltaProtegida('Sweep', 'sweep.error', () => {
   sweepPositions(GHOST_MS);
-  dispatchLifecycleEvents(emitLifecycleEvent);
+  dispatchBusEvents(emitLifecycleEvent);
 }), 10_000);
 sweepTimer.unref();
 const lifecycleDispatchTimer = setInterval(vueltaProtegida('Outbox', 'outbox.dispatch.error', () => {
-  dispatchLifecycleEvents(emitLifecycleEvent);
+  dispatchBusEvents(emitLifecycleEvent);
 }), 250);
 lifecycleDispatchTimer.unref();
 const sessionCleanupTimer = setInterval(vueltaProtegida('Sesiones', 'sessions.cleanup.error', () => {

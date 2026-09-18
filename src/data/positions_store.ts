@@ -195,6 +195,27 @@ export function sweepPositions(ghostMs: number): {
   return sweep();
 }
 
+/**
+ * ¿Sigue valiendo un evento `bus:position` de fantasma que ya está en la
+ * cola?
+ *
+ * El barrido marca sin señal a un bus y encola el aviso; el despacho lo
+ * manda después, y entre las dos cosas el bus puede haber vuelto a
+ * publicar. Si el aviso sale igual, el pasajero ve «sin señal» un bus que
+ * acaba de reportar, y no se corrige hasta la siguiente posición: el
+ * fantasma tapa a la posición viva porque llega después.
+ *
+ * Se mira contra la fila de ahora: si el bus ya no está, si dejó de ser
+ * fantasma, o si su captura es más nueva que la del evento, el evento nació
+ * viejo y no se emite.
+ */
+export function isGhostEventStillValid(busId: string, capturedAt: number): boolean {
+  const actual = getPosition(busId);
+  if (!actual) return false;
+  if (!actual.isGhost) return false;
+  return actual.capturedAt <= capturedAt;
+}
+
 export function removePosition(busId: string): BusPosition | null {
   const db = getDb();
   const remove = db.transaction(() => {

@@ -12,12 +12,18 @@ process.env.JWT_SECRET = 'test-jwt-secret';
 
 type DatabaseModule = typeof import('../src/data/database');
 type LifecycleEvents = typeof import('../src/data/lifecycle_events');
+type Posiciones = typeof import('../src/data/positions_store');
+type Despacho = typeof import('../src/data/despacho');
 let database: DatabaseModule;
 let outbox: LifecycleEvents;
+let posiciones: Posiciones;
+let despacho: Despacho;
 
 test('setup: abre la base temporal y carga el outbox', async () => {
   database = await import('../src/data/database');
   outbox = await import('../src/data/lifecycle_events');
+  posiciones = await import('../src/data/positions_store');
+  despacho = await import('../src/data/despacho');
   database.getDb();
   assert.ok(outbox.MAX_ATTEMPTS >= 1);
 });
@@ -123,6 +129,84 @@ test('outbox: una fila con payload corrupto muere sola y no atasca el lote', () 
   assert.ok(corrupto.dead_at, 'un payload ilegible no mejora reintentando: muere al primer intento');
   assert.ok(corrupto.last_error?.includes('payload corrupto'));
   assert.equal(corrupto.delivered_at, null);
+});
+
+// El barrido marca sin señal a un bus callado y encola el aviso; el despacho
+// lo manda hasta 250 ms después. Si en ese hueco el bus vuelve a publicar, el
+// aviso viejo salía igual y llegaba detrás de la posición viva: el pasajero
+// veía en gris, como «sin señal», un bus que acababa de reportar, y así se
+// quedaba hasta la siguiente posición.
+const EQUIPO = '3009990002';
+
+function busDePrueba(busId: string, routeId: string): void {
+  const db = database.getDb();
+  const ahora = Date.now();
+  db.prepare(
+    'INSERT OR IGNORE INTO empresas (company_id, name, created_at) VALUES (?, ?, ?)',
+  ).run('EMP-OUT', 'Empresa outbox', ahora);
+  db.prepare(`
+    INSERT OR IGNORE INTO buses (bus_id, company_id, plate_number, created_at, updated_at, visible, route_id)
+    VALUES (?, 'EMP-OUT', ?, ?, ?, 1, ?)
+  `).run(busId, busId, ahora, ahora, routeId);
+  // `positions.driver_phone` apunta al equipo GPS del bus: sin esa fila la
+  // inserción de la posición se cae por clave foránea.
+  db.prepare(`
+    INSERT OR IGNORE INTO drivers (phone_number, name, route_id, company_id, bus_id, registered_at)
+    VALUES (?, ?, ?, 'EMP-OUT', ?, ?)
+  `).run(EQUIPO, `GPS ${busId}`, routeId, busId, ahora);
+}
+
+/** Publica una posición y le pone el reloj de recepción que haga falta. */
+function publicar(busId: string, routeId: string, recibidaEn: number): void {
+  const posicion = posiciones.upsertPosition(EQUIPO, {
+    busId, routeId, lat: 10.98, lon: -74.79, sequence: recibidaEn,
+    capturedAt: recibidaEn, driverValidated: true, companyId: 'EMP-OUT',
+  });
+  assert.ok(posicion, `no se pudo publicar la posición de ${busId}`);
+  // `timestamp` es la hora de recepción y la pone el propio store; el barrido
+  // mira esa columna, así que para simular un bus callado hay que atrasarla.
+  database.getDb().prepare('UPDATE positions SET timestamp = ? WHERE bus_id = ?')
+    .run(recibidaEn, busId);
+}
+
+test('outbox: un fantasma encolado no se emite si el bus volvió antes del despacho', () => {
+  const db = database.getDb();
+  const ahora = Date.now();
+  busDePrueba('BUS-FANT', 'R-701');
+  publicar('BUS-FANT', 'R-701', ahora - 400_000);
+
+  // El bus lleva más de lo permitido sin publicar: el barrido lo marca y
+  // encola el aviso, que es el que se queda esperando en la cola.
+  assert.equal(posiciones.sweepPositions(300_000).toGhost.length, 1, 'el barrido tenía que marcarlo');
+
+  // Y entonces el bus vuelve a publicar, antes de que el aviso salga.
+  publicar('BUS-FANT', 'R-701', ahora);
+
+  const emitidos: string[] = [];
+  despacho.dispatchBusEvents((event) => {
+    if (event.eventType === 'bus:position') emitidos.push(event.payload.busId as string);
+  });
+  assert.deepEqual(emitidos, [], 'el fantasma caducado no debe llegar al suscriptor');
+
+  // Sale de la cola como entregado: no se emite, pero tampoco se queda dando
+  // vueltas ni suma intentos hasta morir.
+  const fila = db.prepare(
+    "SELECT delivered_at, dead_at FROM lifecycle_events WHERE event_type = 'bus:position'",
+  ).get() as { delivered_at: number | null; dead_at: number | null };
+  assert.ok(fila.delivered_at, 'el aviso caducado sale de la cola');
+  assert.equal(fila.dead_at, null);
+});
+
+test('outbox: un fantasma que sigue siéndolo sí se emite', () => {
+  busDePrueba('BUS-MUDO', 'R-702');
+  publicar('BUS-MUDO', 'R-702', Date.now() - 400_000);
+  assert.equal(posiciones.sweepPositions(300_000).toGhost.length, 1);
+
+  const emitidos: string[] = [];
+  despacho.dispatchBusEvents((event) => {
+    if (event.eventType === 'bus:position') emitidos.push(event.payload.busId as string);
+  });
+  assert.deepEqual(emitidos, ['BUS-MUDO'], 'el bus callado sí tiene que avisar');
 });
 
 test('cleanup', () => {
