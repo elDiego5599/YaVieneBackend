@@ -1,37 +1,36 @@
-// Zona de servicio: la caja que contiene todo el recorrido de las rutas de la
-// demo más MARGEN_ZONA_KM por cada lado. Toda posición tiene que caer dentro.
+// Zona de servicio: el área metropolitana de Barranquilla. Toda posición
+// tiene que caer dentro.
 //
 // Sin esto, la primera posición de cada sesión entraba sin mirar dónde —la
 // física solo compara contra la anterior— y un equipo mal configurado podía
 // poner un bus en Bogotá, en el mapa de todos los pasajeros de la ruta.
 //
-// Los números salen de scripts/data/rutas.json (el mismo archivo que dibuja
-// la app del pasajero: app_pasajero/assets/data/rutas.json es copia byte a
-// byte), con el mismo radio de la Tierra que haversineDistanceKm y redondeados
-// hacia fuera a la cuarta decimal (~11 m). Si cambian las rutas, se regeneran
-// con esto y tests/zona.test.ts avisa si la caja quedó vieja:
+// La caja es **la misma que el mapa de la app del pasajero**
+// (`app_pasajero/lib/features/map/presentation/utils/map_constants.dart`:
+// `areaSurLat`, `areaNorteLat`, `areaOesteLon`, `areaEsteLon`), un cuadrado
+// de 41 × 41 km —cuadrado en kilómetros, no en grados— que va de Malambo y
+// Soledad al sur hasta Bocas de Ceniza y la ciénaga de Mallorquín al norte,
+// con Galapa al occidente y Puerto Colombia al noroccidente. Que sean la
+// misma caja no es casualidad ni ahorro: un bus que publique fuera de ahí no
+// se podría ver en la app aunque se aceptara, porque el mapa no llega. Si
+// algún día el mapa crece, esta caja crece con él y `tests/zona.test.ts`
+// avisa comparando los cuatro números contra el archivo Dart.
 //
-//   node -e '
-//   const d=JSON.parse(require("fs").readFileSync("scripts/data/rutas.json","utf8"));
-//   const p=d.rutas.flatMap(r=>r.waypoints), M=2, km=Math.PI*6371/180;
-//   const lat=p.map(w=>w.lat), lon=p.map(w=>w.lon), c=Math.cos(Math.max(...lat.map(Math.abs))*Math.PI/180);
-//   const b=(x,s)=>(s<0?Math.floor:Math.ceil)(x*1e4)/1e4;
-//   console.log(JSON.stringify({latMin:b(Math.min(...lat)-M/km,-1),latMax:b(Math.max(...lat)+M/km,1),lonMin:b(Math.min(...lon)-M/(km*c),-1),lonMax:b(Math.max(...lon)+M/(km*c),1)}))'
+// Antes esto era la caja de las seis rutas de Sobusa más 2 km, que dejaba a
+// Malambo por fuera por unos 1,2 km: un bus de allá habría sido rechazado
+// desde su primera posición. El dueño decidió el 18 de septiembre de 2026
+// que el área metropolitana entera entra.
 //
-// El grado de longitud se mide en la latitud más al norte, donde es más
-// corto: así el margen este-oeste es de 2 km como mínimo en toda la caja.
-//
-// Es la zona de las seis rutas de Sobusa. Una empresa con rutas fuera —en
-// Malambo, por ejemplo, más al sur— necesita ampliar la caja antes de que
-// sus buses publiquen.
-
-export const MARGEN_ZONA_KM = 2;
+// Sigue siendo un filtro de verdad: rechaza cualquier cosa a más de ~20 km
+// del centro del área, que es lo que interesa —un equipo mal configurado, un
+// equipo robado, una prueba apuntando al servidor de verdad—, no un bus de
+// un municipio vecino.
 
 export const ZONA = {
-  latMin: 10.8694,
-  latMax: 11.0573,
-  lonMin: -74.8917,
-  lonMax: -74.7548,
+  latMin: 10.79,
+  latMax: 11.164,
+  lonMin: -75.0035,
+  lonMax: -74.6251,
 } as const;
 
 export function dentroDeZona(lat: number, lon: number): boolean {
