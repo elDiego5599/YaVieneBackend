@@ -228,28 +228,15 @@ addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
   writeJson(res, 200, { status: 'offline', busId: params.busId });
 });
 
-// La búsqueda iba antes de la autenticación: sin token, un teléfono dado de
-// alta respondía 403 y uno desconocido 404, así que cualquiera podía barrer
-// números y saber cuáles son de conductores. Ahora quien no puede leer la
-// ficha recibe siempre el mismo 403, exista o no; el 404 queda para quien
-// sí tiene permiso de verlo.
+// Cada token lee solo su propia ficha, y todo lo demás —sin token, ficha
+// ajena o teléfono que no existe— recibe el mismo 403. Si la respuesta
+// cambiara según exista el teléfono, cualquiera podría barrer números y
+// saber cuáles están dados de alta. La administración no lee fichas por
+// aquí: lo hace el panel de flota con su propio token.
 addRoute('GET', '/api/drivers/:phone', (req, res, params) => {
   const auth = authenticateRequest(req);
-  if (auth?.role !== 'driver') {
-    writeError(res, 403, 'DRIVER_FORBIDDEN', 'The token cannot read this driver');
-    return;
-  }
-  const admin = isAdminRequest(req);
   const driver = getDriver(params.phone);
-  if (!driver) {
-    if (admin) {
-      writeError(res, 404, 'DRIVER_NOT_FOUND', 'Driver not found');
-    } else {
-      writeError(res, 403, 'DRIVER_FORBIDDEN', 'The token cannot read this driver');
-    }
-    return;
-  }
-  if (!admin && auth.driverId !== driver.driverId) {
+  if (auth?.role !== 'driver' || !driver || auth.driverId !== driver.driverId) {
     writeError(res, 403, 'DRIVER_FORBIDDEN', 'The token cannot read this driver');
     return;
   }

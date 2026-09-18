@@ -5,7 +5,6 @@ import {
   HTTP_PORT,
   HTTP_TLS_CERT_PATH,
   HTTP_TLS_KEY_PATH,
-  BUS_TIMEOUT_MS,
   CORS_ORIGINS,
   flotaDemoHabilitada,
   validateConfig,
