@@ -10,6 +10,8 @@
 # lo impone salvo con engine-strict. Sobre node:20 compila sin una sola
 # queja y el binario nativo revienta con SIGSEGV al primer uso, sin imprimir
 # nada. Si se toca esta versión, que sea >= la que pida better-sqlite3.
+# Va a la par con `.nvmrc` —de ahí la toma la CI— y con `engines` en
+# package.json: si se sube aquí, se sube en los tres sitios.
 FROM node:22-alpine AS build
 WORKDIR /app
 

@@ -42,7 +42,9 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          # La misma versión que el Dockerfile y `engines`, leída de un solo
+          # sitio para que la CI no pruebe con un Node distinto al de Fly.
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npm run build

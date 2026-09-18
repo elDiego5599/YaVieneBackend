@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Backend en tiempo real para Ya Viene — MQTT + WebSocket bridge para seguimiento de buses en Barranquilla",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "scripts": {
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
