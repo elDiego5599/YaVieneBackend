@@ -30,6 +30,7 @@ import { flushMetrics, incrementMetric, restoreMetrics } from './observability/m
 import { arrancarFlotaDemo, detenerFlotaDemo } from './demo/flota_demo';
 import { DriverTokenPayload } from './auth/tokens';
 import { validarPayloadPosicion } from './security/payload';
+import { cerrarRedLocal } from './security/red_local';
 import {
   setupSocketServer,
   closeSocketServer,
@@ -291,6 +292,9 @@ startBroker(
 // `localhost` resuelve primero a ::1 en macOS: el panel pedía
 // http://localhost:3000, se topaba con conexión rechazada en IPv6 y
 // mostraba "No se pudo conectar con el servidor" con el backend corriendo.
+// '::' abre además el puerto a la red local: fuera de producción se cierra
+// al conectar todo lo que no sea esta máquina (ver red_local.ts).
+cerrarRedLocal(server);
 server.listen(HTTP_PORT, '::', () => {
   const scheme = HTTP_TLS_CERT_PATH && HTTP_TLS_KEY_PATH ? 'https' : 'http';
   console.log(`[HTTP] Server listening on ${scheme}://[::]:${HTTP_PORT} (IPv4+IPv6)`);

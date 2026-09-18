@@ -48,6 +48,7 @@ YA_VIENE_FLOTA_DEMO=0 npm start
 | `MQTT_HOST` | Dónde escucha el MQTT por TCP. Por defecto `127.0.0.1` |
 | `HTTP_TLS_CERT_PATH` + `HTTP_TLS_KEY_PATH` | TLS del HTTP. Van juntas |
 | `HTTP_TLS_EXTERNO` | `1` declara que el TLS lo termina un proxy delante (Fly, ngrok). En producción hace falta esto o el par TLS |
+| `HTTP_ALLOW_REMOTE` | `1` deja que el API atienda a la red local fuera de producción. Sin ella, y sin `NODE_ENV=production`, solo atiende a esta máquina (loopback): ngrok, la flota demo y el panel local entran por ahí |
 | `MQTT_TLS_CERT_PATH` + `MQTT_TLS_KEY_PATH` | TLS del MQTT por TCP. Van juntas |
 | `CORS_ORIGINS` | Orígenes web autorizados, separados por coma. Sin ella no se emite CORS |
 | `YA_VIENE_DB_PATH` | Ruta del archivo SQLite |
@@ -66,8 +67,8 @@ Producción es `NODE_ENV=production` (lo pone el Dockerfile). El arranque
   ni `*`), o en producción no es `https`;
 - en producción, `MQTT_HOST` sale de loopback sin TLS de MQTT.
 
-Fuera de producción, el MQTT expuesto sin TLS y los secretos cortos en
-producción solo avisan.
+Fuera de producción, el MQTT expuesto sin TLS, `HTTP_ALLOW_REMOTE=1` y los
+secretos cortos en producción solo avisan.
 
 Al recibir `SIGINT`/`SIGTERM` el servidor detiene la flota simulada, cierra
 Socket.IO, el broker y el HTTP, guarda las métricas y cierra SQLite. Si algo

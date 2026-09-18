@@ -46,6 +46,11 @@ El túnel, en otra terminal:
 ngrok start yaviene --log=stdout
 ```
 
+Fuera de producción el backend solo atiende a esta máquina: cualquier
+conexión que llegue por la Wi-Fi se cierra al conectar, y el público entra por
+ngrok. Para probar con un teléfono en la misma red sin túnel,
+`HTTP_ALLOW_REMOTE=1` delante del arranque (el log lo avisa con `[Config]`).
+
 Los buses de la demo no se arrancan a mano: el propio backend levanta doce
 simuladores al iniciar (`src/demo/flota_demo.ts`). Para apagarlos —tráfico real,
 donde esas posiciones falsas viajarían por el mismo canal que las buenas—

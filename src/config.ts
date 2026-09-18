@@ -108,6 +108,14 @@ export function validateConfig(
     else avisos.push(mensaje);
   }
 
+  // Fuera de producción el API solo atiende a esta máquina (red_local.ts).
+  // Abrirlo a la red es legítimo —probar desde un teléfono en la misma Wi-Fi
+  // sin ngrok—, pero lo que viaje por ahí va en claro: que quede escrito en
+  // el log del arranque, no que se olvide encendido.
+  if (!produccion && env.HTTP_ALLOW_REMOTE === '1') {
+    avisos.push('HTTP_ALLOW_REMOTE=1: el API atiende a toda la red local en HTTP plano, sin pasar por ngrok ni por TLS');
+  }
+
   const origenes = (env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
   for (const origen of origenes) {
     let valido = false;
