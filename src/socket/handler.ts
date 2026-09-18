@@ -208,6 +208,11 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
       if (PASSENGER_ALLOWED_EVENTS.has(event)) return;
 
       console.warn(`[WS] KICKED client ${socket.id} — attempted forbidden event: "${event}"`);
+      // Ninguna de las apps escucha `server:error`, y es a propósito: solo
+      // mandan los tres eventos de la lista de arriba (pasajero:
+      // subscribe/unsubscribe:route; panel: subscribe:fleet), así que nunca
+      // llegan aquí. Lo recibe un cliente ajeno o uno roto, y le dice por
+      // qué se le cierra el socket en vez de dejarlo adivinando.
       socket.emit('server:error', { message: 'Forbidden event' });
       socket.disconnect(true);
     });
