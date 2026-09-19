@@ -1,5 +1,7 @@
 import { IncomingMessage } from 'http';
 
+import { setMetric } from '../observability/metrics';
+
 /**
  * Limitador de ventana deslizante: el presupuesto se recupera a medida que
  * los intentos individuales salen de la ventana, así que no existe el borde
@@ -84,6 +86,46 @@ export const readRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
 // script mal hecho— podía martillar escrituras en SQLite sin freno. 60/min
 // deja a una persona ocultar treinta buses uno a uno sin tropezar.
 export const fleetWriteRateLimiter = new SlidingWindowRateLimiter(60, 60_000);
+
+const LIMITADORES: Record<string, SlidingWindowRateLimiter> = {
+  login: loginRateLimiter,
+  loginIp: loginIpRateLimiter,
+  admin: adminRateLimiter,
+  read: readRateLimiter,
+  fleetWrite: fleetWriteRateLimiter,
+};
+
+// La memoria de cada limitador está acotada por el barrido, pero nadie la
+// veía: detrás de un túnel donde cada visitante trae una IP distinta, el
+// número de claves es lo único que dice si el tráfico es el de siempre o un
+// barrido desde muchas direcciones. 10 000 claves son unos pocos MB y muchas
+// más IP de las que junta la demo en un minuto: pasar de ahí merece una
+// línea en el log, no una alarma.
+const AVISO_CLAVES = 10_000;
+const yaAvisados = new Set<string>();
+
+/**
+ * Publica cuántas claves recuerda cada limitador (`ratelimit.<nombre>.claves`)
+ * y avisa en el log cuando alguno pasa de [AVISO_CLAVES]. Avisa una vez por
+ * subida y no en cada volcado: si se queda arriba media hora, son sesenta
+ * líneas iguales que esconden las demás. Cuando baja, la siguiente subida
+ * vuelve a avisar. Corre con el volcado de métricas (`index.ts`).
+ */
+export function registrarTamanosLimitadores(
+  limitadores: Record<string, SlidingWindowRateLimiter> = LIMITADORES,
+  avisar: (mensaje: string) => void = console.warn,
+): void {
+  for (const [nombre, limitador] of Object.entries(limitadores)) {
+    const claves = limitador.size;
+    setMetric(`ratelimit.${nombre}.claves`, claves);
+    if (claves <= AVISO_CLAVES) {
+      yaAvisados.delete(nombre);
+    } else if (!yaAvisados.has(nombre)) {
+      yaAvisados.add(nombre);
+      avisar(`[RateLimit] ${nombre} recuerda ${claves} claves (aviso desde ${AVISO_CLAVES}): mucho tráfico desde direcciones distintas`);
+    }
+  }
+}
 
 // Solo confiamos en X-Forwarded-For si la conexión TCP viene del túnel local
 // (ngrok/cloudflared corren en loopback en este despliegue, confirmado con

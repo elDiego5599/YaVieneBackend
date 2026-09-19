@@ -30,6 +30,7 @@ import { arrancarFlotaDemo, detenerFlotaDemo } from './demo/flota_demo';
 import { DriverTokenPayload } from './auth/tokens';
 import { validarPayloadPosicion } from './security/payload';
 import { cerrarRedLocal } from './security/red_local';
+import { registrarTamanosLimitadores } from './security/rate_limiter';
 import {
   setupSocketServer,
   closeSocketServer,
@@ -318,14 +319,18 @@ console.log(
 );
 if (FLOTA_DEMO) arrancarFlotaDemo();
 // Los contadores viven en memoria; a disco cada 30s para que un reinicio
-// no borre la señal operativa. YA_VIENE_METRICS_FLUSH_MS existe para las
+// no borre la señal operativa. En la misma vuelta se publica cuánto pesa
+// cada limitador (`rate_limiter.ts`). YA_VIENE_METRICS_FLUSH_MS existe para las
 // pruebas, que no esperan medio minuto.
 const METRICS_FLUSH_MS = (() => {
   const ms = Number(process.env.YA_VIENE_METRICS_FLUSH_MS);
   return Number.isFinite(ms) && ms >= 100 ? ms : 30_000;
 })();
 const metricsFlushTimer = setInterval(
-  vueltaProtegida('Métricas', 'metrics.flush.error', flushMetrics),
+  vueltaProtegida('Métricas', 'metrics.flush.error', () => {
+    registrarTamanosLimitadores();
+    flushMetrics();
+  }),
   METRICS_FLUSH_MS,
 );
 metricsFlushTimer.unref();
