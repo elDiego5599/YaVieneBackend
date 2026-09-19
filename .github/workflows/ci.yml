@@ -1,18 +1,26 @@
 name: Ya Viene Backend CI
 
 on:
-  # `prueba` es donde se trabaja: sin esto, lo que se sube ahí no pasaba
-  # por ninguna prueba hasta llegar a main.
+  # Solo main. Se trabaja en `prueba` y cada commit sube a las dos ramas a
+  # la vez: con las dos aquí, el mismo commit se probaba dos veces y se
+  # pagaban dos veces los minutos, que en un repo privado tienen cuota.
   push:
-    branches: [main, prueba]
+    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 # El token de la corrida se le presta a código de terceros, así que va con lo
 # mínimo: ningún job de aquí escribe en el repositorio. Sin este bloque iba
 # con los permisos por omisión, que incluyen escritura.
 permissions:
   contents: read
+
+# Si llega un commit nuevo a la misma rama mientras la corrida anterior
+# sigue, la vieja se cancela: su resultado ya no le importa a nadie.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # Cada acción va clavada al commit y no a la etiqueta: una etiqueta se mueve
 # sin avisar y con ella cambia el código de terceros que corre con ese token.
@@ -38,6 +46,7 @@ jobs:
 
   node:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
