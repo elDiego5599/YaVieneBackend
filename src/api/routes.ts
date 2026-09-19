@@ -47,6 +47,7 @@ import {
   ensureEmpresa,
   createOrUpdateCompanyAdmin,
   getCompanyAdminByUsername,
+  revokeAdminTokens,
 } from '../data/empresas';
 
 interface RouteHandler {
@@ -444,6 +445,27 @@ addRoute('POST', '/api/admin/empresas/:companyId/admin', (req, res, params, body
     companyId: params.companyId,
     username: admin.username,
   });
+});
+
+// Cerrar sesión en el panel. Antes solo se borraba el token del equipo, y
+// quien lo hubiera copiado seguía entrando hasta que caducara (8 h). Ahora
+// sube la versión de la credencial: el REST rechaza el token en la siguiente
+// petición y la revisión de paneles del socket lo saca en menos de un
+// minuto. Corta todas las sesiones de esa cuenta, no solo la de este equipo:
+// los tokens no llevan identificador propio y esto no guarda una lista de
+// revocados. Sin cuerpo en la respuesta: no hay nada que contar.
+addRoute('POST', '/api/fleet/logout', (req, res) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+  if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
+  if (revokeAdminTokens(auth.sub, auth.companyId, auth.tv)) {
+    console.log(`[API] Admin ${auth.username} cerró sesión (empresa ${auth.companyId})`);
+  }
+  res.writeHead(204);
+  res.end();
 });
 
 // Las rutas de flota de aquí abajo que no tenían tope ahora llevan uno: las

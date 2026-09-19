@@ -118,6 +118,7 @@ clave mal** (`429 RATE_LIMITED`).
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | POST | `/api/admin/login` | `{ username, password }` → `{ token, company }` |
+| POST | `/api/fleet/logout` | Cierra sesión: revoca todos los tokens de esa cuenta (204) |
 | GET | `/api/fleet/positions` | Flota de la empresa del token |
 | GET / POST | `/api/fleet/routes` | Catálogo de rutas / alta `{ routeId, name }` |
 | PATCH / DELETE | `/api/fleet/routes/:routeId` | Renombrar `{ name }` / borrar |

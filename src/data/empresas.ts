@@ -102,6 +102,28 @@ export function isAdminTokenCurrent(
   return !!row && row.company_id === companyId && row.token_version === tokenVersion;
 }
 
+/**
+ * Cierra todas las sesiones de una cuenta de panel: sube la versión de su
+ * credencial y los tokens firmados con la anterior dejan de valer, los de
+ * este equipo y los de cualquier otro donde se haya entrado con ella. Es lo
+ * que hace un cambio de contraseña, sin cambiarla.
+ *
+ * Solo sube si la versión sigue siendo la del token que lo pide: dos cierres
+ * a la vez con el mismo token suben una vez, y un token ya revocado no puede
+ * volver a mover la versión de nadie.
+ */
+export function revokeAdminTokens(
+  adminId: string,
+  companyId: string,
+  tokenVersion: number,
+): boolean {
+  const resultado = getDb().prepare(`
+    UPDATE empresa_admins SET token_version = token_version + 1
+    WHERE admin_id = ? AND company_id = ? AND token_version = ?
+  `).run(adminId, companyId, tokenVersion);
+  return resultado.changes === 1;
+}
+
 function rowToAdmin(row: AdminRow): EmpresaAdmin {
   return {
     adminId: row.admin_id,
