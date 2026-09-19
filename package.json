@@ -13,7 +13,8 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "backup": "node scripts/backup-db.mjs",
     "respaldo": "node scripts/respaldar.mjs",
-    "respaldo:probar": "node scripts/probar-restauracion.mjs"
+    "respaldo:probar": "node scripts/probar-restauracion.mjs",
+    "carga": "node --import tsx scripts/carga.ts"
   },
   "keywords": [
     "barranquilla",
