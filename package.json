@@ -14,7 +14,8 @@
     "backup": "node scripts/backup-db.mjs",
     "respaldo": "node scripts/respaldar.mjs",
     "respaldo:probar": "node scripts/probar-restauracion.mjs",
-    "carga": "node --import tsx scripts/carga.ts"
+    "carga": "node --import tsx scripts/carga.ts",
+    "contrato:actualizar": "ACTUALIZAR_CONTRATO=1 node --import tsx --test tests/contrato.test.ts"
   },
   "keywords": [
     "barranquilla",

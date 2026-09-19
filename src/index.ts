@@ -114,10 +114,12 @@ const GHOST_MS = Number(process.env.YA_VIENE_GHOST_MS ?? 5 * 60 * 1000);
 
 function emitLifecycleEvent(event: LifecycleEvent): void {
   if (event.eventType === 'bus:removed') {
+    // Del bus borrado ya no queda la empresa en la base: viene en el aviso.
     broadcastBusRemoved(
       event.payload.busId as string,
       event.routeId,
       event.eventId,
+      event.payload.companyId as string | undefined,
     );
     return;
   }

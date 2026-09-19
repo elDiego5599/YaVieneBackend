@@ -293,8 +293,12 @@ export function deleteBus(busId: string): { busId: string; routeId: string | nul
     // conserva su sesión; si se confirma, ya no puede publicar.
     revokeSessionsForBus(busId);
 
+    // La empresa va en el aviso porque al despacharlo el bus ya no existe
+    // y no hay de dónde sacarla: sin ella el aviso llegaba al pasajero pero
+    // no a los paneles de la empresa, que seguían mostrando el bus borrado.
+    // `broadcastBusRemoved` arma su propio payload y no la reenvía.
     if (routeId) {
-      queueLifecycleEvent(db, 'bus:removed', routeId, { busId, routeId });
+      queueLifecycleEvent(db, 'bus:removed', routeId, { busId, routeId, companyId });
     }
     return routeId;
   });
@@ -322,6 +326,7 @@ export function deleteAllBuses(companyId: string): number {
         queueLifecycleEvent(db, 'bus:removed', routeId, {
           busId: bus.bus_id,
           routeId,
+          companyId,
         });
       }
       // Lo mismo que `deleteBus`: sin esto los teléfonos de la flota
