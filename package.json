@@ -24,9 +24,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "aedes": "^0.51.3",
+    "aedes": "0.51.3",
     "better-sqlite3": "^13.0.2",
     "jsonwebtoken": "^9.0.3",
+    "mqemitter": "6.0.2",
     "mqtt": "^5.15.2",
     "socket.io": "^4.8.3",
     "ws": "^8.21.3"

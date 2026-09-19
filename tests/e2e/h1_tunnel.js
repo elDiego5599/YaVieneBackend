@@ -26,6 +26,12 @@ for (let i = 1; i <= N_BUSES; i++) {
     INSERT OR IGNORE INTO drivers (phone_number, driver_id, name, route_id, company_id, bus_id, pin_hash, registered_at)
     VALUES (?, ?, ?, ?, ?, ?, 'test', ?)
   `).run(phone, `d-h1-${i}`, `H1 ${i}`, ROUTE_ID, COMPANY_ID, busId, now);
+  // El ingreso rechaza con BUS_NOT_FOUND a un bus que no está en el
+  // catálogo; sin esta fila el replay entero volvía rechazado.
+  db.prepare(`
+    INSERT OR IGNORE INTO buses (bus_id, company_id, route_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(busId, COMPANY_ID, ROUTE_ID, now, now);
   createDriverSession({
     sessionId: `h1-${busId}-${now}`, driverId: `d-h1-${i}`, phoneNumber: phone,
     companyId: COMPANY_ID, busId, routeId: ROUTE_ID,
@@ -151,6 +157,7 @@ for (let i = 1; i <= N_BUSES; i++) {
 
   db.prepare("DELETE FROM driver_sessions WHERE session_id LIKE 'h1-%'").run();
   db.prepare("DELETE FROM drivers WHERE phone_number LIKE '9300%'").run();
+  db.prepare("DELETE FROM buses WHERE bus_id LIKE 'H1-%'").run();
   db.prepare("DELETE FROM positions WHERE driver_phone LIKE '9300%'").run();
   for (const c of clients) c.end(true);
   passenger.disconnect();
