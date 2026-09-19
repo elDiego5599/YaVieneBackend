@@ -1,6 +1,8 @@
 // H-5 "Slowloris de WebSocket": clientes que reciben pero NO leen (búfer lleno).
 // Verifica que el guard anti-Slowloris (bufferedAmount > 1MB) los desconecta
 // y que la memoria del servidor queda acotada y el servicio sigue vivo.
+// Abre 105 sockets desde esta máquina: el backend tiene que arrancar con
+// YA_VIENE_MAX_SOCKETS_IP=5000, o pasado el 100 los rechaza (socket/handler.ts).
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'localdev';
 const { execSync } = require('child_process');
 const fs = require('fs');

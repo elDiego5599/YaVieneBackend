@@ -1,4 +1,6 @@
 // TIER 2.1 — Spike test: 200 buses (100 pos/s) + 2,000 pasajeros en Socket.io
+// Abre 2 000 sockets desde esta máquina: el backend tiene que arrancar con
+// YA_VIENE_MAX_SOCKETS_IP=5000, o pasado el 100 los rechaza (socket/handler.ts).
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'localdev';
 
 const { execSync } = require('child_process');

@@ -12,6 +12,7 @@ import { isRouteId, routeExists } from '../data/routes_store';
 import { isAdminTokenCurrent } from '../data/empresas';
 import { verifyToken, AdminTokenPayload } from '../auth/tokens';
 import { incrementMetric } from '../observability/metrics';
+import { requestKey } from '../security/rate_limiter';
 
 let io: Server | null = null;
 const pendingPositions = new Map<string, Map<string, BusPosition>>();
@@ -24,6 +25,21 @@ let lastLatencyReport = Date.now();
 const LATENCY_REPORT_MS = 10_000;
 const VENTANA_EVENTOS_MS = 10_000;
 const MAX_EVENTOS_POR_VENTANA = 30;
+
+// ── Sockets abiertos por dirección ─────────────────────────────────
+// Había tope de eventos y de salas por socket, pero no de sockets: un solo
+// equipo podía abrir miles y dejar al servidor sin memoria ni descriptores
+// sin mandar un evento. La clave es la del limitador del HTTP
+// (`requestKey`): detrás de ngrok es la IP del visitante y no la del túnel.
+// 100 a la vez deja sitio a muchos teléfonos detrás de la misma IP de un
+// operador móvil, que en Colombia reparten una entre muchos clientes. Las
+// herramientas de carga de tests/e2e abren miles desde esta misma máquina
+// y suben el tope con YA_VIENE_MAX_SOCKETS_IP.
+const MAX_SOCKETS_POR_IP = (() => {
+  const n = Number(process.env.YA_VIENE_MAX_SOCKETS_IP);
+  return Number.isInteger(n) && n >= 1 ? n : 100;
+})();
+const socketsPorIp = new Map<string, number>();
 
 // ── Guard anti-Slowloris: clientes que no consumen el socket se acumulan
 //    en el búfer de ws (bufferedAmount). Superado el umbral → terminate. ──
@@ -160,8 +176,40 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
     maxHttpBufferSize: 16 * 1024,
   });
 
+  // El rechazo va en el handshake, con `connect_error` y el motivo. Tras un
+  // rechazo en el handshake Socket.IO no reintenta solo; la app del pasajero
+  // sí, con su propio reloj de 15 s (`realtime_service.dart`), y entra cuando
+  // se libera un sitio. La cuenta sube y baja en `connection`/`disconnect`,
+  // que siempre van en pareja; aquí solo se mira.
+  io.use((socket, next) => {
+    const clave = requestKey(socket.request);
+    if ((socketsPorIp.get(clave) ?? 0) >= MAX_SOCKETS_POR_IP) {
+      incrementMetric('socket.rechazado.por_ip');
+      next(new Error('Too many connections'));
+      return;
+    }
+    next();
+  });
+
   // ── Candado 4: onAny — default deny, pero ignorando eventos internos ──
   io.on('connection', (socket) => {
+    // Entre el `use` y este punto Socket.IO deja pasar un tick: dos
+    // handshakes de la misma dirección en el mismo tick pasan los dos la
+    // revisión de arriba. Esta segunda es la que manda.
+    const claveIp = requestKey(socket.request);
+    const abiertosIp = socketsPorIp.get(claveIp) ?? 0;
+    if (abiertosIp >= MAX_SOCKETS_POR_IP) {
+      incrementMetric('socket.rechazado.por_ip');
+      socket.disconnect(true);
+      return;
+    }
+    socketsPorIp.set(claveIp, abiertosIp + 1);
+    socket.once('disconnect', () => {
+      const quedan = (socketsPorIp.get(claveIp) ?? 1) - 1;
+      if (quedan > 0) socketsPorIp.set(claveIp, quedan);
+      else socketsPorIp.delete(claveIp);
+    });
+
     console.log(`[WS] Client connected: ${socket.id}`);
 
     const admin = adminFromHandshake(socket.handshake.auth);

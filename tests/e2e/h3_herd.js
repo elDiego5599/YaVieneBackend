@@ -1,4 +1,6 @@
 // H-3 "Estampida de Pasajeros": 3,000 reconexiones simultáneas + positions:batch al mismo tiempo
+// Abre 3 000 sockets desde esta máquina: el backend tiene que arrancar con
+// YA_VIENE_MAX_SOCKETS_IP=5000, o pasado el 100 los rechaza (socket/handler.ts).
 const { execSync } = require('child_process');
 const { io } = require('socket.io-client');
 const { sleep, record, report } = require('./helpers');
