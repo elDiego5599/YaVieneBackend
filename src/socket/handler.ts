@@ -490,8 +490,17 @@ export function closeSocketServer(): void {
   for (const reloj of flushTimers.values()) clearTimeout(reloj);
   flushTimers.clear();
   pendingPositions.clear();
+  // El cierre de cada socket descuenta su dirección, pero el del servidor no
+  // espera a que se despachen esos avisos: sin esto, un montaje nuevo
+  // empieza con el cupo de la dirección ya gastado y rechaza a quien no debe.
+  socketsPorIp.clear();
   io?.close();
   io = null;
+}
+
+/** Direcciones con sockets abiertos. Uso en pruebas: al irse todos, cero. */
+export function activeAddressCount(): number {
+  return socketsPorIp.size;
 }
 
 /** Relojes vivos del módulo. Uso en pruebas: apagar tiene que dejarlo en cero. */
