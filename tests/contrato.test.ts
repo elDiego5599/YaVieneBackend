@@ -41,6 +41,7 @@ const INSTANTE_ISO = new Date(INSTANTE_MS).toISOString();
 const FIJOS: Record<string, unknown> = {
   capturedAt: INSTANTE_MS,
   receivedAt: INSTANTE_MS,
+  emittedAt: INSTANTE_MS,
   timestamp: INSTANTE_ISO,
   token: '<token>',
   eventId: '<eventId>',
@@ -63,6 +64,17 @@ function normalizar(valor: unknown): unknown {
     ]));
   }
   return valor;
+}
+
+/** Los objetos de bus de un payload: los que traen `capturedAt`. */
+function objetosDeBus(valor: unknown): Record<string, unknown>[] {
+  if (Array.isArray(valor)) return valor.flatMap(objetosDeBus);
+  if (valor && typeof valor === 'object') {
+    const obj = valor as Record<string, unknown>;
+    const hijos = Object.values(obj).flatMap(objetosDeBus);
+    return 'capturedAt' in obj ? [obj, ...hijos] : hijos;
+  }
+  return [];
 }
 
 /** Busca una clave en cualquier nivel del payload. */
@@ -384,6 +396,27 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
       assert.equal(tieneClave(datos, 'driverPhone'), false, `${nombre} trae driverPhone`);
       assert.equal(tieneClave(datos, 'companyId'), false, `${nombre} trae companyId`);
     }
+    // T7.6: todo bus que sale por el socket dice cuándo salió. Con eso la
+    // app mide lo que tardó en llegarle sin tener que creerle al reloj del
+    // equipo que capturó la posición.
+    for (const [nombre, datos] of capturas) {
+      if (!nombre.startsWith('socket-')) continue;
+      const buses = objetosDeBus(datos);
+      for (const bus of buses) {
+        assert.equal(typeof bus.emittedAt, 'number', `${nombre} sin emittedAt`);
+      }
+    }
+    // Las posiciones en vivo son las que importan: que ninguna se escape.
+    for (const nombre of [
+      'socket-pasajero-bus-position',
+      'socket-pasajero-positions-update',
+      'socket-pasajero-positions-batch',
+      'socket-panel-bus-position',
+      'socket-panel-fleet-batch',
+    ]) {
+      assert.ok(objetosDeBus(capturas.get(nombre)).length > 0, `${nombre} sin buses`);
+    }
+
     // T1.1: la posición del panel es la posición y nada más; la placa sale
     // del catálogo (fleet:batch o REST) y el panel la fusiona.
     assert.equal(tieneClave(posicionPanel, 'placa'), false);

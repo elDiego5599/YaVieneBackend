@@ -76,19 +76,52 @@ function startSlowConsumerGuard(): void {
   slowConsumerTimer.unref();
 }
 
+// El viaje de una posición tiene dos tramos y aquí solo se medía el
+// segundo: del bus al servidor (`capturedAt → receivedAt`, red del equipo)
+// y del servidor a quien mira el mapa (`receivedAt → emit`, lo que tarda
+// este proceso). Con un solo número no se sabía a quién culpar de una
+// posición vieja. El primero lo fecha el equipo, así que su reloj puede ir
+// adelantado y dar un tramo negativo: esas muestras no se cuentan, igual
+// que las absurdas (más de cinco minutos), en vez de ensuciar la mediana.
+const captureSamples: number[] = [];
+const MAX_CAPTURE_LAG_MS = 5 * 60_000;
+
+function percentil(ordenados: number[], p: number): number {
+  return ordenados[Math.min(ordenados.length - 1, Math.floor(ordenados.length * p))];
+}
+
+function resumen(nombre: string, muestras: number[]): string {
+  if (!muestras.length) return `${nombre}=sin-datos`;
+  const sorted = [...muestras].sort((a, b) => a - b);
+  const avg = muestras.reduce((a, b) => a + b, 0) / muestras.length;
+  return `${nombre}(n=${muestras.length} avg=${avg.toFixed(0)}ms p50=${percentil(sorted, 0.5)}ms ` +
+    `p95=${percentil(sorted, 0.95)}ms max=${sorted[sorted.length - 1]}ms)`;
+}
+
 function sampleEmitLatency(position: BusPosition): void {
   const delay = Date.now() - position.receivedAt;
   if (delay >= 0) latencySamples.push(delay);
-  if (Date.now() - lastLatencyReport >= LATENCY_REPORT_MS && latencySamples.length) {
-    const sorted = [...latencySamples].sort((a, b) => a - b);
-    const avg = latencySamples.reduce((a, b) => a + b, 0) / latencySamples.length;
+  const captura = position.receivedAt - position.capturedAt;
+  if (captura >= 0 && captura <= MAX_CAPTURE_LAG_MS) captureSamples.push(captura);
+  if (Date.now() - lastLatencyReport >= LATENCY_REPORT_MS &&
+      (latencySamples.length || captureSamples.length)) {
     console.log(
-      `[LATENCY] n=${latencySamples.length} avg=${avg.toFixed(0)}ms p50=${sorted[Math.floor(sorted.length * 0.5)]}ms ` +
-      `p95=${sorted[Math.floor(sorted.length * 0.95)]}ms max=${sorted[sorted.length - 1]}ms`,
+      `[LATENCY] ${resumen('captura', captureSamples)} ${resumen('emision', latencySamples)}`,
     );
     latencySamples.length = 0;
+    captureSamples.length = 0;
     lastLatencyReport = Date.now();
   }
+}
+
+/**
+ * El bus tal como sale por el socket: con el instante en que el servidor lo
+ * manda. Quien lo recibe compara ese instante con el suyo y sabe cuánto
+ * tardó el último tramo, sin tener que creerle al reloj del equipo que
+ * capturó el punto (T7.6).
+ */
+function conEmision<T extends object>(bus: T): T & { emittedAt: number } {
+  return { ...bus, emittedAt: Date.now() };
 }
 
 // ── Revisión de los paneles conectados ──────────────────────────────
@@ -276,7 +309,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
       socket.join(`admin:${admin.companyId}`);
       socket.emit('fleet:batch', {
         companyId: admin.companyId,
-        buses: getFleetPositions(admin.companyId),
+        buses: getFleetPositions(admin.companyId).map(conEmision),
       });
     });
 
@@ -302,7 +335,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
       const positions = getPositionsByRoute(routeId);
       socket.emit('positions:batch', {
         routeId,
-        buses: positions.map(toPublicPosition),
+        buses: positions.map((p) => conEmision(toPublicPosition(p))),
       });
     });
 
@@ -329,8 +362,9 @@ export function broadcastBusPosition(busData: BusPosition, immediate = false): v
   const companyId = busData.companyId || getBusCompanyId(busData.busId) || '';
 
   if (immediate) {
-    io.to(`route:${busData.routeId}`).emit('bus:position', toPublicPosition(busData));
-    if (companyId) io.to(`admin:${companyId}`).emit('bus:position', busData);
+    sampleEmitLatency(busData);
+    io.to(`route:${busData.routeId}`).emit('bus:position', conEmision(toPublicPosition(busData)));
+    if (companyId) io.to(`admin:${companyId}`).emit('bus:position', conEmision(busData));
     incrementMetric('socket.position.emitted');
     return;
   }
@@ -353,7 +387,7 @@ export function broadcastBusPosition(busData: BusPosition, immediate = false): v
     if (!pending || !io) return;
 
     if (pending.size > 1) {
-      const positions = [...pending.values()].map(toPublicPosition);
+      const positions = [...pending.values()].map((p) => conEmision(toPublicPosition(p)));
       io.to(`route:${busData.routeId}`).emit('positions:update', {
         routeId: busData.routeId,
         buses: positions,
@@ -361,7 +395,7 @@ export function broadcastBusPosition(busData: BusPosition, immediate = false): v
       for (const position of pending.values()) {
         sampleEmitLatency(position);
         const posCompanyId = position.companyId || getBusCompanyId(position.busId) || '';
-        if (posCompanyId) io.to(`admin:${posCompanyId}`).emit('bus:position', position);
+        if (posCompanyId) io.to(`admin:${posCompanyId}`).emit('bus:position', conEmision(position));
       }
       incrementMetric('socket.position.batched');
       return;
@@ -369,9 +403,9 @@ export function broadcastBusPosition(busData: BusPosition, immediate = false): v
 
     for (const position of pending.values()) {
       sampleEmitLatency(position);
-      io.to(`route:${position.routeId}`).emit('bus:position', toPublicPosition(position));
+      io.to(`route:${position.routeId}`).emit('bus:position', conEmision(toPublicPosition(position)));
       const posCompanyId = position.companyId || getBusCompanyId(position.busId) || '';
-      if (posCompanyId) io.to(`admin:${posCompanyId}`).emit('bus:position', position);
+      if (posCompanyId) io.to(`admin:${posCompanyId}`).emit('bus:position', conEmision(position));
       incrementMetric('socket.position.emitted');
     }
   }, SOCKET_FLUSH_MS));
@@ -420,13 +454,13 @@ export function broadcastBusVisible(
     busId,
     routeId,
     eventId,
-    position: position ? toPublicPosition(position) : null,
+    position: position ? conEmision(toPublicPosition(position)) : null,
   };
   io.to(`route:${routeId}`).emit('bus:visible', passengerPayload);
   if (resolvedCompanyId) {
     io.to(`admin:${resolvedCompanyId}`).emit('bus:visible', {
       ...passengerPayload,
-      position: position ?? null,
+      position: position ? conEmision(position) : null,
     });
   }
   incrementMetric('socket.bus_visible.emitted');
