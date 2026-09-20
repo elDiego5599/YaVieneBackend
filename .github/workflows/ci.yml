@@ -57,7 +57,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: npm test
+      # Trinquete de cobertura (T8.7): las mismas pruebas de `npm test`, más
+      # los umbrales. Están en la cobertura del día que se puso —líneas 92,
+      # ramas 79, funciones 92, con un punto de holgura porque el reparto de
+      # las pruebas en paralelo mueve el último decimal— y solo suben: quien
+      # los baje tiene que decir en el commit por qué.
+      - run: npm run test:cobertura
       - run: npm audit --omit=dev --audit-level=high
       # Las de desarrollo también: tsx, los tipos y el runner corren en esta
       # máquina con el código del repo, y una rota ahí es una puerta abierta.
