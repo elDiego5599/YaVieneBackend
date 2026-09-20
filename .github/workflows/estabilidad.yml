@@ -1,0 +1,104 @@
+name: Ya Viene Backend — estabilidad
+
+# Una prueba que falla una vez de cada veinte no se ve: se repite la corrida,
+# sale verde y nadie vuelve a mirarla. Con el tiempo esas pruebas se dejan de
+# creer, y el día que una avisa de algo real tampoco se le hace caso. Este
+# workflow corre la suite entera diez veces seguidas: si una sola vuelta se
+# cae, abre un issue con la vuelta y el final del log.
+#
+# El plan lo pedía nocturno. Va semanal porque la cuota de Actions del repo
+# privado se acabó (2026-09-19) y diez vueltas no son baratas; para volver a
+# lo nocturno se cambia el `cron` a '17 8 * * *' y ya. Mientras tanto, se
+# puede lanzar a mano desde la pestaña Actions, y ahí se elige cuántas vueltas.
+on:
+  workflow_dispatch:
+    inputs:
+      vueltas:
+        description: Cuántas veces correr la suite
+        default: '10'
+  schedule:
+    # Miércoles 03:17 en Barranquilla (08:17 UTC), fuera de la hora en punto.
+    - cron: '17 8 * * 3'
+
+# Lectura del repositorio, y escritura solo de issues: es lo único que este
+# workflow crea, y lo crea con el token de la propia corrida.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  repetir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+
+      # Sin `set -e` en el bucle a propósito: una vuelta roja no puede cortar
+      # las que faltan, porque lo que se quiere saber es cuántas de diez.
+      - name: Vueltas a la suite
+        id: vueltas
+        env:
+          VUELTAS: ${{ github.event.inputs.vueltas || '10' }}
+        run: |
+          fallos=0
+          rojas=""
+          for i in $(seq 1 "$VUELTAS"); do
+            echo "::group::vuelta $i de $VUELTAS"
+            if npm test > "vuelta-$i.log" 2>&1; then
+              echo "vuelta $i verde"
+            else
+              fallos=$((fallos + 1))
+              rojas="$rojas $i"
+              echo "vuelta $i ROJA"
+              tail -60 "vuelta-$i.log"
+            fi
+            echo "::endgroup::"
+          done
+          {
+            echo "fallos=$fallos"
+            echo "rojas=$rojas"
+            echo "vueltas=$VUELTAS"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$fallos" -gt 0 ]; then
+            {
+              echo "### Intermitentes"
+              echo "$fallos de $VUELTAS vueltas rojas:$rojas"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      # Un issue por temporada, no uno por corrida: si ya hay uno abierto con
+      # este título, se le añade un comentario. `gh` viene en el runner.
+      - name: Abrir o comentar el issue
+        if: failure() && steps.vueltas.outputs.fallos != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FALLOS: ${{ steps.vueltas.outputs.fallos }}
+          ROJAS: ${{ steps.vueltas.outputs.rojas }}
+          VUELTAS: ${{ steps.vueltas.outputs.vueltas }}
+        run: |
+          titulo="Prueba intermitente en la suite del backend"
+          enlace="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          # Con printf y no con un texto a varias líneas: la sangría del
+          # YAML se colaría en el issue y diez espacios delante son un bloque
+          # de código en Markdown.
+          cuerpo="$(printf '%s\n\n%s\n\n%s\n' \
+            "$FALLOS de $VUELTAS vueltas rojas (vueltas:$ROJAS)." \
+            "El log de cada vuelta roja está en la corrida: $enlace" \
+            "Una prueba que falla a veces oculta una condición de carrera de verdad tan a menudo como es un fallo de la prueba. Hasta saber cuál de las dos es, no se cierra.")"
+          numero="$(gh issue list --state open --search "in:title \"$titulo\"" \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "$numero" ]; then
+            gh issue comment "$numero" --body "$cuerpo"
+          else
+            gh issue create --title "$titulo" --body "$cuerpo"
+          fi
