@@ -35,6 +35,10 @@ LLENO_MIN = 15      # modo legado (sin --capacidad): promedio > 15 -> LLENO
 VACIO_PCT = 40.0    # con --capacidad: pct < 40  -> VACÍO  (bandas dueño)
 LLENO_PCT = 85.0    # con --capacidad: pct >= 85 -> LLENO  (<40 / 40-85 / >=85)
 
+# Aforo ejemplo por tipología (sentados + de pie, números del dueño).
+# --tipologia pone la capacidad default; --capacidad manda si se dan los dos.
+TIPOLOGIA_AFORO = {"SENCILLO": 30.0, "PADRON": 60.0, "ARTICULADO": 80.0}
+
 
 @dataclass
 class Config:
@@ -316,6 +320,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
                    help="NMS: 0.9 separa mejor multitudes apiñadas (más recall)")
     p.add_argument("--capacidad", type=float, default=None,
                    help="pasajeros aprox. del bus (sentados+pie): activa bandas %%")
+    p.add_argument("--tipologia", default=None,
+                   help="SENCILLO|PADRON|ARTICULADO: pone capacidad 30|60|80 salvo --capacidad")
     p.add_argument("--vacio-pct", type=float, default=40.0)
     p.add_argument("--lleno-pct", type=float, default=85.0)
     p.add_argument("--imgsz", type=int, default=640)
@@ -325,9 +331,14 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-show", action="store_true")
     p.add_argument("--save-jsonl", default=None)
     a = p.parse_args(argv)
+    tip = (a.tipologia or "").strip().upper() or None
+    if tip is not None and tip not in TIPOLOGIA_AFORO:
+        p.error(f"tipologia debe ser una de: {', '.join(TIPOLOGIA_AFORO)}")
+    capacidad = a.capacidad if a.capacidad is not None else (
+        TIPOLOGIA_AFORO[tip] if tip else None)
     return Config(
         source=a.source, stride_seconds=a.cada_segundos, conf=a.conf,
-        iou=a.iou, capacidad=a.capacidad, vacio_pct=a.vacio_pct,
+        iou=a.iou, capacidad=capacidad, vacio_pct=a.vacio_pct,
         lleno_pct=a.lleno_pct,
         imgsz=a.imgsz, model_name=a.modelo, device=a.device,
         half=not a.fp32, show=not a.no_show, save_jsonl=a.save_jsonl,

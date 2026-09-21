@@ -147,6 +147,7 @@ function initSchema(): void {
       company_id TEXT NOT NULL,
       plate_number TEXT,
       capacity INTEGER NOT NULL DEFAULT 40,
+      tipologia TEXT NOT NULL DEFAULT 'SENCILLO',
       status TEXT NOT NULL DEFAULT 'active',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -720,6 +721,19 @@ function initSchema(): void {
           CREATE INDEX IF NOT EXISTS idx_assignments_bus
             ON turn_assignments(bus_id);
         `);
+      },
+    },
+    {
+      version: 23,
+      apply: () => {
+        // Tipología del bus para el aforo por % (SENCILLO | PADRON |
+        // ARTICULADO) y adopción de `capacity` como aforo por bus. La
+        // columna `capacity` existía desde la migración 5 pero nadie la
+        // escribía ni la leía: todo bus valía 40. El DEFAULT 'SENCILLO'
+        // rellena las filas viejas sin backfill; `capacity` ya trae su
+        // propio DEFAULT 40. La lista cerrada se valida en la API, no aquí.
+        ensureColumn(d, 'buses', 'tipologia', "TEXT NOT NULL DEFAULT 'SENCILLO'");
+        ensureColumn(d, 'buses', 'capacity', 'INTEGER NOT NULL DEFAULT 40');
       },
     },
   ];

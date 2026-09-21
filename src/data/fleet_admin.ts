@@ -15,6 +15,46 @@ import { revokeSessionsForBus } from './sessions';
  */
 export const MAX_INTERNO = 12;
 
+/**
+ * Tipologías de Barranquilla para el aforo por %. Lista cerrada a
+ * propósito: cada tipología calibra sus umbrales contra lo que mide el
+ * sistema, y un texto libre ("Transmetro :)") rompería esa calibración.
+ * En código sin tildes ni eñes; el panel muestra los nombres bonitos.
+ */
+export const TIPOLOGIAS = ['SENCILLO', 'PADRON', 'ARTICULADO'] as const;
+export type Tipologia = (typeof TIPOLOGIAS)[number];
+
+/** Aforo ejemplo por tipología (sentados + de pie). Es el default al dar
+ * de alta: cada bus guarda el suyo y el operador lo ajusta al vehículo. */
+export const CAPACIDAD_POR_TIPOLOGIA: Record<Tipologia, number> = {
+  SENCILLO: 30,
+  PADRON: 60,
+  ARTICULADO: 80,
+};
+
+export const MIN_CAPACIDAD = 1;
+export const MAX_CAPACIDAD = 300;
+
+/** Mayúsculas insensitive (`sencillo` vale); tildes y el resto no. */
+export function normalizeTipologia(raw: unknown): Tipologia | null {
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim().toUpperCase();
+  return (TIPOLOGIAS as readonly string[]).includes(v) ? (v as Tipologia) : null;
+}
+
+/**
+ * Entero entre MIN y MAX. Acepta número o texto numérico (los formularios
+ * mandan texto). `null` es inválido; la ausencia se detecta antes con
+ * `=== undefined` y aplica el default de la tipología.
+ */
+export function normalizeCapacidad(raw: unknown): number | null {
+  const n = typeof raw === 'number' ? raw
+    : typeof raw === 'string' && raw.trim() !== '' ? Number(raw.trim())
+    : NaN;
+  if (!Number.isInteger(n) || n < MIN_CAPACIDAD || n > MAX_CAPACIDAD) return null;
+  return n;
+}
+
 export const visibilityCache = new Map<string, boolean>();
 export const busCompanyCache = new Map<string, string>();
 
@@ -64,6 +104,7 @@ export function getFleetPositions(companyId: string): FleetBus[] {
   const db = getDb();
   const rows = db.prepare(`
     SELECT b.bus_id, b.company_id, b.visible, b.plate_number, b.interno, b.route_id AS bus_route_id,
+           b.tipologia, b.capacity,
            p.route_id, p.lat, p.lon, p.heading, p.speed_kmh, p.sentido,
            p.timestamp, p.captured_at, p.sequence, p.is_ghost,
            d.name AS driver_name
@@ -79,6 +120,8 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     plate_number: string | null;
     interno: string | null;
     bus_route_id: string | null;
+    tipologia: string | null;
+    capacity: number | null;
     route_id: string | null;
     lat: number | null;
     lon: number | null;
@@ -98,6 +141,8 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     routeId: row.route_id ?? row.bus_route_id,
     placa: row.plate_number ?? row.bus_id,
     interno: row.interno ?? '',
+    tipologia: row.tipologia ?? 'SENCILLO',
+    capacidad: typeof row.capacity === 'number' && row.capacity > 0 ? row.capacity : 40,
     driverName: row.driver_name,
     visible: row.visible === 1,
     // Una fila en `positions` sólo dice que este bus reportó alguna vez. El
@@ -120,7 +165,8 @@ export function getFleetPositions(companyId: string): FleetBus[] {
 /**
  * Alta (o renovación) de un bus. Devuelve el bus, o por qué no se pudo:
  * `invalid` es una placa mal escrita, una ruta que falta o no tiene forma de
- * ruta, o un interno demasiado largo; `taken` es una placa que ya está dada
+ * ruta, un interno demasiado largo, una tipología fuera de la lista cerrada
+ * o una capacidad fuera de rango; `taken` es una placa que ya está dada
  * de alta en OTRA empresa.
  *
  * Ese segundo caso era un robo silencioso: el INSERT resuelve el conflicto
@@ -134,6 +180,10 @@ export function getFleetPositions(companyId: string): FleetBus[] {
  * `buses.route_id`: un bus con ruta `<lo que sea>` queda fuera del mapa para
  * siempre, porque el socket del pasajero rechaza suscribirse a algo que no
  * tenga forma de ruta. Ahora se exige la misma forma que el alta de rutas.
+ *
+ * Sin tipología se asume SENCILLO y sin capacidad el aforo ejemplo de su
+ * tipología (30/60/80): los buses viejos y los tests que no mandan nada
+ * siguen entrando igual que antes.
  */
 export type CreateBusError = 'invalid' | 'taken';
 
@@ -142,12 +192,19 @@ export function createBus(
   placa: string,
   routeId: string,
   interno?: string,
+  extra?: { tipologia?: unknown; capacidad?: unknown },
 ): FleetBus | CreateBusError {
   const normalized = normalizePlaca(placa);
   if (!normalized) return 'invalid';
   routeId = routeId.trim();
   if (!isRouteId(routeId)) return 'invalid';
   if ((interno ?? '').trim().length > MAX_INTERNO) return 'invalid';
+  const tipologia = extra?.tipologia === undefined ? 'SENCILLO' : normalizeTipologia(extra.tipologia);
+  if (!tipologia) return 'invalid';
+  const capacidad = extra?.capacidad === undefined
+    ? CAPACIDAD_POR_TIPOLOGIA[tipologia]
+    : normalizeCapacidad(extra.capacidad);
+  if (capacidad === null) return 'invalid';
   const busId = busIdFromPlaca(normalized);
   const now = Date.now();
   const db = getDb();
@@ -171,16 +228,18 @@ export function createBus(
       ).get(companyId) as { m: number | null }).m ?? 0) + 1).padStart(3, '0');
 
   const insert = db.prepare(`
-    INSERT INTO buses (bus_id, company_id, plate_number, route_id, interno, visible, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+    INSERT INTO buses (bus_id, company_id, plate_number, route_id, interno, tipologia, capacity, visible, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     ON CONFLICT(bus_id) DO UPDATE SET
       company_id = excluded.company_id,
       plate_number = excluded.plate_number,
       route_id = excluded.route_id,
       interno = excluded.interno,
+      tipologia = excluded.tipologia,
+      capacity = excluded.capacity,
       updated_at = excluded.updated_at
   `);
-  insert.run(busId, companyId, normalized, routeId || null, resolvedInterno, now, now);
+  insert.run(busId, companyId, normalized, routeId || null, resolvedInterno, tipologia, capacidad, now, now);
   busCompanyCache.set(busId, companyId);
   return {
     busId,
@@ -188,6 +247,8 @@ export function createBus(
     routeId: routeId || null,
     placa: normalized,
     interno: resolvedInterno,
+    tipologia,
+    capacidad,
     driverName: null,
     visible: false,
     online: false,
@@ -219,7 +280,7 @@ export type UpdateBusError = 'taken';
 
 export function updateBus(
   busId: string,
-  changes: { placa?: string; routeId?: string | null; interno?: string },
+  changes: { placa?: string; routeId?: string | null; interno?: string; tipologia?: unknown; capacidad?: unknown },
 ): FleetBus | UpdateBusError | null {
   const companyId = getBusCompanyId(busId);
   if (!companyId) return null;
@@ -230,6 +291,18 @@ export function updateBus(
     newPlaca = normalizePlaca(changes.placa);
     if (!newPlaca) return null;
     if (placaDeOtroBus(newPlaca, busId)) return 'taken';
+  }
+  // La API ya contesta 400 con el motivo exacto; aquí se repite la
+  // validación para quien llame directo (tests, scripts).
+  let newTipologia: Tipologia | null = null;
+  if (changes.tipologia !== undefined) {
+    newTipologia = normalizeTipologia(changes.tipologia);
+    if (!newTipologia) return null;
+  }
+  let newCapacidad: number | null = null;
+  if (changes.capacidad !== undefined) {
+    newCapacidad = normalizeCapacidad(changes.capacidad);
+    if (newCapacidad === null) return null;
   }
   const routeId = changes.routeId !== undefined ? changes.routeId : null;
   const interno = changes.interno !== undefined ? changes.interno.trim() : null;
@@ -264,6 +337,17 @@ export function updateBus(
     if (interno !== null) {
       db.prepare('UPDATE buses SET interno = ?, updated_at = ? WHERE bus_id = ?')
         .run(interno, Date.now(), busId);
+    }
+    // Cambiar la tipología no toca la capacidad que el operador ya puso a
+    // mano: el default de la tipología solo aplica al dar de alta sin
+    // capacidad. Si quiere el ejemplo de la nueva tipología, la manda.
+    if (newTipologia) {
+      db.prepare('UPDATE buses SET tipologia = ?, updated_at = ? WHERE bus_id = ?')
+        .run(newTipologia, Date.now(), busId);
+    }
+    if (newCapacidad !== null) {
+      db.prepare('UPDATE buses SET capacity = ?, updated_at = ? WHERE bus_id = ?')
+        .run(newCapacidad, Date.now(), busId);
     }
   });
   dbUpdate();

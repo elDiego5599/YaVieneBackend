@@ -122,8 +122,8 @@ clave mal** (`429 RATE_LIMITED`).
 | GET | `/api/fleet/positions` | Flota de la empresa del token |
 | GET / POST | `/api/fleet/routes` | Catálogo de rutas / alta `{ routeId, name }` |
 | PATCH / DELETE | `/api/fleet/routes/:routeId` | Renombrar `{ name }` / borrar |
-| POST | `/api/fleet/buses` | Alta `{ placa, routeId, interno? }` |
-| PATCH / DELETE | `/api/fleet/buses/:busId` | Editar `{ placa?, routeId?, interno? }` / borrar |
+| POST | `/api/fleet/buses` | Alta `{ placa, routeId, interno?, tipologia?, capacidad? }` |
+| PATCH / DELETE | `/api/fleet/buses/:busId` | Editar `{ placa?, routeId?, interno?, tipologia?, capacidad? }` / borrar |
 | DELETE | `/api/fleet/buses?confirm=<companyId>` | Borrar toda la flota |
 | POST | `/api/fleet/buses/:busId/visibility` | `{ visible }` de un bus |
 | POST | `/api/fleet/buses/visibility` | `{ visible }` de todos los buses de la empresa |
@@ -135,6 +135,8 @@ responde `409 BUS_TAKEN` sin decir de quién es.
 Formatos y límites (400 si no se cumplen):
 
 - `placa`: 3 letras + 3 números (`ABC123`); el bus queda como `BUS-ABC123`.
+- `tipologia`: `SENCILLO`, `PADRON` o `ARTICULADO` (lista cerrada). Sin ella se asume `SENCILLO`.
+- `capacidad`: aforo aprox. del bus, sentados + de pie, entero de 1 a 300. Sin ella vale el ejemplo de su tipología (30/60/80). Cada bus guarda el suyo.
 - `routeId`: grupos alfanuméricos separados por guiones, de 2 a 20 caracteres
   (`R-101`). En la edición, `""` deja el bus sin ruta.
 - `name` de ruta: hasta 60 caracteres. `interno`: hasta 12.

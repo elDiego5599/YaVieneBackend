@@ -29,7 +29,7 @@ import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords'
 import { signToken } from '../auth/tokens';
 import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
 import { getMetrics } from '../observability/metrics';
-import { MAX_INTERNO } from '../data/fleet_admin';
+import { MAX_INTERNO, TIPOLOGIAS, MAX_CAPACIDAD, MIN_CAPACIDAD, normalizeCapacidad, normalizeTipologia } from '../data/fleet_admin';
 import { isRouteId, MAX_NOMBRE_RUTA } from '../data/routes_store';
 import {
   adminRateLimiter,
@@ -681,14 +681,27 @@ addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
   const placa = typeof body?.placa === 'string' ? body.placa : '';
   const routeId = typeof body?.routeId === 'string' ? body.routeId : '';
   const interno = typeof body?.interno === 'string' ? body.interno : '';
+  // Tipología cerrada (SENCILLO | PADRON | ARTICULADO) y aforo por bus.
+  // Sin tipología se asume SENCILLO; sin capacidad, el ejemplo de su
+  // tipología (30/60/80). El panel manda el desplegable + el número.
+  const rawTipologia = body?.tipologia === undefined ? undefined : body.tipologia;
+  const rawCapacidad = body?.capacidad === undefined ? undefined : body.capacidad;
+  if (rawTipologia !== undefined && !normalizeTipologia(rawTipologia)) {
+    writeError(res, 400, 'INVALID_TIPOLOGIA', `tipologia debe ser una de: ${TIPOLOGIAS.join(', ')}`);
+    return;
+  }
+  if (rawCapacidad !== undefined && normalizeCapacidad(rawCapacidad) === null) {
+    writeError(res, 400, 'INVALID_CAPACIDAD', `capacidad debe ser un entero entre ${MIN_CAPACIDAD} y ${MAX_CAPACIDAD}`);
+    return;
+  }
 
-  const bus = createBus(auth.companyId, placa, routeId, interno);
+  const bus = createBus(auth.companyId, placa, routeId, interno, { tipologia: rawTipologia, capacidad: rawCapacidad });
   if (bus === 'invalid') {
     writeError(
       res,
       400,
       'INVALID_BUS',
-      `Placa inválida (3 letras + 3 números, ej. ABC123), ruta que falta o mal escrita (ej. R-101) o interno de más de ${MAX_INTERNO} caracteres`,
+      `Placa inválida (3 letras + 3 números, ej. ABC123), ruta que falta o mal escrita (ej. R-101), interno de más de ${MAX_INTERNO} caracteres, tipología fuera de ${TIPOLOGIAS.join('/')} o capacidad fuera de ${MIN_CAPACIDAD}-${MAX_CAPACIDAD}`,
     );
     return;
   }
@@ -719,6 +732,8 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
   const placa = typeof body?.placa === 'string' ? body.placa : undefined;
   const rawRouteId = typeof body?.routeId === 'string' ? body.routeId.trim() : undefined;
   const interno = typeof body?.interno === 'string' ? body.interno : undefined;
+  const rawTipologia = body?.tipologia === undefined ? undefined : body.tipologia;
+  const rawCapacidad = body?.capacidad === undefined ? undefined : body.capacidad;
   // La edición guardaba cualquier cadena como ruta, igual que el alta: un bus
   // pasado a `<lo que sea>` desaparecía del mapa del pasajero. La cadena vacía
   // sigue sirviendo para dejar el bus sin ruta.
@@ -730,9 +745,17 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
     writeError(res, 400, 'INVALID_INTERNO', `interno admite hasta ${MAX_INTERNO} caracteres`);
     return;
   }
+  if (rawTipologia !== undefined && !normalizeTipologia(rawTipologia)) {
+    writeError(res, 400, 'INVALID_TIPOLOGIA', `tipologia debe ser una de: ${TIPOLOGIAS.join(', ')}`);
+    return;
+  }
+  if (rawCapacidad !== undefined && normalizeCapacidad(rawCapacidad) === null) {
+    writeError(res, 400, 'INVALID_CAPACIDAD', `capacidad debe ser un entero entre ${MIN_CAPACIDAD} y ${MAX_CAPACIDAD}`);
+    return;
+  }
   const routeId = rawRouteId;
 
-  const bus = updateBus(params.busId, { placa, routeId, interno });
+  const bus = updateBus(params.busId, { placa, routeId, interno, tipologia: rawTipologia, capacidad: rawCapacidad });
   // El mismo 409 que el alta, y sin decir de quién es la placa: con la
   // edición se podía hacer lo que el alta ya no deja.
   if (bus === 'taken') {

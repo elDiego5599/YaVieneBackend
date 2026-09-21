@@ -26,6 +26,12 @@ export interface FleetBus {
   routeId: string | null;
   placa: string;
   interno: string;
+  /** SENCILLO | PADRON | ARTICULADO. Lista cerrada: el aforo por % se
+   * calibra por tipología y un texto libre la rompería. */
+  tipologia: string;
+  /** Aforo aprox. del bus (sentados + de pie). Lo pone el panel al dar de
+   * alta el bus; cada bus lleva el suyo aunque comparta tipología. */
+  capacidad: number;
   driverName: string | null;
   visible: boolean;
   online: boolean;
