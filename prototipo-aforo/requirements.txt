@@ -1,0 +1,8 @@
+# Solo en la máquina con la RTX 5070 (NO en el Mac del backend: ahí no hay CUDA).
+# torch con CUDA ≥12.8 (Blackwell sm_120 exige torch ≥2.8; verifica con
+# python -c "import torch; print(torch.cuda.get_device_capability())" -> (12, 0)).
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch
+ultralytics>=8.3
+opencv-python>=4.10
+numpy>=1.26

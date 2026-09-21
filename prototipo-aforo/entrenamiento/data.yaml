@@ -1,0 +1,11 @@
+# Dataset del piloto: interiores de bus, UNA sola clase (person).
+# Estructura esperada (créala con split_dataset.py o a mano):
+#   dataset/
+#     images/train/  images/val/
+#     labels/train/  labels/val/
+# Traslada aquí las rutas REALES de tu torre (Windows usa barras / o \\\\):
+train: C:/yaviene/dataset/images/train
+val: C:/yaviene/dataset/images/val
+
+nc: 1
+names: ['person']
