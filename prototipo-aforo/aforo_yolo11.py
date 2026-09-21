@@ -8,6 +8,9 @@ emite JSONL + ventana OpenCV con el estado VACÍO / MEDIO / LLENO.
 Uso:
     python aforo_yolo11.py --source 0.mp4
     python aforo_yolo11.py --source rtsp://usuario:clave@ip:554/camara --no-show --save-jsonl aforo.jsonl
+    python aforo_yolo11.py --source bus.mp4 --capacidad 40 --no-show
+        # con --capacidad el estado sale por % (<40 VACÍO, 40-85 MEDIO,
+        # >=85 LLENO); sin ella, por conteo absoluto legado (<5/5-15/>15).
 
 Requiere (solo en la máquina con GPU, NO en este Mac):
     pip install -r requirements.txt   # torch con CUDA, ultralytics, opencv, numpy
@@ -27,8 +30,10 @@ from datetime import datetime, timezone
 # Configuración
 # ---------------------------------------------------------------------------
 
-VACIO_MAX = 5       # promedio < 5  -> VACÍO  (calibrar por tipología de bus)
-LLENO_MIN = 15      # promedio > 15 -> LLENO  (buseta vs bus padrón difieren)
+VACIO_MAX = 5       # modo legado (sin --capacidad): promedio < 5  -> VACÍO
+LLENO_MIN = 15      # modo legado (sin --capacidad): promedio > 15 -> LLENO
+VACIO_PCT = 40.0    # con --capacidad: pct < 40  -> VACÍO  (bandas dueño)
+LLENO_PCT = 85.0    # con --capacidad: pct >= 85 -> LLENO  (<40 / 40-85 / >=85)
 
 
 @dataclass
@@ -36,6 +41,7 @@ class Config:
     source: str
     stride_seconds: float = 2.0
     conf: float = 0.40
+    iou: float = 0.70
     imgsz: int = 640
     model_name: str = "yolo11m.pt"
     device: str = "cuda:0"
@@ -44,6 +50,9 @@ class Config:
     show: bool = True
     save_jsonl: str | None = None
     max_reconnect: int = 5
+    capacidad: float | None = None  # pasajeros aprox. del bus (sentados+pie);
+    vacio_pct: float = 40.0         # con capacidad: bandas <40 / 40-85 / >=85
+    lleno_pct: float = 85.0         # sin capacidad: umbrales absolutos legado
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +154,7 @@ class Detector:
             source=frame,
             classes=[0],            # solo 'person' de COCO
             conf=self.cfg.conf,
+            iou=self.cfg.iou,       # NMS: 0.9 separa mejor multitudes apiñadas
             imgsz=self.cfg.imgsz,
             half=self.cfg.half,
             device=self.cfg.device,
@@ -158,36 +168,96 @@ class Detector:
 # Fusión y estabilización (promedio móvil de 5 + umbrales)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Apiñado: cobertura y solape medio a partir de las cajas ya detectadas.
+# Sin otro modelo: n solo no distingue "10 sentados separados" de
+# "6 de pie encimados"; cobertura alta + solape alto sí. Costo ~0.
+# ---------------------------------------------------------------------------
+
+def _iou(a, b) -> float:
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+    x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    ua = (max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+          + max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1]) - inter)
+    return inter / ua if ua > 0 else 0.0
+
+
+def densidad(cajas, ancho_img: int, alto_img: int) -> tuple[float, float]:
+    """Devuelve (cobertura, solape_medio).
+
+    cobertura = suma(áreas cajas) / área imagen (puede pasar de 1.0 cuando
+    las cajas se enciman: eso también es señal de apiñado, no un error).
+    solape_medio = IoU medio de los pares que se tocan (0.0 si <2 cajas).
+    OJO perspectiva: una caja cercana es más grande; C y S se normalizan
+    por cámara con video real, no se comparan entre buses distintos."""
+    area_img = max(1, ancho_img * alto_img)
+    areas = [max(0.0, x2 - x1) * max(0.0, y2 - y1)
+             for (x1, y1, x2, y2) in (tuple(map(float, b)) for b in cajas)]
+    cobertura = sum(areas) / area_img
+    ious = [_iou(a, b) for i, a in enumerate(cajas) for b in list(cajas)[i + 1:]
+            if _iou(tuple(map(float, a)), tuple(map(float, b))) > 0]
+    solape = sum(ious) / len(ious) if ious else 0.0
+    # float() ANTES de round(): el float32 ya trae error binario y
+    # round() solo no lo limpia (0.15500000119 Revienta JSONL legible).
+    return round(float(cobertura), 3), round(float(solape), 3)
+
+
 @dataclass
 class Medicion:
     timestamp: str
     conteo_crudo: int
     conteo_promediado: float
     estado_ocupacion: str
+    pct_promediado: float | None = None   # prom/capacidad*100 (None sin --capacidad)
+    capacidad: float | None = None
+    cobertura: float = 0.0                # apiñado instantáneo del frame
+    solape_medio: float = 0.0
 
 
 class Suavizador:
     """Promedio móvil de los últimos N conteos: tapa parpadeos y oclusiones
     de un segundo (alguien pasa frente a la cámara) sin reaccionar tarde:
-    con 1 frame/2 s, 5 muestras = 10 s de memoria."""
+    con 1 frame/2 s, 5 muestras = 10 s de memoria.
 
-    def __init__(self, ventana: int = 5) -> None:
+    Con capacidad: el estado sale por % (<40 VACÍO, 40-85 MEDIO, >=85 LLENO).
+    Sin capacidad: umbrales absolutos legado (<5 / 5-15 / >15)."""
+
+    def __init__(self, ventana: int = 5, capacidad: float | None = None,
+                 vacio_pct: float = VACIO_PCT, lleno_pct: float = LLENO_PCT) -> None:
         self._cola: deque[int] = deque(maxlen=ventana)
+        self.capacidad = capacidad
+        self.vacio_pct = vacio_pct
+        self.lleno_pct = lleno_pct
 
-    def agregar(self, conteo: int, tiempo_video_s: float) -> Medicion:
+    def agregar(self, conteo: int, tiempo_video_s: float,
+                cobertura: float = 0.0, solape_medio: float = 0.0) -> Medicion:
         self._cola.append(conteo)
         prom = sum(self._cola) / len(self._cola)
-        if prom < VACIO_MAX:
-            estado = "VACÍO"
-        elif prom <= LLENO_MIN:
-            estado = "MEDIO"
+        pct = round(prom / self.capacidad * 100, 1) if self.capacidad else None
+        if pct is None:
+            if prom < VACIO_MAX:
+                estado = "VACÍO"
+            elif prom <= LLENO_MIN:
+                estado = "MEDIO"
+            else:
+                estado = "LLENO"
         else:
-            estado = "LLENO"
+            if pct < self.vacio_pct:
+                estado = "VACÍO"
+            elif pct >= self.lleno_pct:
+                estado = "LLENO"
+            else:
+                estado = "MEDIO"
         return Medicion(
             timestamp=datetime.now(timezone.utc).isoformat(),
             conteo_crudo=conteo,
             conteo_promediado=round(prom, 1),
             estado_ocupacion=estado,
+            pct_promediado=pct,
+            capacidad=self.capacidad,
+            cobertura=cobertura,
+            solape_medio=solape_medio,
         )
 
 
@@ -242,6 +312,12 @@ def parse_args(argv: list[str] | None = None) -> Config:
                    help="video local (.mp4) o RTSP de la cámara del bus")
     p.add_argument("--cada-segundos", type=float, default=2.0)
     p.add_argument("--conf", type=float, default=0.40)
+    p.add_argument("--iou", type=float, default=0.70,
+                   help="NMS: 0.9 separa mejor multitudes apiñadas (más recall)")
+    p.add_argument("--capacidad", type=float, default=None,
+                   help="pasajeros aprox. del bus (sentados+pie): activa bandas %%")
+    p.add_argument("--vacio-pct", type=float, default=40.0)
+    p.add_argument("--lleno-pct", type=float, default=85.0)
     p.add_argument("--imgsz", type=int, default=640)
     p.add_argument("--modelo", default="yolo11m.pt")
     p.add_argument("--device", default="cuda:0")
@@ -251,6 +327,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     a = p.parse_args(argv)
     return Config(
         source=a.source, stride_seconds=a.cada_segundos, conf=a.conf,
+        iou=a.iou, capacidad=a.capacidad, vacio_pct=a.vacio_pct,
+        lleno_pct=a.lleno_pct,
         imgsz=a.imgsz, model_name=a.modelo, device=a.device,
         half=not a.fp32, show=not a.no_show, save_jsonl=a.save_jsonl,
     )
@@ -261,7 +339,8 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, signal.default_int_handler)
     fuente = VideoSource(cfg)
     detector = Detector(cfg)
-    suavizador = Suavizador(cfg.ventana)
+    suavizador = Suavizador(cfg.ventana, cfg.capacidad,
+                            cfg.vacio_pct, cfg.lleno_pct)
     vista = Visualizador(cfg.show)
     salida = open(cfg.save_jsonl, "a", encoding="utf-8") if cfg.save_jsonl else None
     try:
@@ -275,7 +354,9 @@ def main(argv: list[str] | None = None) -> int:
                     break
                 continue
             conteo, cajas = detector.contar(frame)
-            med = suavizador.agregar(conteo, t_video)
+            alto, ancho = frame.shape[0], frame.shape[1]
+            cobertura, solape = densidad(cajas, ancho, alto)
+            med = suavizador.agregar(conteo, t_video, cobertura, solape)
             linea = json.dumps(med.__dict__, ensure_ascii=False)
             print(linea, flush=True)
             if salida is not None:
