@@ -10,8 +10,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-const HTTP_PORT = 3160;
-const MQTT_PORT = 8930;
+// Puertos propios, HTTP 3240 y MQTT 9020: node --test corre los archivos en
+// paralelo (el reparto de los demás está en arranque.test.ts). El 3160/8930
+// es de socket_abuso.test.ts: compartirlo hacía fallar este test solo en
+// suite completa (401 al crear el admin contra el servidor ajeno).
+const HTTP_PORT = 3240;
+const MQTT_PORT = 9020;
 const ADMIN_API_KEY = 'e2e-admin-key';
 const JWT_SECRET = 'e2e-jwt-secret';
 // Ver fleet.test.ts: va en constante porque gitleaks marca como secreto
