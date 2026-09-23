@@ -16,7 +16,7 @@
     "respaldo": "node scripts/respaldar.mjs",
     "respaldo:probar": "node scripts/probar-restauracion.mjs",
     "carga": "node --import tsx scripts/carga.ts",
-    "test:cobertura": "node --import tsx --test --experimental-test-coverage --test-coverage-exclude='tests/**' --test-coverage-exclude='scripts/**' --test-coverage-exclude='dist/**' --test-coverage-lines=92 --test-coverage-branches=79 --test-coverage-functions=92 tests/*.test.ts",
+    "test:cobertura": "node --import tsx --test --experimental-test-coverage --test-coverage-exclude=\"tests/**\" --test-coverage-exclude=\"scripts/**\" --test-coverage-exclude=\"dist/**\" --test-coverage-lines=92 --test-coverage-branches=79 --test-coverage-functions=92 tests/*.test.ts",
     "contrato:actualizar": "ACTUALIZAR_CONTRATO=1 node --import tsx --test tests/contrato.test.ts"
   },
   "keywords": [
