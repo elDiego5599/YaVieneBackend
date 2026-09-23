@@ -412,3 +412,9 @@ const shutdown = async (signal: string): Promise<void> => {
 
 process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
 process.once('SIGINT', () => { void shutdown('SIGINT'); });
+// Windows no entrega SIGTERM/SIGINT al hijo (kill() termina sin correr
+// handlers): el padre apaga por IPC con el mismo `shutdown` y el mismo
+// volcado. Solo dispara cuando hay canal IPC (tests); en Fly no hay padre.
+process.on('message', (msg: unknown) => {
+  if (msg === 'shutdown') void shutdown('IPC');
+});

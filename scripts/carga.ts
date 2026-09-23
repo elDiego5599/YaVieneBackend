@@ -18,7 +18,7 @@
 // cuántas llegaron a los pasajeros y cuántas se fundieron en el camino. El
 // retraso del bucle de eventos de este proceso va también: si sube, lo que
 // se está midiendo es el equipo que genera la carga y no el backend.
-import { execFileSync, spawn } from 'node:child_process';
+import { execFile as execFileAsync, execFileSync, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -185,6 +185,34 @@ function usoDe(pid: number): { cpuS: number; rssKb: number } | null {
   }
 }
 
+/**
+ * Lo mismo pero sin bloquear el bucle: en Windows no hay `ps` y el
+ * powershell tarda ~300 ms por muestra; en síncrono paraba el publicador
+ * (token bucket con credo por tic) y la corrida perdía publicaciones.
+ */
+function usoDeAsync(pid: number): Promise<{ cpuS: number; rssKb: number } | null> {
+  const directo = usoDe(pid);
+  if (directo || process.platform !== 'win32') return Promise.resolve(directo);
+  // Sin `ps` (Windows): Get-Process da CPU acumulada (s) y WorkingSet (bytes).
+  // Se fuerza InvariantCulture porque en es-CO el decimal sale con coma.
+  return new Promise((resolve) => {
+    execFileAsync('powershell', ['-NoProfile', '-Command',
+      `$p=Get-Process -Id ${pid}; $p.TotalProcessorTime.TotalSeconds.ToString([cultureinfo]::InvariantCulture); $p.WorkingSet64`,
+    ], { encoding: 'utf8' }, (error, stdout) => {
+      if (error) return resolve(null);
+      try {
+        const salida = String(stdout).trim().split(/\s+/);
+        const cpuS = Number(salida[0]);
+        const rssKb = Number(salida[1]) / 1024;
+        if (!Number.isFinite(cpuS) || !Number.isFinite(rssKb) || rssKb <= 0) return resolve(null);
+        resolve({ cpuS, rssKb });
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
 function percentil(ordenadas: number[], p: number): number | null {
   if (ordenadas.length === 0) return null;
   return ordenadas[Math.min(ordenadas.length - 1, Math.floor(ordenadas.length * p))];
@@ -291,12 +319,13 @@ async function main(): Promise<void> {
     // Lo de arriba no se mide: solo la operación sostenida.
     latencias.length = 0;
     recibidas = 0;
-    const inicial = usoDe(backend.pid!);
+    const inicial = await usoDeAsync(backend.pid!);
     const t0 = Date.now();
     bucle.enable();
     muestreo = setInterval(() => {
-      const u = usoDe(backend.pid!);
-      if (u) muestras.push({ ...u, t: Date.now() });
+      void usoDeAsync(backend.pid!).then((u) => {
+        if (u) muestras.push({ ...u, t: Date.now() });
+      });
     }, 1000);
 
     // Cada bus publica una vez por cadencia, y se reparten a lo largo de
@@ -334,7 +363,7 @@ async function main(): Promise<void> {
     clearInterval(muestreo);
     bucle.disable();
 
-    const final = usoDe(backend.pid!);
+    const final = await usoDeAsync(backend.pid!);
     const segundosReales = (Date.now() - t0) / 1000;
     const metricas = await (await fetch(`${BASE}/api/metrics`, {
       headers: { 'x-admin-key': ADMIN_API_KEY },

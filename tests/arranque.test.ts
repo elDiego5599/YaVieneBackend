@@ -153,7 +153,9 @@ function arrancar(env: Record<string, string>): ChildProcess {
       MQTT_DEBUG_LOGS: 'false',
       ...env,
     },
-    stdio: ['ignore', 'ignore', 'pipe'],
+    // El cuarto canal es IPC: en Windows el apagado graceful va por mensaje
+    // ('shutdown') porque kill() no entrega señales; en POSIX no se usa.
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
   });
 }
 
@@ -304,8 +306,15 @@ test('arranque: humo con base temporal, y el apagado guarda métricas y sale lim
     await echado;
     socket.close();
 
+    // Apagado graceful por la vía de cada OS, mismo `shutdown` y mismo
+    // volcado: SIGTERM en POSIX, mensaje IPC en Windows (kill() no entrega
+    // señales al hijo: termina sin correr handlers).
     const inicio = Date.now();
-    backend.kill('SIGTERM');
+    if (process.platform === 'win32') {
+      assert.ok(backend.send?.('shutdown'), 'el hijo debe tener canal IPC');
+    } else {
+      backend.kill('SIGTERM');
+    }
     const { code, stderr } = await salida;
     assert.equal(code, 0, `el apagado ordenado sale con 0. stderr:\n${stderr}`);
     assert.ok(Date.now() - inicio < 10_000, 'el apagado no se cuelga');
