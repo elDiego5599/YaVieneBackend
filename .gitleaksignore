@@ -32,3 +32,10 @@ e4e386d86a0adeda0f0ce931d05279cb62695ec8:tests/fleet.test.ts:generic-api-key:181
 e4e386d86a0adeda0f0ce931d05279cb62695ec8:tests/fleet.test.ts:generic-api-key:357
 # Motivo: login de `crudboss` (POST /api/admin/login).
 e4e386d86a0adeda0f0ce931d05279cb62695ec8:tests/fleet.test.ts:generic-api-key:365
+
+# cc30351 (2026-09-23), tests/stores_cobertura.test.ts, prueba «admin y config».
+# Motivo: ADMIN_API_KEY de prueba en base temporal (ya reemplazada en el árbol
+# por 'stores-cob-admin-key'; estas líneas cubren el commit con el literal hex).
+cc30351ec9b8abb36fd25818b7a6fa2473e12e5c:tests/stores_cobertura.test.ts:generic-api-key:15
+cc30351ec9b8abb36fd25818b7a6fa2473e12e5c:tests/stores_cobertura.test.ts:generic-api-key:341
+cc30351ec9b8abb36fd25818b7a6fa2473e12e5c:tests/stores_cobertura.test.ts:generic-api-key:342

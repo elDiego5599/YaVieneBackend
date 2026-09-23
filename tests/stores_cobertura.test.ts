@@ -12,7 +12,7 @@ import test from 'node:test';
 
 const tmp = mkdtempSync(join(tmpdir(), 'yaviene-stores-cob-'));
 process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
-process.env.ADMIN_API_KEY = '0123456789abcdef';
+process.env.ADMIN_API_KEY = 'stores-cob-admin-key';
 process.env.JWT_SECRET = 'cob-jwt-secret';
 
 // Los módulos se cargan con require y no con import porque abren la base y
@@ -338,8 +338,8 @@ test('socket: avisos de salida, borrado y visibilidad', async () => {
 test('admin y config: clave y ramas de producción', () => {
   const req = (headers: Record<string, string>): IncomingMessage =>
     ({ headers }) as unknown as IncomingMessage;
-  assert.equal(isAdminRequest(req({ 'x-admin-key': '0123456789abcdef' })), true);
-  assert.equal(isAdminRequest(req({ 'x-admin-key': 'fedcba9876543210' })), false);
+  assert.equal(isAdminRequest(req({ 'x-admin-key': 'stores-cob-admin-key' })), true);
+  assert.equal(isAdminRequest(req({ 'x-admin-key': 'otra-clave-admin' })), false);
   assert.equal(isAdminRequest(req({ 'x-admin-key': 'corta' })), false);
   assert.equal(isAdminRequest(req({})), false);
 
