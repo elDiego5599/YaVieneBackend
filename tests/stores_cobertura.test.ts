@@ -352,3 +352,11 @@ test('admin y config: clave y ramas de producción', () => {
   assert.deepEqual(validateConfig({ ...prod, HTTP_TLS_EXTERNO: '1' }).errores, []);
   assert.match(validateConfig(prod).errores[0], /HTTP_TLS_EXTERNO/);
 });
+
+test('broker idle: ready falso y closeBroker idempotente sin servidor', async () => {
+  const broker = require('../src/mqtt/broker') as typeof import('../src/mqtt/broker');
+  assert.equal(broker.isBrokerReady(), false);
+  await broker.closeBroker();
+  assert.equal(broker.isBrokerReady(), false);
+  await broker.closeBroker();
+});
