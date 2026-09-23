@@ -28,7 +28,14 @@ const { createDriverSession, getSession } =
   require('../src/data/sessions') as typeof import('../src/data/sessions');
 const { getDb } = require('../src/data/database') as typeof import('../src/data/database');
 
-test.after(() => rmSync(tmp, { recursive: true, force: true }));
+test.after(() => {
+  // En Windows un archivo abierto no se borra: la base sigue con el
+  // descriptor de este proceso y `rmSync` falla con EBUSY. Se cierra antes.
+  try {
+    getDb().close();
+  } catch {}
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 // `createBus` devuelve el bus o el motivo por el que no se pudo dar de alta
 // ('invalid' / 'taken'). Casi todas las pruebas de aquí dan de alta buses

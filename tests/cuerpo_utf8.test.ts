@@ -28,6 +28,7 @@ process.env.ADMIN_API_KEY = CLAVE_ADMIN;
 // require y no import: estos módulos abren la base al evaluarse, y un import
 // se izaría por encima de la línea que fija la ruta.
 const { handleAPI } = require('../src/api/routes') as typeof import('../src/api/routes');
+const { getDb } = require('../src/data/database') as typeof import('../src/data/database');
 
 const servidor: Server = createServer((req, res) => {
   if (!handleAPI(req, res)) {
@@ -46,6 +47,11 @@ test.before(async () => {
 
 test.after(async () => {
   await new Promise<void>((listo) => servidor.close(() => listo()));
+  // En Windows un archivo abierto no se borra: la base sigue con el
+  // descriptor de este proceso y `rmSync` falla con EBUSY. Se cierra antes.
+  try {
+    getDb().close();
+  } catch {}
   rmSync(tmp, { recursive: true, force: true });
 });
 

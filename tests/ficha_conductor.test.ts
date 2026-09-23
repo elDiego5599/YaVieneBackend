@@ -26,6 +26,7 @@ process.env.JWT_SECRET = 'ficha-jwt-secret';
 // require y no import: estos módulos leen el entorno y abren la base al
 // evaluarse, y un import se izaría por encima de las líneas de arriba.
 const { handleAPI } = require('../src/api/routes') as typeof import('../src/api/routes');
+const { getDb } = require('../src/data/database') as typeof import('../src/data/database');
 
 const servidor: Server = createServer((req, res) => {
   if (!handleAPI(req, res)) {
@@ -74,6 +75,11 @@ test.before(async () => {
 
 test.after(async () => {
   await new Promise<void>((listo) => servidor.close(() => listo()));
+  // En Windows un archivo abierto no se borra: la base sigue con el
+  // descriptor de este proceso y `rmSync` falla con EBUSY. Se cierra antes.
+  try {
+    getDb().close();
+  } catch {}
   rmSync(tmp, { recursive: true, force: true });
 });
 

@@ -20,7 +20,14 @@ const { getDb, eliminarEmpresasFantasma } =
   require('../src/data/database') as typeof import('../src/data/database');
 const { getEmpresas } = require('../src/data/empresas') as typeof import('../src/data/empresas');
 
-test.after(() => rmSync(tmp, { recursive: true, force: true }));
+test.after(() => {
+  // En Windows un archivo abierto no se borra: la base sigue con el
+  // descriptor de este proceso y `rmSync` falla con EBUSY. Se cierra antes.
+  try {
+    getDb().close();
+  } catch {}
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 function sembrarFantasma(id: string): void {
   const d = getDb();

@@ -58,8 +58,16 @@ test.before(async () => {
   await esperarVivo(30_000);
 });
 
-test.after(() => {
-  servidor?.kill('SIGKILL');
+test.after(async () => {
+  // En Windows matar no es instantáneo: borrar la base con el hijo todavía
+  // soltando el descriptor falla con EBUSY. Se espera la salida primero.
+  if (servidor && servidor.exitCode === null) {
+    await new Promise<void>((listo) => {
+      servidor!.once('exit', () => listo());
+      servidor!.kill('SIGKILL');
+      setTimeout(() => listo(), 5000);
+    });
+  }
   rmSync(tmp, { recursive: true, force: true });
 });
 
