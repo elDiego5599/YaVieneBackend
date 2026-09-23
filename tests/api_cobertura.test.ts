@@ -312,3 +312,22 @@ test('admin por clave, borrado total y cierre de sesión', async () => {
   assert.equal((await llamar('POST', '/api/fleet/logout', undefined, comoAdmin(tokenAdmin))).estado, 204);
   assert.equal((await llamar('GET', '/api/fleet/positions', undefined, comoAdmin(tokenAdmin))).estado, 401);
 });
+
+test('headers de seguridad presentes y param malformado da 400 sin tumbar', async () => {
+  const r = await fetch(`${base}/api/health`);
+  assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(r.headers.get('x-frame-options'), 'DENY');
+  assert.equal(r.headers.get('referrer-policy'), 'no-referrer');
+  await r.text();
+
+  // %E0%A4 incompleto: URL válida pero decodeURIComponent lanza -> 400, no 500.
+  const mala = await llamar('POST', '/api/fleet/buses/%E0%A4/visibility', { visible: true }, comoAdmin(tokenAdmin));
+  assert.equal(mala.estado, 400);
+  const mala2 = await fetch(`${base}/api/admin/empresas/%E0%A4/admin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...conClave() },
+    body: JSON.stringify({ username: 'x', password: 'password123456' }),
+  });
+  assert.equal(mala2.status, 400);
+  await mala2.text();
+});

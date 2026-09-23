@@ -81,6 +81,9 @@ const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => 
   const metodos = [...metodosHttpRegistrados(), 'OPTIONS'].join(', ');
   res.setHeader('Access-Control-Allow-Methods', metodos);
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);

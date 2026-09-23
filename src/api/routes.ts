@@ -65,6 +65,13 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
   res.end(JSON.stringify(payload));
 }
 
+function setSecurityHeaders(res: ServerResponse): void {
+  // Globales vía setHeader para no quedar fuera de writeHead(204) directos.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+}
+
 function writeError(res: ServerResponse, status: number, code: string, message: string): void {
   writeJson(res, status, { error: { code, message } });
 }
@@ -809,6 +816,7 @@ export function metodosHttpRegistrados(): string[] {
 }
 
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
+  setSecurityHeaders(res);
   const url = req.url?.split('?')[0] || '';
 
   for (const h of handlers) {
@@ -817,9 +825,14 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
     if (!match) continue;
 
     const params: Record<string, string> = {};
-    h.paramNames.forEach((name, i) => {
-      params[name] = match[i + 1];
-    });
+    try {
+      h.paramNames.forEach((name, i) => {
+        params[name] = decodeURIComponent(match[i + 1]);
+      });
+    } catch {
+      writeError(res, 400, 'INVALID_PARAM', 'Invalid URL encoding');
+      return true;
+    }
 
     const runHandler = (parsedBody?: Record<string, unknown>): void => {
       try {

@@ -191,8 +191,25 @@ function usoDe(pid: number): { cpuS: number; rssKb: number } | null {
  * (token bucket con credo por tic) y la corrida perdía publicaciones.
  */
 function usoDeAsync(pid: number): Promise<{ cpuS: number; rssKb: number } | null> {
-  const directo = usoDe(pid);
-  if (directo || process.platform !== 'win32') return Promise.resolve(directo);
+  if (process.platform !== 'win32') {
+    // POSIX: ps en async para no bloquear el event loop cada segundo.
+    return new Promise((resolve) => {
+      execFileAsync('ps', ['-o', 'time=,rss=', '-p', String(pid)], { encoding: 'utf8' }, (error, stdout) => {
+        if (error) return resolve(null);
+        try {
+          const [tiempo, rss] = String(stdout).trim().split(/\s+/);
+          const [dias, resto] = tiempo.includes('-') ? tiempo.split('-') : ['0', tiempo];
+          const cpuS = resto.split(':').map(Number).reduce((acc, v) => acc * 60 + v, 0)
+            + Number(dias) * 86_400;
+          const rssKb = Number(rss);
+          if (!Number.isFinite(cpuS) || !Number.isFinite(rssKb)) return resolve(null);
+          resolve({ cpuS, rssKb });
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+  }
   // Sin `ps` (Windows): Get-Process da CPU acumulada (s) y WorkingSet (bytes).
   // Se fuerza InvariantCulture porque en es-CO el decimal sale con coma.
   return new Promise((resolve) => {

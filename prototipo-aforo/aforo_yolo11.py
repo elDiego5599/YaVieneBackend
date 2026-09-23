@@ -335,6 +335,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     a = p.parse_args(argv)
     if a.vacio_pct >= a.lleno_pct:
         p.error("--vacio-pct debe ser menor que --lleno-pct (bandas <VACÍO/MEDIO/LLENO>)")
+    if a.capacidad is not None and a.capacidad <= 0:
+        p.error("--capacidad debe ser mayor que 0")
     tip = (a.tipologia or "").strip().upper() or None
     if tip is not None and tip not in TIPOLOGIA_AFORO:
         p.error(f"tipologia debe ser una de: {', '.join(TIPOLOGIA_AFORO)}")
