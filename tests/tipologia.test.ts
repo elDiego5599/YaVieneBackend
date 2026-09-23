@@ -144,6 +144,18 @@ test('fleet: tipologia cerrada y aforo por bus al dar de alta y editar', { timeo
     assert.equal((await editar(padron.json.busId, { tipologia: 'BUSETA' })).status, 400);
     assert.equal((await editar(padron.json.busId, { capacidad: 0 })).status, 400);
 
+    // Renovar (misma placa y empresa, sin mandar nada) conserva tipología
+    // y aforo en vez de degradar a SENCILLO/30 en silencio.
+    const renueva = await alta({ placa: 'DDD444', routeId: 'R-101' });
+    assert.equal(renueva.status, 201);
+    assert.equal(renueva.json.tipologia, 'SENCILLO');
+    assert.equal(renueva.json.capacidad, 55);
+    // Renovar con tipología nueva tampoco pisa la capacidad manual.
+    const renueva2 = await alta({ placa: 'DDD444', routeId: 'R-101', tipologia: 'ARTICULADO' });
+    assert.equal(renueva2.status, 201);
+    assert.equal(renueva2.json.tipologia, 'ARTICULADO');
+    assert.equal(renueva2.json.capacidad, 55);
+
     // La flota del panel trae tipología y capacidad de cada bus.
     const flota = await (await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/positions`, { headers: auth })).json() as { buses: any[] };
     const visto = flota.buses.find((b) => b.busId === padron.json.busId);

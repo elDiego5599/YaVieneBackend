@@ -199,8 +199,10 @@ def densidad(cajas, ancho_img: int, alto_img: int) -> tuple[float, float]:
     areas = [max(0.0, x2 - x1) * max(0.0, y2 - y1)
              for (x1, y1, x2, y2) in (tuple(map(float, b)) for b in cajas)]
     cobertura = sum(areas) / area_img
-    ious = [_iou(a, b) for i, a in enumerate(cajas) for b in list(cajas)[i + 1:]
-            if _iou(tuple(map(float, a)), tuple(map(float, b))) > 0]
+    cajas_f = [tuple(map(float, b)) for b in cajas]
+    ious = [v for v in (
+        _iou(a, b) for i, a in enumerate(cajas_f) for b in cajas_f[i + 1:]
+    ) if v > 0]
     solape = sum(ious) / len(ious) if ious else 0.0
     # float() ANTES de round(): el float32 ya trae error binario y
     # round() solo no lo limpia (0.15500000119 Revienta JSONL legible).
@@ -331,6 +333,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-show", action="store_true")
     p.add_argument("--save-jsonl", default=None)
     a = p.parse_args(argv)
+    if a.vacio_pct >= a.lleno_pct:
+        p.error("--vacio-pct debe ser menor que --lleno-pct (bandas <VACÍO/MEDIO/LLENO>)")
     tip = (a.tipologia or "").strip().upper() or None
     if tip is not None and tip not in TIPOLOGIA_AFORO:
         p.error(f"tipologia debe ser una de: {', '.join(TIPOLOGIA_AFORO)}")

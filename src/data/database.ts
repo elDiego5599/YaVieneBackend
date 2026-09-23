@@ -239,6 +239,7 @@ function initSchema(): void {
             company_id TEXT NOT NULL,
             plate_number TEXT,
             capacity INTEGER NOT NULL DEFAULT 40,
+            tipologia TEXT NOT NULL DEFAULT 'SENCILLO',
             status TEXT NOT NULL DEFAULT 'active',
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL

@@ -182,8 +182,10 @@ export function getFleetPositions(companyId: string): FleetBus[] {
  * tenga forma de ruta. Ahora se exige la misma forma que el alta de rutas.
  *
  * Sin tipología se asume SENCILLO y sin capacidad el aforo ejemplo de su
- * tipología (30/60/80): los buses viejos y los tests que no mandan nada
- * siguen entrando igual que antes.
+ * tipología (30/60/80), salvo que el bus ya exista en esta empresa: renovar
+ * (misma placa) conserva lo omitido, para no degradar un PADRON/60 a
+ * SENCILLO/30 por re-darlo de alta sin mandar nada. Los buses viejos y los
+ * tests que no mandan nada siguen entrando igual que antes.
  */
 export type CreateBusError = 'invalid' | 'taken';
 
@@ -199,19 +201,24 @@ export function createBus(
   routeId = routeId.trim();
   if (!isRouteId(routeId)) return 'invalid';
   if ((interno ?? '').trim().length > MAX_INTERNO) return 'invalid';
-  const tipologia = extra?.tipologia === undefined ? 'SENCILLO' : normalizeTipologia(extra.tipologia);
-  if (!tipologia) return 'invalid';
-  const capacidad = extra?.capacidad === undefined
-    ? CAPACIDAD_POR_TIPOLOGIA[tipologia]
-    : normalizeCapacidad(extra.capacidad);
-  if (capacidad === null) return 'invalid';
   const busId = busIdFromPlaca(normalized);
   const now = Date.now();
   const db = getDb();
 
-  const existing = db.prepare('SELECT interno, company_id FROM buses WHERE bus_id = ?')
-    .get(busId) as { interno: string | null; company_id: string } | undefined;
+  const existing = db.prepare('SELECT interno, company_id, tipologia, capacity FROM buses WHERE bus_id = ?')
+    .get(busId) as { interno: string | null; company_id: string; tipologia: string | null; capacity: number | null } | undefined;
   if (existing && existing.company_id !== companyId) return 'taken';
+  // En renovación lo omitido se conserva (ver doc): el default de la
+  // tipología solo aplica sin fila previa ni capacidad explícita, y la
+  // capacidad explícita anterior sobrevive al cambio de tipología.
+  const tipologiaBase = normalizeTipologia(existing?.tipologia) ?? 'SENCILLO';
+  const tipologia = extra?.tipologia === undefined ? tipologiaBase : normalizeTipologia(extra.tipologia);
+  if (!tipologia) return 'invalid';
+  const capacidadBase = typeof existing?.capacity === 'number' && existing.capacity > 0
+    ? existing.capacity
+    : CAPACIDAD_POR_TIPOLOGIA[tipologia];
+  const capacidad = extra?.capacidad === undefined ? capacidadBase : normalizeCapacidad(extra.capacidad);
+  if (capacidad === null) return 'invalid';
   // La misma placa puede estar en un bus cuyo id no sale de ella (los de la
   // demo se llaman B-201, y la edición cambia la placa sin tocar el id).
   // Sin esto el alta chocaría contra `idx_buses_plate` con un 500.
@@ -271,10 +278,12 @@ function placaDeOtroBus(placa: string, busId: string): boolean {
 }
 
 /**
- * Edición de un bus. Devuelve el bus, `null` si no existe o la placa está
- * mal escrita, o `'taken'` si la placa ya la lleva otro bus. Ese caso no se
- * miraba: el alta rechazaba la placa ajena y la edición la aceptaba, así que
- * bastaba con crear un bus cualquiera y cambiarle la placa por la de otro.
+ * Edición de un bus. Devuelve el bus, `null` si no existe, si la placa está
+ * mal escrita o si la tipología/capacidad van fuera de lista/rango (la API
+ * contesta 400 con el motivo antes de llegar aquí), o `'taken'` si la placa
+ * ya la lleva otro bus. Ese caso no se miraba: el alta rechazaba la placa
+ * ajena y la edición la aceptaba, así que bastaba con crear un bus cualquiera
+ * y cambiarle la placa por la de otro.
  */
 export type UpdateBusError = 'taken';
 
