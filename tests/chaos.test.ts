@@ -17,6 +17,11 @@ const ADMIN_API_KEY = 'chaos-admin-key';
 const JWT_SECRET = 'chaos-jwt-secret';
 
 let backend: ChildProcess | undefined;
+// Puertos propios: HTTP 3130-3139, MQTT 8900-8909. node --test corre los
+// archivos en paralelo; si dos comparten puerto, uno no arranca y sus pruebas
+// le hablan al backend del otro. Reparto: e2e 312x, chaos 313x, fleet 314x,
+// arranque 315x, socket_abuso 316x. Cada test fija los suyos en withBackend;
+// este valor inicial no llega a usarse.
 let ctx: Ctx = { httpPort: 3130, mqttPort: 8900, dbName: 'x' };
 const healthUrl = (): string => `http://127.0.0.1:${ctx.httpPort}/api/health`;
 const dbPathFor = (file: string): string => `/tmp/yaviene-chaos-${file}-${process.pid}.db`;

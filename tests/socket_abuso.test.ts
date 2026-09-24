@@ -6,9 +6,12 @@ import Database from 'better-sqlite3';
 import jwt from 'jsonwebtoken';
 import { io, Socket } from 'socket.io-client';
 
-// Puertos propios: los archivos de test corren en paralelo.
-const HTTP_PORT = 3151;
-const MQTT_PORT = 8921;
+// Puertos propios: HTTP 3160-3169, MQTT 8930-8939. node --test corre los
+// archivos en paralelo; si dos comparten puerto, uno no arranca y sus pruebas
+// le hablan al backend del otro. Reparto: e2e 312x, chaos 313x, fleet 314x,
+// arranque 315x, socket_abuso 316x.
+const HTTP_PORT = 3160;
+const MQTT_PORT = 8930;
 const ADMIN_API_KEY = 'socket-abuso-admin-key';
 const JWT_SECRET = 'socket-abuso-jwt-secret';
 // Clave de las cuentas admin que estas pruebas crean en su base temporal.

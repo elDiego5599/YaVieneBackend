@@ -4,6 +4,10 @@ import test from 'node:test';
 
 import { io, Socket } from 'socket.io-client';
 
+// Puertos propios: HTTP 3120-3129, MQTT 8890-8899. node --test corre los
+// archivos en paralelo; si dos comparten puerto, uno no arranca y sus pruebas
+// le hablan al backend del otro. Reparto: e2e 312x, chaos 313x, fleet 314x,
+// arranque 315x, socket_abuso 316x.
 const HTTP_PORT = 3120;
 const MQTT_PORT = 8890;
 const ADMIN_API_KEY = 'e2e-admin-key';

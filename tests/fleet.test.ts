@@ -4,8 +4,13 @@ import test from 'node:test';
 
 import { io, Socket } from 'socket.io-client';
 
-const HTTP_PORT = 3130;
-const MQTT_PORT = 8891;
+// Puertos propios: HTTP 3140-3149, MQTT 8910-8919. node --test corre los
+// archivos en paralelo; si dos comparten puerto, uno no arranca y sus pruebas
+// le hablan al backend del otro. Reparto: e2e 312x, chaos 313x, fleet 314x,
+// arranque 315x, socket_abuso 316x. Cada test con backend propio toma el
+// siguiente de la decena.
+const HTTP_PORT = 3140;
+const MQTT_PORT = 8910;
 const ADMIN_API_KEY = 'e2e-admin-key';
 const JWT_SECRET = 'e2e-jwt-secret';
 // Clave de las cuentas admin que estas pruebas crean en su base temporal.
@@ -358,8 +363,8 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
 test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de ruta)', { timeout: 90_000 }, async () => {
   let backend: ChildProcess | undefined;
   const sockets: Socket[] = [];
-  const HTTP_PORT = 3131;
-  const MQTT_PORT = 8892;
+  const HTTP_PORT = 3141;
+  const MQTT_PORT = 8911;
 
   try {
     backend = spawn(process.execPath, ['dist/index.js'], {
@@ -586,8 +591,8 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
 });
 
 test('fleet: una empresa no puede tocar ni ver buses, rutas ni flota de otra', { timeout: 60_000 }, async () => {
-  const HTTP_PORT = 3150;
-  const MQTT_PORT = 8920;
+  const HTTP_PORT = 3142;
+  const MQTT_PORT = 8912;
   const base = `http://127.0.0.1:${HTTP_PORT}`;
   const suffix = Date.now().toString().slice(-6);
   const companyA = `EMP-MA-${suffix}`;
@@ -759,8 +764,8 @@ test('fleet: una empresa no puede tocar ni ver buses, rutas ni flota de otra', {
 // (`route:{id}` en socket/handler.ts): si dos empresas tienen el mismo
 // código, los pasajeros de una ven los buses de la otra.
 test('fleet: el código de ruta es único entre empresas', { timeout: 60_000 }, async () => {
-  const HTTP_PORT = 3156;
-  const MQTT_PORT = 8926;
+  const HTTP_PORT = 3143;
+  const MQTT_PORT = 8913;
   const base = `http://127.0.0.1:${HTTP_PORT}`;
   const suffix = Date.now().toString().slice(-6);
   const backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {

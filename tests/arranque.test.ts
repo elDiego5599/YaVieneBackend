@@ -144,6 +144,11 @@ test('validateConfig: puertos que no son puertos', () => {
 // ── Arranque real ─────────────────────────────────────────────────────
 // Entorno mínimo a propósito: nada heredado del de quien corre los tests,
 // así se ve qué necesita el backend para arrancar y qué lo detiene.
+//
+// Puertos propios: HTTP 3150-3159, MQTT 8920-8929. node --test corre los
+// archivos en paralelo; si dos comparten puerto, uno no arranca y sus pruebas
+// le hablan al backend del otro. Reparto: e2e 312x, chaos 313x, fleet 314x,
+// arranque 315x, socket_abuso 316x.
 function arrancar(env: Record<string, string>): ChildProcess {
   return spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     env: {
