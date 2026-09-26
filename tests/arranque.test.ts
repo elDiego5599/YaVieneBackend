@@ -148,7 +148,9 @@ test('validateConfig: puertos que no son puertos', () => {
 // Puertos propios: HTTP 3150-3159, MQTT 8920-8929. node --test corre los
 // archivos en paralelo; si dos comparten puerto, uno no arranca y sus pruebas
 // le hablan al backend del otro. Reparto: e2e 312x, chaos 313x, fleet 314x,
-// arranque 315x, socket_abuso 316x.
+// arranque 315x, socket_abuso 316x, evento_prohibido 317x, cors 318x,
+// respaldo 319x, cerrar_sesion 320x, sockets_por_ip 321x, contrato 323x,
+// tipologia 324x, socket_falla_base 325x.
 function arrancar(env: Record<string, string>): ChildProcess {
   return spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     env: {

@@ -183,14 +183,36 @@ function startRevisionPaneles(): void {
   revisionPanelTimer.unref();
 }
 
+// Un fallo de SQLite dentro de un listener de Socket.IO no pasa por el
+// manejo de errores de Express: sale del listener como excepción síncrona
+// y, sin uncaughtException que la recoja, mata el proceso — un tropiezo de
+// la base y se caen todos los clientes a la vez. Aquí se anota (log +
+// métrica) y cada camino decide: los de datos cierran el paso, sin sala ni
+// lote, con el mismo trato que una ruta inexistente; la autenticación falla
+// abierta, como la revisión de paneles de arriba. La prueba viva de esto es
+// tests/socket_falla_base.test.ts, que renombra la tabla y exige seguir en pie.
+function falloDeBase(metrica: string, destino: string, error: unknown): void {
+  incrementMetric(metrica);
+  console.error(`[WS] ${destino}: la base no respondió (${String(error)})`);
+}
+
 function adminFromHandshake(auth: unknown): AdminTokenPayload | null {
   const token = (auth as { token?: string } | undefined)?.token;
   if (!token) return null;
   const verified = verifyToken(token);
   if (verified?.role !== 'admin') return null;
   // Misma comprobación que el HTTP (auth/http.ts): con la contraseña ya
-  // cambiada, el token anterior tampoco abre la sala de la flota.
-  return isAdminTokenCurrent(verified.sub, verified.companyId, verified.tv) ? verified : null;
+  // cambiada, el token anterior tampoco abre la sala de la flota. Con la
+  // base caída no se puede comprobar y se falla ABIERTO, igual que en la
+  // revisión de paneles: el token está firmado y solo no se pudo leer la
+  // versión vigente; el chequeo vuelve en la próxima vuelta (subscribe:fleet
+  // o el reloj de un minuto) y la caducidad (8 h) no depende de la base.
+  try {
+    return isAdminTokenCurrent(verified.sub, verified.companyId, verified.tv) ? verified : null;
+  } catch (error) {
+    falloDeBase('socket.auth.error', `handshake de ${verified.sub}`, error);
+    return verified;
+  }
 }
 
 export function setupSocketServer(httpServer: HTTPServer): Server {
@@ -299,18 +321,24 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
     });
 
     socket.on('subscribe:fleet', () => {
-      const admin = adminFromHandshake(socket.handshake.auth);
-      if (!admin) {
-        console.warn(`[WS] KICKED client ${socket.id} — subscribe:fleet sin token de admin`);
-        socket.disconnect(true);
-        return;
+      try {
+        const admin = adminFromHandshake(socket.handshake.auth);
+        if (!admin) {
+          console.warn(`[WS] KICKED client ${socket.id} — subscribe:fleet sin token de admin`);
+          socket.disconnect(true);
+          return;
+        }
+        socket.data.admin = admin;
+        socket.join(`admin:${admin.companyId}`);
+        socket.emit('fleet:batch', {
+          companyId: admin.companyId,
+          buses: getFleetPositions(admin.companyId).map(conEmision),
+        });
+      } catch (error) {
+        // No se echa al panel: su token pudo ser válido y solo falló la base
+        // al leer la flota. Sin lote esta vuelta; el panel reintenta solo.
+        falloDeBase('socket.flota.error', `subscribe:fleet de ${socket.id}`, error);
       }
-      socket.data.admin = admin;
-      socket.join(`admin:${admin.companyId}`);
-      socket.emit('fleet:batch', {
-        companyId: admin.companyId,
-        buses: getFleetPositions(admin.companyId).map(conEmision),
-      });
     });
 
     // Cuántas rutas puede seguir un mismo socket a la vez. La app enseña
@@ -325,18 +353,25 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
       // comprobaba solo que no fuera vacío, así que un objeto o una cadena
       // de miles de caracteres acababa siendo el nombre de una sala.
       // Y con la forma no basta: una ruta bien escrita que no existe
-      // también abría sala. Se descarta igual, sin respuesta.
-      if (typeof routeId !== 'string' || !isRouteId(routeId) || !routeExists(routeId)) return;
-      const salas = [...socket.rooms].filter((r) => r.startsWith('route:'));
-      if (salas.length >= MAX_RUTAS_POR_SOCKET && !socket.rooms.has(`route:${routeId}`)) {
-        return;
+      // también abrió sala. Se descarta igual, sin respuesta.
+      try {
+        if (typeof routeId !== 'string' || !isRouteId(routeId) || !routeExists(routeId)) return;
+        const salas = [...socket.rooms].filter((r) => r.startsWith('route:'));
+        if (salas.length >= MAX_RUTAS_POR_SOCKET && !socket.rooms.has(`route:${routeId}`)) {
+          return;
+        }
+        socket.join(`route:${routeId}`);
+        const positions = getPositionsByRoute(routeId);
+        socket.emit('positions:batch', {
+          routeId,
+          buses: positions.map((p) => conEmision(toPublicPosition(p))),
+        });
+      } catch (error) {
+        // Con la base caída no se puede confirmar la ruta: se descarta como
+        // una inexistente (sin sala, sin respuesta) y el proceso sigue en
+        // pie; la app reintenta con su propio reloj al volver.
+        falloDeBase('socket.ruta.error', `subscribe:route de ${socket.id}`, error);
       }
-      socket.join(`route:${routeId}`);
-      const positions = getPositionsByRoute(routeId);
-      socket.emit('positions:batch', {
-        routeId,
-        buses: positions.map((p) => conEmision(toPublicPosition(p))),
-      });
     });
 
     socket.on('unsubscribe:route', (routeId: unknown) => {
@@ -385,28 +420,35 @@ export function broadcastBusPosition(busData: BusPosition, immediate = false): v
     const pending = pendingPositions.get(busData.routeId);
     pendingPositions.delete(busData.routeId);
     if (!pending || !io) return;
+    // Este reloj tampoco tiene Express detrás: si la base no responde al
+    // mirar la empresa de un bus (getBusCompanyId), la excepción mataría el
+    // proceso igual que en un listener. El lote ya se descolgó; se anota y
+    // siguen los siguientes.
+    try {
+      if (pending.size > 1) {
+        const positions = [...pending.values()].map((p) => conEmision(toPublicPosition(p)));
+        io.to(`route:${busData.routeId}`).emit('positions:update', {
+          routeId: busData.routeId,
+          buses: positions,
+        });
+        for (const position of pending.values()) {
+          sampleEmitLatency(position);
+          const posCompanyId = position.companyId || getBusCompanyId(position.busId) || '';
+          if (posCompanyId) io.to(`admin:${posCompanyId}`).emit('bus:position', conEmision(position));
+        }
+        incrementMetric('socket.position.batched');
+        return;
+      }
 
-    if (pending.size > 1) {
-      const positions = [...pending.values()].map((p) => conEmision(toPublicPosition(p)));
-      io.to(`route:${busData.routeId}`).emit('positions:update', {
-        routeId: busData.routeId,
-        buses: positions,
-      });
       for (const position of pending.values()) {
         sampleEmitLatency(position);
+        io.to(`route:${position.routeId}`).emit('bus:position', conEmision(toPublicPosition(position)));
         const posCompanyId = position.companyId || getBusCompanyId(position.busId) || '';
         if (posCompanyId) io.to(`admin:${posCompanyId}`).emit('bus:position', conEmision(position));
+        incrementMetric('socket.position.emitted');
       }
-      incrementMetric('socket.position.batched');
-      return;
-    }
-
-    for (const position of pending.values()) {
-      sampleEmitLatency(position);
-      io.to(`route:${position.routeId}`).emit('bus:position', conEmision(toPublicPosition(position)));
-      const posCompanyId = position.companyId || getBusCompanyId(position.busId) || '';
-      if (posCompanyId) io.to(`admin:${posCompanyId}`).emit('bus:position', conEmision(position));
-      incrementMetric('socket.position.emitted');
+    } catch (error) {
+      falloDeBase('socket.position.error', `emisión de posiciones de ${busData.routeId}`, error);
     }
   }, SOCKET_FLUSH_MS));
 }
