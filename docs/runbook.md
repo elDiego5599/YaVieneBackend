@@ -54,7 +54,10 @@ ngrok. Para probar con un teléfono en la misma red sin túnel,
 Los buses de la demo no se arrancan a mano: el propio backend levanta doce
 simuladores al iniciar (`src/demo/flota_demo.ts`). Para apagarlos —tráfico real,
 donde esas posiciones falsas viajarían por el mismo canal que las buenas—
-`YA_VIENE_FLOTA_DEMO=0` delante del arranque.
+`YA_VIENE_FLOTA_DEMO=0` delante del arranque. Mientras la flota esté
+encendida, el entorno necesita `PIN` (en `local.env` y en `fly.toml`): es el
+PIN con el que los simuladores registran e inician sesión, y sin él el
+backend no arranca (`validateConfig`).
 
 ## Saber que está sano
 
@@ -344,8 +347,10 @@ Lo que launchd no arregla, y toca a mano antes de un pitch:
 ## Lo que este runbook todavía no puede prometer
 
 - Copias automáticas y restauración cronometrada (T2.8).
-- Vigilancia externa que avise al teléfono del dueño cuando `/api/health` deje
-  de responder (T10.2): hoy, si nadie mira, nadie se entera.
+- Vigilancia externa que avise al teléfono del dueño cuando `/api/ready` deje
+  de responder (T10.2): el chequeo real es `/api/ready`, no `/api/health` —
+  `health` solo confirma que el proceso vive, así que con `health` una base
+  caída pasaría desapercibida. Hoy, si nadie mira, nadie se entera.
 - Los servicios de launchd están escritos y probados en seco, pero todavía no
   cargados en este Mac (T10.3): hacerlo reinicia backend y túnel, así que
   espera a un rato sin demo. Los ajustes de energía y la prueba del punto de

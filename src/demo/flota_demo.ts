@@ -121,6 +121,10 @@ function arrancarBus(bus: BusDemo): void {
       ROUTE_ID: bus.routeId,
       EMPRESA_ID,
       PHONE: bus.telefono,
+      // PIN con el que el simulador registra e inicia sesión: validateConfig
+      // no deja encender la flota sin él (lo hereda de process.env igual,
+      // pero queda escrito aquí porque el hijo sin PIN sale con error).
+      PIN: process.env.PIN,
       SENTIDO: 'ida',
       START_FRACTION: String(bus.fraccion),
       CAPTURE_INTERVAL_MS: bus.intervaloMs,

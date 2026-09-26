@@ -54,7 +54,8 @@ test('aceptaRemotos: solo producción o la variable explícita', () => {
 });
 
 test('validateConfig: abrir el API a la red local fuera de producción avisa', () => {
-  const abierto = validateConfig({ JWT_SECRET: JWT_LARGO, HTTP_ALLOW_REMOTE: '1' });
+  // El PIN es el de la flota demo, encendida por defecto en desarrollo.
+  const abierto = validateConfig({ JWT_SECRET: JWT_LARGO, HTTP_ALLOW_REMOTE: '1', PIN: '1234' });
   assert.deepEqual(abierto.errores, []);
   assert.equal(abierto.avisos.length, 1);
   assert.match(abierto.avisos[0], /HTTP_ALLOW_REMOTE/);

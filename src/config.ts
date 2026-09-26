@@ -130,6 +130,17 @@ export function validateConfig(
     }
   }
 
+  // Los buses simulados registran conductores con un PIN y luego inician
+  // sesión con él: hasta ahora el script traía «1234» por omisión. Con la
+  // flota encendida, el PIN tiene que venir del entorno (local.env,
+  // fly.toml) — si falta, es mejor no arrancar que levantar una flota con
+  // una credencial escrita en el código.
+  if (flotaDemoHabilitada(env) && !env.PIN) {
+    errores.push(
+      'PIN: la flota demo está encendida y el simulador necesita el PIN con el que registra e inicia sesión; define PIN= en el entorno (ya no hay «1234» por omisión)',
+    );
+  }
+
   if (produccion && flotaDemoHabilitada(env)) {
     avisos.push('flota demo ENCENDIDA en producción (YA_VIENE_FLOTA_DEMO=1): los buses simulados publican en el mismo canal que los reales');
   }

@@ -23,7 +23,15 @@ const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
 const MQTT_PORT = parseInt(process.env.MQTT_PORT || '8883', 10);
 const BUS_ID = process.env.BUS_ID || 'B-042';
 const PHONE = process.env.PHONE || '3000000000';
-const PIN = process.env.PIN || '1234';
+const PIN = process.env.PIN;
+if (!PIN) {
+  console.error(
+    'Falta PIN: el simulador registra al conductor con él y luego inicia sesión. '
+    + 'Exporta PIN=… antes de lanzarlo (el backend de demo también lo exige al arrancar). '
+    + 'Ya no hay «1234» por omisión.',
+  );
+  process.exit(1);
+}
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const EMPRESA_ID = process.env.EMPRESA_ID || 'EMP-01';
 const ROUTE_ID = process.env.ROUTE_ID || 'R-101';

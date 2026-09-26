@@ -19,7 +19,6 @@ docker-compose.yml
 Makefile
 README.md
 start-test.sh
-sim_conductor.js
 
 *.log
 .DS_Store
