@@ -26,6 +26,25 @@ evita un MQTT plano expuesto a internet. Si algún día se abre ese puerto a
 otra interfaz, el servidor exige certificado y llave (`MQTT_TLS_CERT_PATH` y
 `MQTT_TLS_KEY_PATH`) y se niega a arrancar sin ellos.
 
+### Límites de la conexión
+
+Lo que el servidor corta antes de mirar credenciales, para que un cliente
+anónimo no le llene la memoria:
+
+- **Ningún paquete MQTT puede pasar de 16 KB.** El servidor lee el largo en
+  la cabecera del paquete y cierra la conexión en cuanto uno anuncia más,
+  sin esperar a que llegue. Lo más grande que manda el equipo es el
+  CONNECT, con el token de contraseña (unos 400 bytes); una posición no
+  llega a 1 KB.
+- **El CONNECT tiene que llegar dentro de 10 s** después de abrir el
+  WebSocket. Si no, la conexión se cierra.
+- **Una misma IP puede tener 20 conexiones abiertas sin autenticar** a la
+  vez. La siguiente recibe `429` en el WebSocket, antes de abrirlo. Una
+  conexión deja de contar en cuanto el CONNECT es aceptado, así que muchos
+  equipos detrás de la misma IP de un operador móvil solo chocan aquí si
+  reconectan todos en el mismo instante. El equipo que recibe `429` tiene
+  que reintentar unos segundos después, como con cualquier corte.
+
 ## Credenciales
 
 El equipo se conecta con usuario vacío y **el JWT como contraseña MQTT**. El

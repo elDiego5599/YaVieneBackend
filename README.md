@@ -54,6 +54,7 @@ YA_VIENE_FLOTA_DEMO=0 npm start
 | `CORS_ORIGINS` | Orígenes web autorizados, separados por coma. Sin ella no se emite CORS |
 | `YA_VIENE_DB_PATH` | Ruta del archivo SQLite |
 | `YA_VIENE_FLOTA_DEMO` | `0` apaga la flota simulada, `1` la enciende. Sin la variable: encendida en desarrollo, apagada con `NODE_ENV=production` |
+| `YA_VIENE_MAX_MQTT_ANONIMAS_IP` | Conexiones de `/mqtt` que una misma dirección puede tener abiertas sin autenticar. Por defecto 20; la siguiente recibe `429` (`src/mqtt/guardia.ts`) |
 | `YA_VIENE_SEED_DEMO` | `1` hace que una base **nueva** nazca con Sobusa (`EMP-01`) y su catálogo de rutas; `0` la deja vacía. Sin la variable: sembrada en desarrollo, vacía con `NODE_ENV=production`. Una base ya sembrada no cambia |
 
 Producción es `NODE_ENV=production` (lo pone el Dockerfile). El arranque

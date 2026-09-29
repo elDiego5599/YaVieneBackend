@@ -44,6 +44,11 @@ El broker es `aedes` montado sobre el mismo servidor HTTP, en la ruta
 `/mqtt`. El puerto MQTT por TCP (`8883`) queda atado a `127.0.0.1`; sacarlo
 de ahí sin certificado y llave hace que el servidor se niegue a arrancar.
 
+Antes de los candados, una guardia (`src/mqtt/guardia.ts`) corta lo que
+no hace falta autenticar para rechazar: un paquete que anuncia más de
+16 KB, una conexión que no manda CONNECT en 10 s y, en `/mqtt`, más de 20
+conexiones sin autenticar desde la misma dirección (`429` en el upgrade).
+
 Tres candados, en `src/mqtt/broker.ts`:
 
 1. **Token.** La contraseña MQTT es el JWT de `POST /api/auth/login`. Sin

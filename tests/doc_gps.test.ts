@@ -18,6 +18,7 @@ import {
   MAX_SPEED_KMH,
 } from '../src/security/physics';
 import { ZONA } from '../src/security/zona';
+import { MAX_MQTT_ANONIMAS_POR_IP, MAX_PAQUETE_MQTT, MQTT_CONNECT_TIMEOUT_MS } from '../src/mqtt/guardia';
 
 const raiz = join(__dirname, '..');
 const doc = readFileSync(join(raiz, 'docs', 'integracion-gps.md'), 'utf8');
@@ -56,6 +57,14 @@ test('doc GPS: los límites que dice el documento son los del código', () => {
   assert.ok(
     doc.includes(`${MAX_PAST_CAPTURE_MS / 60000} min`),
     'falta la ventana de reenvío hacia atrás',
+  );
+  // Los de la conexión (auditoría 2026-09, P1-1): un equipo que no los
+  // conozca se queda fuera sin entender por qué.
+  assert.ok(doc.includes(`pasar de ${MAX_PAQUETE_MQTT / 1024} KB`), 'falta el tope de paquete MQTT');
+  assert.ok(doc.includes(`dentro de ${MQTT_CONNECT_TIMEOUT_MS / 1000} s`), 'falta el plazo del CONNECT');
+  assert.ok(
+    doc.includes(`${MAX_MQTT_ANONIMAS_POR_IP} conexiones abiertas sin autenticar`),
+    'falta el tope de conexiones anónimas por IP',
   );
   for (const numero of [ZONA.latMin, ZONA.latMax, ZONA.lonMin, ZONA.lonMax]) {
     assert.ok(doc.includes(String(numero)), `la zona del documento no dice ${numero}`);

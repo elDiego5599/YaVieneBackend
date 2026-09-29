@@ -3,6 +3,7 @@ import { createServer as createNetServer, Server } from 'net';
 import { createServer as createTlsServer } from 'tls';
 import http from 'http';
 import fs from 'fs';
+import type { Duplex } from 'stream';
 import { WebSocketServer, createWebSocketStream } from 'ws';
 import {
   MQTT_PORT,
@@ -13,6 +14,15 @@ import {
 import { DriverTokenPayload, verifyToken } from '../auth/tokens';
 import { claimSession, getSession, isSessionAuthorized, releaseSession } from '../data/sessions';
 import { incrementMetric } from '../observability/metrics';
+import { requestKey } from '../security/rate_limiter';
+import {
+  CupoPorClave,
+  MAX_MENSAJE_WS_MQTT,
+  MAX_MQTT_ANONIMAS_POR_IP,
+  MAX_PAQUETE_MQTT,
+  MQTT_CONNECT_TIMEOUT_MS,
+  MedidorPaquetesMqtt,
+} from './guardia';
 
 // ── Patch anti-desbordamiento de pila: mqemitter drena su cola de forma
 //    síncrona (un _do() por mensaje encolado). Una ráfaga masiva de MQTT
@@ -105,6 +115,25 @@ function forceCloseClient(broker: AedesBroker, client: Client, reason: string): 
   }
 }
 
+/**
+ * Corta la conexión en cuanto un paquete anuncia más de MAX_PAQUETE_MQTT
+ * (ver guardia.ts). Va DESPUÉS de `broker.handle`: aedes lee con un
+ * listener `readable` y `read()`, y así este `data` solo mira cada trozo
+ * que aedes lee, justo antes de que llegue al parser. Puesto antes, pondría
+ * el stream a fluir por su cuenta y aedes perdería los primeros bytes.
+ */
+function vigilarPaquetes(conn: Duplex, cerrar: () => void): void {
+  const medidor = new MedidorPaquetesMqtt();
+  let cortada = false;
+  conn.on('data', (trozo: Buffer) => {
+    if (cortada || medidor.medir(trozo)) return;
+    cortada = true;
+    incrementMetric('mqtt.rechazado.paquete_grande');
+    console.warn(`[MQTT] Conexión cortada: un paquete anuncia más de ${MAX_PAQUETE_MQTT} bytes`);
+    cerrar();
+  });
+}
+
 export interface PositionHandlingResult {
   accepted: boolean;
   sequence?: number;
@@ -125,7 +154,7 @@ export function startBroker(
   httpServer?: http.Server,
   wsPath = '/mqtt',
 ): Promise<Server> {
-  const broker: AedesBroker = new aedes();
+  const broker: AedesBroker = new aedes({ connectTimeout: MQTT_CONNECT_TIMEOUT_MS });
   aedesInstance = broker;
   const debugLogs = process.env.MQTT_DEBUG_LOGS === 'true';
 
@@ -330,27 +359,62 @@ export function startBroker(
   // ── MQTT por WebSocket: misma vía que el HTTP, ruta /mqtt ─────────
   //    Es el canal público (el túnel entrega TLS). aedes consume el
   //    stream duplex que crea `ws` a partir del socket WebSocket.
+  //
+  //    Antes de autenticar, cada conexión ocupa un sitio del cupo de su
+  //    dirección (guardia.ts): pasado el tope, el upgrade se contesta 429
+  //    sin llegar a abrir el WebSocket. El sitio se suelta cuando aedes da
+  //    al cliente por conectado (evento `client`, tras el CONNECT aceptado)
+  //    o cuando el socket se cierra, lo que pase antes.
   if (httpServer) {
     const wss = new WebSocketServer({
       noServer: true,
-      maxPayload: 256 * 1024,
+      maxPayload: MAX_MENSAJE_WS_MQTT,
     });
     brokerWs = wss;
+    const anonimas = new CupoPorClave(MAX_MQTT_ANONIMAS_POR_IP);
+    const soltarAnonima = new WeakMap<Client, () => void>();
+    broker.on('client', (client: Client) => {
+      soltarAnonima.get(client)?.();
+    });
     httpServer.on('upgrade', (req, socket, head) => {
       const { pathname } = new URL(req.url ?? '/', 'http://localhost');
       if (pathname !== wsPath) return;
+      const clave = requestKey(req);
+      if (!anonimas.tomar(clave)) {
+        incrementMetric('mqtt.rechazado.anonimas_ip');
+        socket.once('finish', () => socket.destroy());
+        socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+        return;
+      }
+      let suelta = false;
+      const soltar = () => {
+        if (suelta) return;
+        suelta = true;
+        anonimas.soltar(clave);
+      };
+      socket.once('close', soltar);
       wss.handleUpgrade(req, socket, head, (ws) => {
-        broker.handle(createWebSocketStream(ws), req);
+        const conn = createWebSocketStream(ws);
+        const client = broker.handle(conn, req);
+        soltarAnonima.set(client, soltar);
+        vigilarPaquetes(conn, () => ws.terminate());
       });
     });
+  }
+
+  // El TCP queda en loopback (o con TLS propio), pero el tope de paquete es
+  // el mismo: nada legítimo lo pasa por ninguna de las dos vías.
+  function atenderTcp(socket: Duplex): void {
+    broker.handle(socket);
+    vigilarPaquetes(socket, () => socket.destroy());
   }
 
   const server = MQTT_TLS_CERT_PATH && MQTT_TLS_KEY_PATH
     ? createTlsServer({
         cert: fs.readFileSync(MQTT_TLS_CERT_PATH),
         key: fs.readFileSync(MQTT_TLS_KEY_PATH),
-      }, broker.handle)
-    : createNetServer(broker.handle);
+      }, atenderTcp)
+    : createNetServer(atenderTcp);
   brokerServer = server;
   server.on('error', (error) => {
     brokerReady = false;
