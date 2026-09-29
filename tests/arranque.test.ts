@@ -7,6 +7,7 @@ import Database from 'better-sqlite3';
 import { io } from 'socket.io-client';
 
 import { flotaDemoHabilitada, hostHttp, validateConfig } from '../src/config';
+import { aceptaRemotos } from '../src/security/red_local';
 import { HOST_PRUEBAS, hayIpv6 } from './red_pruebas';
 
 const JWT_LARGO = 'j'.repeat(64);
@@ -65,6 +66,30 @@ test('validateConfig: JWT_SECRET de menos de 32 caracteres no arranca en producc
 
 // La flota simulada publica en el mismo canal que los buses reales: en
 // producción se enciende solo si el despliegue lo escribe.
+// P2-4: el backend que da la cara a internet es el del Mac detrás de
+// ngrok, y no es «producción» (eso abriría la red local y apagaría la flota
+// demo). YA_VIENE_EXPUESTO=1 le pone las guardias de secretos y de CORS sin
+// tocar lo demás.
+test('validateConfig: YA_VIENE_EXPUESTO=1 exige los secretos de producción y nada más', () => {
+  const base = { YA_VIENE_EXPUESTO: '1', PIN: '1234' };
+  assert.deepEqual(validateConfig({ ...base, JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA }).errores, []);
+  assert.match(
+    validateConfig({ ...base, JWT_SECRET: 'j'.repeat(31), ADMIN_API_KEY: CLAVE_LARGA }).errores.join(),
+    /JWT_SECRET tiene menos de 32/,
+  );
+  assert.match(validateConfig({ ...base, JWT_SECRET: JWT_LARGO }).errores.join(), /ADMIN_API_KEY es obligatoria/);
+  assert.equal(validateConfig({ ...base, JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: 'corta' }).avisos.length, 1);
+  assert.match(
+    validateConfig({ ...base, JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA, CORS_ORIGINS: 'http://sitio.co' })
+      .errores.join(),
+    /no es https/,
+  );
+  // Lo que es solo de Fly no cambia: ni TLS propio, ni flota, ni red.
+  const env = { ...base, JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA };
+  assert.equal(flotaDemoHabilitada(env), true);
+  assert.equal(aceptaRemotos(env), false);
+});
+
 test('flotaDemoHabilitada: apagada en producción salvo que se pida', () => {
   assert.equal(flotaDemoHabilitada({ NODE_ENV: 'production' }), false);
   assert.equal(flotaDemoHabilitada({ NODE_ENV: 'production', YA_VIENE_FLOTA_DEMO: '1' }), true);

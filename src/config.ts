@@ -63,11 +63,17 @@ export function validateConfig(
   const errores: string[] = [];
   const avisos: string[] = [];
   const produccion = env.NODE_ENV === 'production';
+  // El backend del Mac detrás de ngrok da la cara a internet pero no es
+  // producción: serlo abriría la red local (red_local.ts) y apagaría la
+  // flota demo. YA_VIENE_EXPUESTO=1 (en local.env) le pone solo las
+  // guardias de secretos y de CORS que un servidor expuesto necesita
+  // (auditoría 2026-09, P2-4).
+  const expuesto = produccion || env.YA_VIENE_EXPUESTO === '1';
 
   const jwtSecret = env.JWT_SECRET ?? '';
   if (!jwtSecret.trim()) {
     errores.push('JWT_SECRET es obligatorio y no puede estar vacío: arranca con local.env cargado');
-  } else if (produccion && jwtSecret.length < 32) {
+  } else if (expuesto && jwtSecret.length < 32) {
     // Era un aviso, y un aviso se pierde en el log mientras el servidor
     // sigue firmando: con un secreto corto, quien vea un token puede probar
     // secretos sin conexión hasta dar con él y firmarse uno de admin.
@@ -77,9 +83,9 @@ export function validateConfig(
   const adminKey = env.ADMIN_API_KEY;
   if (adminKey !== undefined && adminKey !== '' && !adminKey.trim()) {
     errores.push('ADMIN_API_KEY está definida pero solo tiene espacios');
-  } else if (produccion && !adminKey) {
+  } else if (expuesto && !adminKey) {
     errores.push('ADMIN_API_KEY es obligatoria en producción');
-  } else if (produccion && adminKey && adminKey.length < 24) {
+  } else if (expuesto && adminKey && adminKey.length < 24) {
     avisos.push('ADMIN_API_KEY tiene menos de 24 caracteres; en producción conviene una larga y aleatoria');
   }
 
@@ -151,7 +157,7 @@ export function validateConfig(
     }
     if (!valido) {
       errores.push(`CORS_ORIGINS: «${origen}» no es un origen (esquema://host[:puerto], sin barra final ni comodines)`);
-    } else if (produccion && !origen.startsWith('https://')) {
+    } else if (expuesto && !origen.startsWith('https://')) {
       errores.push(`CORS_ORIGINS: «${origen}» no es https; en producción solo se autorizan orígenes cifrados`);
     }
   }

@@ -31,8 +31,13 @@ set -a && source local.env && set +a
 nohup node dist/index.js </dev/null > /tmp/yaviene-backend.log 2>&1 &
 ```
 
-`local.env` trae `JWT_SECRET` y `ADMIN_API_KEY`; si falta el primero, o tiene
-menos de 32 caracteres, el arranque se detiene con un mensaje `[Config]`. Para
+`local.env` trae `JWT_SECRET` y `ADMIN_API_KEY`; si falta el primero, el
+arranque se detiene con un mensaje `[Config]`. Este backend da la cara a
+internet por ngrok, así que `local.env` lleva también `YA_VIENE_EXPUESTO=1`:
+con ella el arranque exige lo mismo que en Fly para los secretos (`JWT_SECRET`
+de 32 caracteres o más, `ADMIN_API_KEY` obligatoria) y orígenes CORS https,
+sin abrir la red local ni apagar la flota demo, que es lo que haría
+`NODE_ENV=production`. Para
 desarrollo, con recarga en caliente, `make dev` hace lo mismo cargando el mismo
 archivo.
 
