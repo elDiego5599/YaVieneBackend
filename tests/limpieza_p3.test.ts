@@ -23,7 +23,7 @@ import jwt from 'jsonwebtoken';
 const tmp = mkdtempSync(join(tmpdir(), 'yaviene-limpieza-p3-'));
 const DB_EN_PROCESO = join(tmp, 'en-proceso.db');
 process.env.YA_VIENE_DB_PATH = DB_EN_PROCESO;
-process.env.JWT_SECRET = 'limpieza-p3-jwt-secret';
+process.env.JWT_SECRET = 'test-jwt-secret';
 
 // require tras fijar el entorno: los módulos abren la base al cargarse.
 const { getDb } = require('../src/data/database') as typeof import('../src/data/database');

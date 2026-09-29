@@ -20,3 +20,12 @@ process.env.YA_VIENE_SEED_DEMO = '1';
 // nada de lo que se mide. Que sin la variable se escuche en '::' lo prueba
 // arranque.test.ts con un entorno limpio.
 process.env.HTTP_HOST = HOST_PRUEBAS;
+
+// Las guardias de un backend expuesto (YA_VIENE_EXPUESTO=1, o NODE_ENV=
+// production) exigen secretos de 32+ caracteres, y los backends de la suite
+// heredan este entorno con secretos de prueba cortos: con cualquiera de las
+// dos exportada en la consola —la primera vive en local.env— caían 38
+// pruebas. Las que miden esas guardias le pasan su entorno a validateConfig
+// o al hijo que arrancan, no lo leen de aquí.
+delete process.env.YA_VIENE_EXPUESTO;
+delete process.env.NODE_ENV;

@@ -106,3 +106,21 @@ test('la suite corre sembrada aunque el entorno diga lo contrario', () => {
   assert.deepEqual(sinEntorno, [], 'scripts de prueba sin --import ./tests/entorno.ts');
   assert.equal(siembraDemoHabilitada(), true);
 });
+
+// Los backends de la suite heredan el entorno con secretos de prueba cortos:
+// si pasara YA_VIENE_EXPUESTO=1 o NODE_ENV=production, las guardias de
+// secretos los tumbaban al arrancar (38 pruebas rojas).
+test('la suite no hereda las guardias de un backend expuesto', () => {
+  const hijo = spawnSync(
+    process.execPath,
+    ['--import', 'tsx', '--import', './tests/entorno.ts', '-e',
+      'console.log(JSON.stringify([process.env.YA_VIENE_EXPUESTO, process.env.NODE_ENV]))'],
+    {
+      cwd: join(__dirname, '..'),
+      env: { ...process.env, YA_VIENE_EXPUESTO: '1', NODE_ENV: 'production' },
+      encoding: 'utf8',
+    },
+  );
+  assert.equal(hijo.status, 0, hijo.stderr);
+  assert.deepEqual(JSON.parse(hijo.stdout), [null, null]);
+});

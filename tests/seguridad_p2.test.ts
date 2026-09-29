@@ -110,7 +110,7 @@ before(async () => {
       ...process.env,
       HTTP_PORT: String(HTTP_PORT),
       MQTT_PORT: String(MQTT_PORT),
-      JWT_SECRET: 'seguridad-p2-jwt-secret',
+      JWT_SECRET: 'test-jwt-secret',
       ADMIN_API_KEY,
       MQTT_DEBUG_LOGS: 'false',
       YA_VIENE_FLOTA_DEMO: '0',
@@ -218,7 +218,12 @@ test('P1-2, segunda barrera: la lista de una ruta solo trae buses de su dueña',
   assert.equal((await provisionar({ phoneNumber: '3006880001', companyId: EMPRESA_B, busId: 'BUS-VIEJO688', routeId: 'R-688' })).status, 201);
   const base = new Database(DB_PATH);
   try {
-    base.prepare("UPDATE buses SET route_id = 'R-501' WHERE bus_id = 'BUS-BBB601'").run();
+    // Los dos visibles: un bus que el panel acaba de dar de alta nace oculto,
+    // y si el de B siguiera así lo dejaría fuera el filtro de visibilidad y
+    // no la barrera de empresa, que es lo que esta prueba mide. Se fija aquí
+    // y no se hereda de P2-1, que deja visible el de A.
+    base.prepare("UPDATE buses SET route_id = 'R-501', visible = 1 WHERE bus_id = 'BUS-BBB601'").run();
+    base.prepare("UPDATE buses SET visible = 1 WHERE bus_id IN ('BUS-AAA501', 'BUS-VIEJO688')").run();
     const posicion = base.prepare(`
       INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, driver_phone, captured_at)
       VALUES (?, ?, 10.98, -74.8, 20, ?, ?, ?)

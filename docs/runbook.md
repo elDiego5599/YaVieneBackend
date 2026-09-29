@@ -19,8 +19,9 @@ dos guiones que se dice que están en `YaViene`.
 | Apps | La dirección va compilada dentro (`--dart-define=BACKEND_URL=…`); la de respaldo viene de fábrica | `app_pasajero`, `app_control` |
 
 La dirección del túnel no cambia entre reinicios: por eso una APK repartida
-sigue sirviendo. No usar `start-test.sh`, que levanta cloudflared con una URL
-distinta cada vez y obliga a recompilar y repartir de nuevo.
+sigue sirviendo. Nada de cloudflared: da una URL distinta cada vez y obliga
+a recompilar y repartir de nuevo (por eso se borró `start-test.sh`, que lo
+levantaba y además mataba el backend de launchd con `pkill`).
 
 ## Arrancar
 
