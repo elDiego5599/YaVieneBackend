@@ -18,6 +18,7 @@ import {
   cerrarRedLocal,
   esLoopback,
 } from '../src/security/red_local';
+import { hayIpv6 } from './red_pruebas';
 
 const JWT_LARGO = 'j'.repeat(64);
 
@@ -76,10 +77,14 @@ function pedir(host: string, puerto: number): Promise<number | string> {
   });
 }
 
+// Como el backend, en '::'. En una máquina sin IPv6 (el contenedor de la
+// nube) `listen('::')` falla con EAFNOSUPPORT: ahí se escucha en '0.0.0.0',
+// que es lo que queda de la doble pila, y el cierre se prueba igual por IPv4.
 async function servidor(env: NodeJS.ProcessEnv) {
   const server = createServer((_req, res) => res.end('ok'));
   cerrarRedLocal(server, env);
-  await new Promise<void>((r) => server.listen(0, '::', r));
+  const host = (await hayIpv6()) ? '::' : '0.0.0.0';
+  await new Promise<void>((r) => server.listen(0, host, r));
   const puerto = (server.address() as AddressInfo).port;
   return { server, puerto };
 }
@@ -94,10 +99,24 @@ function ipDeLaRed(): string | undefined {
   return undefined;
 }
 
-test('cerrarRedLocal: loopback entra por IPv4 y por IPv6', async () => {
+test('cerrarRedLocal: loopback entra por IPv4', async () => {
   const { server, puerto } = await servidor({});
   try {
     assert.equal(await pedir('127.0.0.1', puerto), 200);
+  } finally {
+    server.close();
+  }
+});
+
+// Se salta solo donde el sistema no tiene IPv6 (el contenedor de la nube):
+// ahí no hay ::1 por el que entrar. En el Mac y en Fly corre siempre.
+test('cerrarRedLocal: loopback entra por IPv6', async (t) => {
+  if (!(await hayIpv6())) {
+    t.skip('este sistema no tiene IPv6');
+    return;
+  }
+  const { server, puerto } = await servidor({});
+  try {
     assert.equal(await pedir('::1', puerto), 200);
   } finally {
     server.close();

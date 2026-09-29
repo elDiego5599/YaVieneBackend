@@ -24,6 +24,8 @@ import test from 'node:test';
 
 import Database from 'better-sqlite3';
 
+import { HOST_PRUEBAS } from './red_pruebas';
+
 const JWT_LARGO = 'j'.repeat(64);
 
 /** Una base con las tres tablas que la restauración cuenta, y datos dentro. */
@@ -252,6 +254,8 @@ function arrancar(dbPath: string) {
       HOME: process.env.HOME ?? '',
       YA_VIENE_FLOTA_DEMO: '0',
       MQTT_DEBUG_LOGS: 'false',
+      // El entorno limpio no hereda el HTTP_HOST de tests/entorno.ts.
+      HTTP_HOST: HOST_PRUEBAS,
       JWT_SECRET: JWT_LARGO,
       HTTP_PORT: '3190',
       MQTT_PORT: '8960',

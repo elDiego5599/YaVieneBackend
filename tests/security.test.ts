@@ -16,6 +16,7 @@ import {
   requestKey,
   SlidingWindowRateLimiter,
 } from '../src/security/rate_limiter';
+import { hayIpv6 } from './red_pruebas';
 
 function peticionFalsa(remoteAddress: string, headers: Record<string, string> = {}): IncomingMessage {
   return { socket: { remoteAddress }, headers } as unknown as IncomingMessage;
@@ -81,14 +82,19 @@ test('requestKey: loopback IPv4 mapeado es el mismo túnel de confianza', () => 
 // socket de verdad que el sistema produce esa forma, que es justo lo que la
 // anterior da por supuesto. Vale para cualquiera de las dos formas: lo que
 // se exige es que una conexión real por loopback sea de confianza.
-test('requestKey: socket real por loopback IPv4 contra listen(::)', async () => {
+// Donde el sistema no tiene IPv6 (el contenedor de la nube) listen(::)
+// falla con EAFNOSUPPORT y el backend de esa máquina escucha en IPv4
+// (HTTP_HOST): ahí la prueba escucha en '0.0.0.0' y el socket llega como
+// '127.0.0.1', la otra forma, que también tiene que ser de confianza.
+test('requestKey: socket real por loopback IPv4 contra listen(::), o 0.0.0.0 sin IPv6', async () => {
+  const host = (await hayIpv6()) ? '::' : '0.0.0.0';
   const visto: { direccion?: string; clave?: string } = {};
   const server = createServer((req, res) => {
     visto.direccion = req.socket.remoteAddress ?? undefined;
     visto.clave = requestKey(req, 'read');
     res.end('ok');
   });
-  await new Promise<void>((listo) => server.listen(0, '::', listo));
+  await new Promise<void>((listo) => server.listen(0, host, listo));
   const { port } = server.address() as { port: number };
   try {
     await new Promise<void>((listo, falla) => {

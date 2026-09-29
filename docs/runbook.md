@@ -51,6 +51,15 @@ conexión que llegue por la Wi-Fi se cierra al conectar, y el público entra por
 ngrok. Para probar con un teléfono en la misma red sin túnel,
 `HTTP_ALLOW_REMOTE=1` delante del arranque (el log lo avisa con `[Config]`).
 
+El HTTP escucha en `::`, que en el Mac atiende IPv4 e IPv6 a la vez (el log
+dice `[HTTP] Server listening on http://[::]:3000 (IPv4+IPv6)`). No se toca.
+`HTTP_HOST` existe solo para máquinas sin IPv6 —el contenedor de la nube
+donde corren las pruebas—, donde el arranque se cae con
+`listen EAFNOSUPPORT … :::3000`; ahí `HTTP_HOST=127.0.0.1` delante del
+arranque. Tiene que ser una IP, y en producción no una de loopback: el
+arranque se detiene con `[Config]` si no. La suite ya la fija sola en
+`127.0.0.1` (`tests/entorno.ts`).
+
 Los buses de la demo no se arrancan a mano: el propio backend levanta doce
 simuladores al iniciar (`src/demo/flota_demo.ts`). Para apagarlos —tráfico real,
 donde esas posiciones falsas viajarían por el mismo canal que las buenas—

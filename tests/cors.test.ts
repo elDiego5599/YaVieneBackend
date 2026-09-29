@@ -18,6 +18,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { HOST_PRUEBAS } from './red_pruebas';
+
 const HTTP_PORT = '3180';
 const MQTT_PORT = '8950';
 const ORIGEN = 'http://localhost:8091';
@@ -47,6 +49,8 @@ test.before(async () => {
       HOME: process.env.HOME ?? '',
       YA_VIENE_FLOTA_DEMO: '0',
       MQTT_DEBUG_LOGS: 'false',
+      // El entorno limpio no hereda el HTTP_HOST de tests/entorno.ts.
+      HTTP_HOST: HOST_PRUEBAS,
       JWT_SECRET: 'cors-jwt-secret',
       HTTP_PORT,
       MQTT_PORT,

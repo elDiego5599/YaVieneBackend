@@ -6,7 +6,8 @@ import test from 'node:test';
 import Database from 'better-sqlite3';
 import { io } from 'socket.io-client';
 
-import { flotaDemoHabilitada, validateConfig } from '../src/config';
+import { flotaDemoHabilitada, hostHttp, validateConfig } from '../src/config';
+import { HOST_PRUEBAS, hayIpv6 } from './red_pruebas';
 
 const JWT_LARGO = 'j'.repeat(64);
 const CLAVE_LARGA = 'k'.repeat(48);
@@ -163,6 +164,27 @@ test('validateConfig: puertos que no son puertos', () => {
   assert.match(validateConfig({ JWT_SECRET: 'x', MQTT_PORT: '70000' }).errores[0], /MQTT_PORT/);
 });
 
+// HTTP_HOST existe para las máquinas sin IPv6 (el contenedor de la nube);
+// sin la variable, o vacía, todo sigue en '::'.
+test('hostHttp: sin HTTP_HOST, o vacía, es ::; con ella, la que diga', () => {
+  assert.equal(hostHttp({}), '::');
+  assert.equal(hostHttp({ HTTP_HOST: '' }), '::');
+  assert.equal(hostHttp({ HTTP_HOST: '127.0.0.1' }), '127.0.0.1');
+});
+
+test('validateConfig: HTTP_HOST solo acepta una IP, y en producción no una de loopback', () => {
+  const local = { JWT_SECRET: 'x', PIN: '1234' };
+  assert.deepEqual(validateConfig({ ...local, HTTP_HOST: '127.0.0.1' }).errores, []);
+  assert.deepEqual(validateConfig({ ...local, HTTP_HOST: '0.0.0.0' }).errores, []);
+  assert.match(validateConfig({ ...local, HTTP_HOST: 'localhost' }).errores[0], /HTTP_HOST/);
+  assert.match(validateConfig({ ...local, HTTP_HOST: '127.0.0.1 ' }).errores[0], /HTTP_HOST/);
+  const prod = { NODE_ENV: 'production', JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA, HTTP_TLS_EXTERNO: '1' };
+  assert.deepEqual(validateConfig(prod).errores, []);
+  assert.deepEqual(validateConfig({ ...prod, HTTP_HOST: '0.0.0.0' }).errores, []);
+  assert.match(validateConfig({ ...prod, HTTP_HOST: '127.0.0.1' }).errores[0], /HTTP_HOST/);
+  assert.match(validateConfig({ ...prod, HTTP_HOST: '::1' }).errores[0], /HTTP_HOST/);
+});
+
 // ── Arranque real ─────────────────────────────────────────────────────
 // Entorno mínimo a propósito: nada heredado del de quien corre los tests,
 // así se ve qué necesita el backend para arrancar y qué lo detiene.
@@ -180,6 +202,8 @@ function arrancar(env: Record<string, string>): ChildProcess {
       HOME: process.env.HOME ?? '',
       YA_VIENE_FLOTA_DEMO: '0',
       MQTT_DEBUG_LOGS: 'false',
+      // El entorno limpio no hereda el HTTP_HOST de tests/entorno.ts.
+      HTTP_HOST: HOST_PRUEBAS,
       ...env,
     },
     // El cuarto canal es IPC: en Windows el apagado graceful va por mensaje
@@ -359,6 +383,68 @@ test('arranque: humo con base temporal, y el apagado guarda métricas y sale lim
     } finally {
       db.close();
     }
+  } finally {
+    if (backend.exitCode === null) backend.kill('SIGKILL');
+    borrarBase(dbPath);
+  }
+});
+
+// Toda la suite levanta sus backends con HTTP_HOST=127.0.0.1 (tests/entorno.ts)
+// para poder correr donde no hay IPv6. Esta prueba arranca con un entorno
+// limpio, sin la variable, y comprueba que el backend de verdad sigue en '::':
+// con IPv6 contesta por 127.0.0.1 y por ::1 y el registro dice [::]; sin IPv6
+// el arranque se cae justo por intentar '::' (EAFNOSUPPORT sobre :::puerto),
+// que es lo que haría el backend vivo en esa máquina.
+test('arranque: sin HTTP_HOST escucha en :: (IPv4 e IPv6 a la vez)', { timeout: 60_000 }, async () => {
+  const port = 3156;
+  const dbPath = `/tmp/yaviene-arranque-doble-pila-${process.pid}-${Date.now()}.db`;
+  const backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+    env: {
+      PATH: process.env.PATH ?? '',
+      HOME: process.env.HOME ?? '',
+      YA_VIENE_FLOTA_DEMO: '0',
+      MQTT_DEBUG_LOGS: 'false',
+      JWT_SECRET: JWT_LARGO,
+      HTTP_PORT: String(port),
+      MQTT_PORT: '8926',
+      YA_VIENE_DB_PATH: dbPath,
+    },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  let stdout = '';
+  backend.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+  const salida = esperarSalida(backend, 45_000);
+
+  try {
+    if (!(await hayIpv6())) {
+      const { code, stderr } = await salida;
+      assert.notEqual(code, 0, 'sin IPv6, escuchar en :: no puede salir bien');
+      assert.match(stderr, new RegExp(`EAFNOSUPPORT.*:::${port}`), `debió intentar '::'. stderr:\n${stderr}`);
+      return;
+    }
+
+    const estado = async (url: string): Promise<number> => {
+      try {
+        return (await fetch(url)).status;
+      } catch {
+        return 0;
+      }
+    };
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && await estado(`http://127.0.0.1:${port}/api/ready`) !== 200) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(await estado(`http://127.0.0.1:${port}/api/ready`), 200, 'contesta por IPv4');
+    assert.equal(await estado(`http://[::1]:${port}/api/ready`), 200, 'contesta por IPv6');
+    assert.match(stdout, new RegExp(`listening on http://\\[::\\]:${port} \\(IPv4\\+IPv6\\)`));
+
+    if (process.platform === 'win32') {
+      assert.ok(backend.send?.('shutdown'), 'el hijo debe tener canal IPC');
+    } else {
+      backend.kill('SIGTERM');
+    }
+    const { code, stderr } = await salida;
+    assert.equal(code, 0, `el apagado ordenado sale con 0. stderr:\n${stderr}`);
   } finally {
     if (backend.exitCode === null) backend.kill('SIGKILL');
     borrarBase(dbPath);

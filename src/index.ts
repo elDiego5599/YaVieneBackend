@@ -1,7 +1,9 @@
 import http from 'http';
 import https from 'https';
 import fs from 'fs';
+import { isIPv6 } from 'net';
 import {
+  HTTP_HOST,
   HTTP_PORT,
   HTTP_TLS_CERT_PATH,
   HTTP_TLS_KEY_PATH,
@@ -299,10 +301,14 @@ startBroker(
 // mostraba "No se pudo conectar con el servidor" con el backend corriendo.
 // '::' abre además el puerto a la red local: fuera de producción se cierra
 // al conectar todo lo que no sea esta máquina (ver red_local.ts).
+// '::' es el valor de HTTP_HOST sin la variable (config.ts); solo la cambia
+// quien corre en una máquina sin IPv6.
 cerrarRedLocal(server);
-server.listen(HTTP_PORT, '::', () => {
+server.listen(HTTP_PORT, HTTP_HOST, () => {
   const scheme = HTTP_TLS_CERT_PATH && HTTP_TLS_KEY_PATH ? 'https' : 'http';
-  console.log(`[HTTP] Server listening on ${scheme}://[::]:${HTTP_PORT} (IPv4+IPv6)`);
+  const host = isIPv6(HTTP_HOST) ? `[${HTTP_HOST}]` : HTTP_HOST;
+  const pilas = HTTP_HOST === '::' ? ' (IPv4+IPv6)' : '';
+  console.log(`[HTTP] Server listening on ${scheme}://${host}:${HTTP_PORT}${pilas}`);
 });
 
 loadVisibilityCache();

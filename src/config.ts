@@ -1,4 +1,17 @@
+import { isIP } from 'node:net';
+
 export const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3000', 10);
+/**
+ * Dónde escucha el HTTP. Por defecto '::': en doble pila acepta IPv4 e IPv6
+ * a la vez (ver el comentario de `server.listen` en index.ts), y así se
+ * queda en el Mac y en Fly. HTTP_HOST existe para las máquinas sin IPv6,
+ * donde `listen('::')` falla con EAFNOSUPPORT: el contenedor de la nube en
+ * el que corre la suite. Las pruebas escuchan en 127.0.0.1 (tests/entorno.ts).
+ */
+export function hostHttp(env: NodeJS.ProcessEnv = process.env): string {
+  return env.HTTP_HOST || '::';
+}
+export const HTTP_HOST = hostHttp();
 export const WS_PATH = process.env.WS_PATH || '/ws';
 export const MQTT_PORT = parseInt(process.env.MQTT_PORT || '8883', 10);
 // MQTT por TCP queda solo en loopback (pruebas locales). El acceso remoto
@@ -76,6 +89,19 @@ export function validateConfig(
     const puerto = Number(valor);
     if (!Number.isInteger(puerto) || puerto < 1 || puerto > 65535) {
       errores.push(`${nombre} debe ser un puerto entre 1 y 65535 (llegó «${valor}»)`);
+    }
+  }
+
+  // Solo una IP literal: un nombre (`localhost`) depende de cómo resuelva
+  // cada máquina, que es justo el lío que '::' vino a cerrar. Y en producción
+  // el proxy de Fly llega por la red privada: escuchando en loopback el
+  // backend arranca sano y no le llega una sola petición.
+  const httpHost = env.HTTP_HOST;
+  if (httpHost !== undefined && httpHost !== '') {
+    if (isIP(httpHost) === 0) {
+      errores.push(`HTTP_HOST debe ser una IP (::, 0.0.0.0, 127.0.0.1…); llegó «${httpHost}»`);
+    } else if (produccion && LOOPBACK_HOSTS.has(httpHost)) {
+      errores.push(`HTTP_HOST=${httpHost} en producción deja el API fuera del alcance del proxy: sin la variable escucha en ::`);
     }
   }
 

@@ -45,6 +45,7 @@ YA_VIENE_FLOTA_DEMO=0 npm start
 | `JWT_SECRET` | Obligatoria. Firma los tokens de conductor y de administrador |
 | `ADMIN_API_KEY` | Clave de superadministración (`x-admin-key`). Obligatoria en producción |
 | `HTTP_PORT` / `MQTT_PORT` | Por defecto 3000 y 8883 |
+| `HTTP_HOST` | Dónde escucha el HTTP. Por defecto `::` (IPv4 e IPv6 a la vez), y así se queda en el Mac y en Fly. Solo para máquinas sin IPv6, donde `::` falla con `EAFNOSUPPORT`: ahí `127.0.0.1` o `0.0.0.0`. Las pruebas la fijan en `127.0.0.1` (`tests/entorno.ts`) |
 | `MQTT_HOST` | Dónde escucha el MQTT por TCP. Por defecto `127.0.0.1` |
 | `HTTP_TLS_CERT_PATH` + `HTTP_TLS_KEY_PATH` | TLS del HTTP. Van juntas |
 | `HTTP_TLS_EXTERNO` | `1` declara que el TLS lo termina un proxy delante (Fly, ngrok). En producción hace falta esto o el par TLS |
@@ -61,6 +62,8 @@ Producción es `NODE_ENV=production` (lo pone el Dockerfile). El arranque
 - `JWT_SECRET` falta o solo tiene espacios, o `ADMIN_API_KEY` solo tiene espacios;
 - en producción falta `ADMIN_API_KEY`;
 - un puerto no es un número entre 1 y 65535;
+- `HTTP_HOST` no es una IP (`localhost` no vale), o en producción es de loopback
+  (el proxy de Fly no llegaría);
 - hay una sola de las dos rutas TLS (HTTP o MQTT);
 - en producción, el HTTP no tiene TLS propio ni `HTTP_TLS_EXTERNO=1`
   (`fly.toml` lo declara, porque el TLS lo termina el proxy de Fly);
