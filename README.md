@@ -134,7 +134,10 @@ clave mal** (`429 RATE_LIMITED`).
 
 Cada empresa solo ve y toca lo suyo: un bus o una ruta de otra empresa
 responde 404, igual que uno que no existe, y dar de alta una placa ajena
-responde `409 BUS_TAKEN` sin decir de quién es.
+responde `409 BUS_TAKEN` sin decir de quién es. El `routeId` de un bus
+(alta o edición) tiene que estar en el catálogo de rutas de la empresa: si
+no, `404 ROUTE_NOT_FOUND`, sea de otra empresa o no exista. Reenviar en la
+edición la ruta que el bus ya tiene no cuenta como cambio.
 
 Formatos y límites (400 si no se cumplen):
 

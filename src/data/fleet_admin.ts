@@ -68,6 +68,13 @@ export function getBusCompanyId(busId: string): string | null {
   return value || null;
 }
 
+/** La ruta de catálogo del bus (`buses.route_id`), o null si no tiene o no existe. */
+export function getBusRouteId(busId: string): string | null {
+  const row = getDb().prepare('SELECT route_id FROM buses WHERE bus_id = ?')
+    .get(busId) as { route_id: string | null } | undefined;
+  return row?.route_id ?? null;
+}
+
 export function loadVisibilityCache(): void {
   const rows = getDb().prepare('SELECT bus_id, visible FROM buses').all() as {
     bus_id: string;

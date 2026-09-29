@@ -98,36 +98,43 @@ test('fleet: tipologia cerrada y aforo por bus al dar de alta y editar', { timeo
       return { status: res.status, json: await res.json() as any };
     };
 
+    // Una ruta propia: la R-101 es de Sobusa, y un bus de otra empresa ya no
+    // entra en ella (auditoría 2026-09, P1-2).
+    const ruta = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/routes`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ routeId: 'R-161', name: 'Ruta de tipologías' }),
+    });
+    assert.equal(ruta.status, 201);
+
     // Explícita: padrón con 60.
-    const padron = await alta({ placa: 'AAA111', routeId: 'R-101', tipologia: 'PADRON', capacidad: 60 });
+    const padron = await alta({ placa: 'AAA111', routeId: 'R-161', tipologia: 'PADRON', capacidad: 60 });
     assert.equal(padron.status, 201);
     assert.equal(padron.json.tipologia, 'PADRON');
     assert.equal(padron.json.capacidad, 60);
 
     // Defaults: sin nada → SENCILLO/30; articulado sin capacidad → 80.
-    const defecto = await alta({ placa: 'BBB222', routeId: 'R-101' });
+    const defecto = await alta({ placa: 'BBB222', routeId: 'R-161' });
     assert.equal(defecto.status, 201);
     assert.equal(defecto.json.tipologia, 'SENCILLO');
     assert.equal(defecto.json.capacidad, 30);
-    const arti = await alta({ placa: 'CCC333', routeId: 'R-101', tipologia: 'ARTICULADO' });
+    const arti = await alta({ placa: 'CCC333', routeId: 'R-161', tipologia: 'ARTICULADO' });
     assert.equal(arti.json.tipologia, 'ARTICULADO');
     assert.equal(arti.json.capacidad, 80);
 
     // Capacidad manual manda sobre el ejemplo; minúsculas valen.
-    const manual = await alta({ placa: 'DDD444', routeId: 'R-101', tipologia: 'padron', capacidad: 55 });
+    const manual = await alta({ placa: 'DDD444', routeId: 'R-161', tipologia: 'padron', capacidad: 55 });
     assert.equal(manual.status, 201);
     assert.equal(manual.json.tipologia, 'PADRON');
     assert.equal(manual.json.capacidad, 55);
 
     // Inválidos → 400 con su motivo.
     for (const cuerpo of [
-      { placa: 'EEE555', routeId: 'R-101', tipologia: 'TRANSBORDO' },
-      { placa: 'EEE555', routeId: 'R-101', tipologia: 'PADRÓN' },
-      { placa: 'EEE555', routeId: 'R-101', capacidad: 0 },
-      { placa: 'EEE555', routeId: 'R-101', capacidad: -5 },
-      { placa: 'EEE555', routeId: 'R-101', capacidad: 3.5 },
-      { placa: 'EEE555', routeId: 'R-101', capacidad: 301 },
-      { placa: 'EEE555', routeId: 'R-101', capacidad: 'mucha' },
+      { placa: 'EEE555', routeId: 'R-161', tipologia: 'TRANSBORDO' },
+      { placa: 'EEE555', routeId: 'R-161', tipologia: 'PADRÓN' },
+      { placa: 'EEE555', routeId: 'R-161', capacidad: 0 },
+      { placa: 'EEE555', routeId: 'R-161', capacidad: -5 },
+      { placa: 'EEE555', routeId: 'R-161', capacidad: 3.5 },
+      { placa: 'EEE555', routeId: 'R-161', capacidad: 301 },
+      { placa: 'EEE555', routeId: 'R-161', capacidad: 'mucha' },
     ]) {
       assert.equal((await alta(cuerpo)).status, 400, JSON.stringify(cuerpo));
     }
@@ -146,12 +153,12 @@ test('fleet: tipologia cerrada y aforo por bus al dar de alta y editar', { timeo
 
     // Renovar (misma placa y empresa, sin mandar nada) conserva tipología
     // y aforo en vez de degradar a SENCILLO/30 en silencio.
-    const renueva = await alta({ placa: 'DDD444', routeId: 'R-101' });
+    const renueva = await alta({ placa: 'DDD444', routeId: 'R-161' });
     assert.equal(renueva.status, 201);
     assert.equal(renueva.json.tipologia, 'SENCILLO');
     assert.equal(renueva.json.capacidad, 55);
     // Renovar con tipología nueva tampoco pisa la capacidad manual.
-    const renueva2 = await alta({ placa: 'DDD444', routeId: 'R-101', tipologia: 'ARTICULADO' });
+    const renueva2 = await alta({ placa: 'DDD444', routeId: 'R-161', tipologia: 'ARTICULADO' });
     assert.equal(renueva2.status, 201);
     assert.equal(renueva2.json.tipologia, 'ARTICULADO');
     assert.equal(renueva2.json.capacidad, 55);

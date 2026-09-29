@@ -29,8 +29,8 @@ import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords'
 import { signToken } from '../auth/tokens';
 import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
 import { getMetrics } from '../observability/metrics';
-import { MAX_INTERNO, TIPOLOGIAS, MAX_CAPACIDAD, MIN_CAPACIDAD, normalizeCapacidad, normalizeTipologia } from '../data/fleet_admin';
-import { isRouteId, MAX_NOMBRE_RUTA } from '../data/routes_store';
+import { MAX_INTERNO, TIPOLOGIAS, MAX_CAPACIDAD, MIN_CAPACIDAD, getBusRouteId, normalizeCapacidad, normalizeTipologia } from '../data/fleet_admin';
+import { esRutaDeEmpresa, isRouteId, MAX_NOMBRE_RUTA } from '../data/routes_store';
 import {
   adminRateLimiter,
   fleetWriteRateLimiter,
@@ -701,6 +701,16 @@ addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
     return;
   }
 
+  // La ruta tiene que ser del catálogo de esta empresa (auditoría 2026-09,
+  // P1-2): antes bastaba con la forma, y B ponía buses en la R-301 de A. El
+  // 404 es el mismo que da una ruta ajena en /api/fleet/routes, sin decir si
+  // existe en otra parte. Una ruta mal escrita sigue siendo el 400 de abajo.
+  const rutaPedida = routeId.trim();
+  if (isRouteId(rutaPedida) && !esRutaDeEmpresa(auth.companyId, rutaPedida)) {
+    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found in this company');
+    return;
+  }
+
   const bus = createBus(auth.companyId, placa, routeId, interno, { tipologia: rawTipologia, capacidad: rawCapacidad });
   if (bus === 'invalid') {
     writeError(
@@ -745,6 +755,18 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
   // sigue sirviendo para dejar el bus sin ruta.
   if (rawRouteId && !isRouteId(rawRouteId)) {
     writeError(res, 400, 'INVALID_ROUTE', 'routeId debe tener forma de ruta (ej. R-101)');
+    return;
+  }
+  // Misma regla que el alta: solo rutas del catálogo de esta empresa. Si el
+  // panel reenvía la ruta que el bus ya tiene no es un cambio de ruta, y se
+  // deja pasar: un bus que quedó en una ruta fuera del catálogo (provisión
+  // con la clave global, bases viejas) tiene que poder editarse igual.
+  if (
+    rawRouteId
+    && rawRouteId !== getBusRouteId(params.busId)
+    && !esRutaDeEmpresa(auth.companyId, rawRouteId)
+  ) {
+    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found in this company');
     return;
   }
   if (interno !== undefined && interno.trim().length > MAX_INTERNO) {

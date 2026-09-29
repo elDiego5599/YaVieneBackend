@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { ChildProcess, spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import test from 'node:test';
 
+import Database from 'better-sqlite3';
 import { io, Socket } from 'socket.io-client';
 
 // Puertos propios: HTTP 3140-3149, MQTT 8910-8919. node --test corre los
@@ -412,11 +414,23 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
       return res.json() as Promise<{ buses: any[] }>;
     };
 
+    // Las rutas del bus salen del catálogo de la empresa: la R-101 y la R-102
+    // son de Sobusa (EMP-01), y un bus de otra empresa ya no entra en ellas
+    // (auditoría 2026-09, P1-2).
+    for (const [routeId, name] of [['R-131', 'Ruta 1 · Centro'], ['R-132', 'Ruta 2 · Norte']]) {
+      const ruta = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/routes`, {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ routeId, name }),
+      });
+      assert.equal(ruta.status, 201);
+    }
+
     // Crear bus con placa y ruta
     const created = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses`, {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ placa: 'abc 123', routeId: 'R-101' }),
+      body: JSON.stringify({ placa: 'abc 123', routeId: 'R-131' }),
     });
     assert.equal(created.status, 201);
     const newBus = (await created.json()) as any;
@@ -438,7 +452,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     const bad = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses`, {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ placa: '!!', routeId: 'R-101' }),
+      body: JSON.stringify({ placa: '!!', routeId: 'R-131' }),
     });
     assert.equal(bad.status, 400);
 
@@ -447,38 +461,37 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     const listed = fleet1.buses.find((b) => b.busId === 'BUS-ABC123');
     assert.ok(listed, 'el bus creado aparece en la flota');
     assert.equal(listed.placa, 'ABC123');
-    assert.equal(listed.routeId, 'R-101');
+    assert.equal(listed.routeId, 'R-131');
     assert.equal(listed.online, false);
 
     // Rutas: el catálogo incluye la ruta del bus y la ruta creada
     const routesRes = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/routes`, { headers: auth });
     assert.equal(routesRes.status, 200);
     const { routes } = (await routesRes.json()) as { routes: any[] };
-    assert.ok(routes.some((r) => r.routeId === 'R-101'), 'catálogo incluye R-101');
+    assert.ok(routes.some((r) => r.routeId === 'R-131'), 'catálogo incluye R-131');
     assert.ok(routes.some((r) => r.routeId === 'R-140'), 'catálogo incluye R-140 creada');
-    const r101 = routes.find((r) => r.routeId === 'R-101');
-    // El nombre sale del catálogo de Sobusa, el mismo que ve el pasajero; la
-    // lista fija de la demo («Tcherassi») se fue con T9.3.
-    assert.equal(r101.name, 'B18 Tcherassi');
-    assert.ok(r101.total >= 1);
+    const r131 = routes.find((r) => r.routeId === 'R-131');
+    // El nombre sale del catálogo de la empresa, el mismo que ve el pasajero.
+    assert.equal(r131.name, 'Ruta 1 · Centro');
+    assert.ok(r131.total >= 1);
 
     // Editar placa, ruta e interno
     const patched = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses/BUS-ABC123`, {
       method: 'PATCH',
       headers: auth,
-      body: JSON.stringify({ placa: 'XYZ987', routeId: 'R-102', interno: '042' }),
+      body: JSON.stringify({ placa: 'XYZ987', routeId: 'R-132', interno: '042' }),
     });
     assert.equal(patched.status, 200);
     const updated = (await patched.json()) as any;
     assert.equal(updated.placa, 'XYZ987');
-    assert.equal(updated.routeId, 'R-102');
+    assert.equal(updated.routeId, 'R-132');
     assert.equal(updated.interno, '042');
 
-    // Pasajero suscrito a R-102 (ruta final del bus) recibe bus:removed al borrarlo
+    // Pasajero suscrito a R-132 (ruta final del bus) recibe bus:removed al borrarlo
     const passenger = connectSocket({}, HTTP_PORT);
     sockets.push(passenger);
     await waitForConnection(passenger);
-    passenger.emit('subscribe:route', 'R-102');
+    passenger.emit('subscribe:route', 'R-132');
     const removed = waitForSocketEvent(passenger, 'bus:removed', (p) => p?.busId === 'BUS-ABC123');
     const deleted = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses/BUS-ABC123`, {
       method: 'DELETE',
@@ -486,7 +499,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     });
     assert.equal(deleted.status, 200);
     const removedEvent = await removed;
-    assert.equal(removedEvent.routeId, 'R-102');
+    assert.equal(removedEvent.routeId, 'R-132');
 
     // Ya no está en la flota
     const fleet2 = await fleet();
@@ -501,7 +514,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     const noAuth = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ placa: 'QWE456', routeId: 'R-101' }),
+      body: JSON.stringify({ placa: 'QWE456', routeId: 'R-131' }),
     });
     assert.equal(noAuth.status, 401);
 
@@ -509,19 +522,19 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses`, {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ placa: 'MNO789', routeId: 'R-101' }),
+      body: JSON.stringify({ placa: 'MNO789', routeId: 'R-131' }),
     });
     await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/buses`, {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ placa: 'PQR234', routeId: 'R-101' }),
+      body: JSON.stringify({ placa: 'PQR234', routeId: 'R-131' }),
     });
 
     // Ruta con nombre duplicado (derivado del catálogo) → 400
     const dup = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/routes`, {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ routeId: 'R-999', name: 'b18 TCherassi' }),
+      body: JSON.stringify({ routeId: 'R-999', name: 'ruta 1 · CENTRO' }),
     });
     assert.equal(dup.status, 400);
     assert.equal(((await dup.json()) as any).error.code, 'DUPLICATE_ROUTE');
@@ -582,7 +595,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     const fleet3 = await fleet();
     const moved = fleet3.buses.find((b) => b.placa === 'BBB111');
     assert.ok(moved, 'bus reasignado sigue en la flota');
-    assert.equal(moved.routeId, 'R-140', 'se movió a la primera ruta restante (orden alfabético)');
+    assert.equal(moved.routeId, 'R-131', 'se movió a la primera ruta restante (orden alfabético)');
     const routesAfterDelete = (await (
       await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/routes`, { headers: auth })
     ).json()) as { routes: any[] };
@@ -667,8 +680,10 @@ test('fleet: una empresa no puede tocar ni ver buses, rutas ni flota de otra', {
     assert.equal((await call(b, 'PATCH', '/api/fleet/routes/R-301', { name: 'Robada' })).status, 404);
     assert.equal((await call(b, 'DELETE', '/api/fleet/routes/R-301')).status, 404);
 
-    // La placa ya es de A: 409 y el bus no cambia de dueña ni de ruta.
-    const robo = await call(b, 'POST', '/api/fleet/buses', { placa: 'aaa 111', routeId: 'R-101' });
+    // La placa ya es de A: 409 y el bus no cambia de dueña ni de ruta. B lo
+    // intenta en una ruta suya: en una ajena el 404 de la ruta llega antes.
+    assert.equal((await call(b, 'POST', '/api/fleet/routes', { routeId: 'R-401', name: 'Ruta de B' })).status, 201);
+    const robo = await call(b, 'POST', '/api/fleet/buses', { placa: 'aaa 111', routeId: 'R-401' });
     assert.equal(robo.status, 409);
     const roboBody = (await robo.json()) as { error: { code: string } };
     assert.equal(roboBody.error.code, 'BUS_TAKEN');
@@ -848,5 +863,133 @@ test('fleet: el código de ruta es único entre empresas', { timeout: 60_000 }, 
     assert.equal(milUno.body.routeId, 'R-1001');
   } finally {
     await stopProcess(backend);
+  }
+});
+
+// Auditoría 2026-09, P1-2. Las rutas son de una sola empresa desde la
+// migración 20, pero el alta y la edición del bus solo miraban la forma del
+// código: la empresa B daba de alta un bus con `routeId: R-301`, que es de A,
+// y sus posiciones salían en el mapa de los pasajeros de A. Ahora el bus solo
+// entra en rutas del catálogo de su empresa, y la respuesta es el mismo 404
+// que ya da una ruta ajena en /api/fleet/routes: no confirma que la ruta
+// exista en otra parte.
+test('fleet: un bus solo entra en las rutas del catálogo de su empresa', { timeout: 60_000 }, async () => {
+  const HTTP_PORT = 3144;
+  const MQTT_PORT = 8914;
+  const base = `http://127.0.0.1:${HTTP_PORT}`;
+  const suffix = Date.now().toString().slice(-6);
+  const companyA = `EMP-PA-${suffix}`;
+  const companyB = `EMP-PB-${suffix}`;
+  const dbPath = `/tmp/yaviene-ruta-ajena-${process.pid}-${suffix}.db`;
+  const backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+    env: {
+      ...process.env,
+      HTTP_PORT: String(HTTP_PORT),
+      MQTT_PORT: String(MQTT_PORT),
+      JWT_SECRET,
+      ADMIN_API_KEY,
+      MQTT_DEBUG_LOGS: 'false',
+      YA_VIENE_FLOTA_DEMO: '0',
+      YA_VIENE_DB_PATH: dbPath,
+    },
+    stdio: 'ignore',
+  });
+
+  try {
+    await waitForReady(HTTP_PORT);
+    const login = async (companyId: string, username: string): Promise<Record<string, string>> => {
+      const created = await fetch(`${base}/api/admin/empresas/${companyId}/admin`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
+        body: JSON.stringify({ username, password: CLAVE_PRUEBA }),
+      });
+      assert.equal(created.status, 201);
+      const res = await fetch(`${base}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password: CLAVE_PRUEBA }),
+      });
+      assert.equal(res.status, 200);
+      const { token } = (await res.json()) as { token: string };
+      return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    };
+    const call = async (headers: Record<string, string>, method: string, path: string, body?: unknown) => {
+      const res = await fetch(`${base}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const texto = await res.text();
+      return { status: res.status, texto, json: texto ? JSON.parse(texto) : null };
+    };
+
+    const a = await login(companyA, `ana${suffix}`);
+    const b = await login(companyB, `beto${suffix}`);
+    assert.equal((await call(a, 'POST', '/api/fleet/routes', { routeId: 'R-301', name: 'Ruta de A' })).status, 201);
+    assert.equal((await call(b, 'POST', '/api/fleet/routes', { routeId: 'R-401', name: 'Ruta de B' })).status, 201);
+    assert.equal((await call(a, 'POST', '/api/fleet/buses', { placa: 'AAA111', routeId: 'R-301' })).status, 201);
+
+    // Alta de B en la ruta de A: 404, y sin nombrar a A.
+    const alta = await call(b, 'POST', '/api/fleet/buses', { placa: 'BBB222', routeId: 'R-301' });
+    assert.equal(alta.status, 404, alta.texto);
+    assert.equal(alta.json.error.code, 'ROUTE_NOT_FOUND');
+    assert.equal(alta.texto.includes(companyA), false, 'el 404 no dice de quién es la ruta');
+    assert.equal(alta.texto.includes('Ruta de A'), false);
+    // Una ruta que no está en ningún catálogo, igual: si no, B la ocupa
+    // antes y el día que A la cree hereda el bus de B.
+    const inventada = await call(b, 'POST', '/api/fleet/buses', { placa: 'BBB222', routeId: 'R-999' });
+    assert.equal(inventada.status, 404, inventada.texto);
+    assert.equal(inventada.json.error.code, 'ROUTE_NOT_FOUND');
+
+    // El bus no quedó creado a medias, y la ruta de A no lo lista.
+    let flotaB = (await call(b, 'GET', '/api/fleet/positions')).json;
+    assert.equal(flotaB.buses.some((bus: any) => bus.busId === 'BUS-BBB222'), false);
+    const rutasB = (await call(b, 'GET', '/api/fleet/routes')).json;
+    assert.deepEqual(rutasB.routes.map((r: any) => r.routeId), ['R-401']);
+
+    // En su propia ruta, sí.
+    const propio = await call(b, 'POST', '/api/fleet/buses', { placa: 'BBB222', routeId: 'R-401' });
+    assert.equal(propio.status, 201, propio.texto);
+
+    // La edición: pasar el bus a la ruta de A, o a una que no existe, es el
+    // mismo 404 y el bus sigue donde estaba.
+    const edicion = await call(b, 'PATCH', '/api/fleet/buses/BUS-BBB222', { routeId: 'R-301', interno: '555' });
+    assert.equal(edicion.status, 404, edicion.texto);
+    assert.equal(edicion.json.error.code, 'ROUTE_NOT_FOUND');
+    assert.equal(edicion.texto.includes(companyA), false);
+    assert.equal((await call(b, 'PATCH', '/api/fleet/buses/BUS-BBB222', { routeId: 'R-998' })).status, 404);
+    flotaB = (await call(b, 'GET', '/api/fleet/positions')).json;
+    const suyo = flotaB.buses.find((bus: any) => bus.busId === 'BUS-BBB222');
+    assert.equal(suyo.routeId, 'R-401');
+    assert.notEqual(suyo.interno, '555', 'un PATCH rechazado no aplica nada');
+
+    // Lo que ya valía sigue valiendo: su propia ruta, y la cadena vacía
+    // para dejarlo sin ruta.
+    assert.equal((await call(b, 'PATCH', '/api/fleet/buses/BUS-BBB222', { routeId: 'R-401', interno: '12' })).status, 200);
+    const sinRuta = await call(b, 'PATCH', '/api/fleet/buses/BUS-BBB222', { routeId: '' });
+    assert.equal(sinRuta.status, 200, sinRuta.texto);
+    assert.equal(sinRuta.json.routeId, null);
+
+    // Un bus que ya tenía una ruta fuera del catálogo (bases de antes de
+    // esta regla) se sigue pudiendo editar si el panel reenvía la ruta que
+    // ya tiene: no es un cambio de ruta. La API ya no deja armar ese caso,
+    // así que se escribe en la base, como lo dejó el código de antes.
+    const baseDatos = new Database(dbPath);
+    baseDatos.pragma('busy_timeout = 5000');
+    baseDatos.prepare("UPDATE buses SET route_id = 'R-777' WHERE bus_id = 'BUS-BBB222'").run();
+    baseDatos.close();
+    const heredado = await call(b, 'PATCH', '/api/fleet/buses/BUS-BBB222', { routeId: 'R-777', interno: '31' });
+    assert.equal(heredado.status, 200, heredado.texto);
+    assert.equal(heredado.json.routeId, 'R-777');
+    assert.equal(heredado.json.interno, '31');
+
+    // Y lo de A quedó como estaba: su ruta solo tiene su bus.
+    const rutasA = (await call(a, 'GET', '/api/fleet/routes')).json;
+    const r301 = rutasA.routes.find((r: any) => r.routeId === 'R-301');
+    assert.equal(r301.name, 'Ruta de A');
+    assert.equal(r301.total, 1);
+  } finally {
+    await stopProcess(backend);
+    for (const sufijo of ['', '-wal', '-shm']) rmSync(`${dbPath}${sufijo}`, { force: true });
   }
 });

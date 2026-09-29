@@ -124,6 +124,20 @@ export function isRouteId(routeId: string): boolean {
 }
 
 /**
+ * Si la ruta está en el catálogo de esta empresa. Es la regla para poner un
+ * bus en una ruta (auditoría 2026-09, P1-2): con mirar solo la forma del
+ * código, una empresa metía sus buses en las rutas de otra y salían en el
+ * mapa de los pasajeros de esa otra. Una ruta que no está en ningún catálogo
+ * tampoco vale: quien la ocupara primero le colgaría sus buses a la empresa
+ * que la cree después.
+ */
+export function esRutaDeEmpresa(companyId: string, routeId: string): boolean {
+  return getDb()
+    .prepare('SELECT 1 FROM company_routes WHERE company_id = ? AND route_id = ?')
+    .get(companyId, routeId) !== undefined;
+}
+
+/**
  * Si la ruta existe en alguna parte: en el catálogo de alguna empresa, como
  * ruta de algún bus o de alguna posición guardada. Son las mismas tres fuentes de las que sale la lista de rutas que ve
  * el pasajero, así que lo que la app puede pedir, existe.
