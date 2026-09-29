@@ -10,3 +10,6 @@ local.env
 prototipo-aforo/yolo11m.pt
 prototipo-aforo/dataset/
 **/__pycache__/
+
+# Grafo local de graphify: caché de búsqueda que se regenera, no es del repo.
+graphify-out/
