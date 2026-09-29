@@ -181,6 +181,34 @@ test('probar-restauracion: falla si no hay copia, si está rota o si está vieja
   rmSync(tmp, { recursive: true, force: true });
 });
 
+// Una copia íntegra puede no servir igual: vacía (la copia se hizo de una
+// base recién creada, o de otra ruta) o sin una tabla del catálogo. Las dos
+// pasaban `integrity_check` y la auditoría del 2026-09-27 (R-07: M06 y M09)
+// vio que quitar su comprobación no rompía ninguna prueba.
+test('probar-restauracion: falla si la copia viene vacía o le falta una tabla', () => {
+  const tmp = carpeta('restaurar-hueca');
+  const dbPath = join(tmp, 'yaviene.db');
+  const destino = join(tmp, 'backups');
+  baseDeMentira(dbPath, 12);
+  assert.equal(correr('respaldar.mjs', { DB_PATH: dbPath, BACKUP_DIR: destino }).code, 0);
+  const copia = join(destino, readdirSync(destino).filter((n) => n.endsWith('.db'))[0]);
+
+  const vaciar = new Database(copia);
+  vaciar.exec('DELETE FROM buses');
+  vaciar.close();
+  const vacia = correr('probar-restauracion.mjs', { DB_PATH: dbPath, BACKUP_DIR: destino });
+  assert.notEqual(vacia.code, 0, vacia.salida);
+  assert.match(vacia.salida, /0 filas de buses y la base viva tiene 12/);
+
+  const mutilar = new Database(copia);
+  mutilar.exec('DROP TABLE buses');
+  mutilar.close();
+  const sinTabla = correr('probar-restauracion.mjs', { DB_PATH: dbPath, BACKUP_DIR: destino });
+  assert.notEqual(sinTabla.code, 0, sinTabla.salida);
+  assert.match(sinTabla.salida, /falta la tabla buses/);
+  rmSync(tmp, { recursive: true, force: true });
+});
+
 // launchd y plutil son de macOS: en la CI, que corre en Linux, el
 // instalador ni encuentra ngrok ni tiene con qué validar el plist, y la
 // prueba fallaba por el sistema, no por el servicio. Se corre en el Mac,

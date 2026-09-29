@@ -54,7 +54,7 @@ function stopProcess(child: ChildProcess | undefined): Promise<void> {
 test('fleet: tipologia cerrada y aforo por bus al dar de alta y editar', { timeout: 90_000 }, async () => {
   let backend: ChildProcess | undefined;
   try {
-    backend = spawn(process.execPath, ['dist/index.js'], {
+    backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
       env: {
         ...process.env,
         HTTP_PORT: String(HTTP_PORT),

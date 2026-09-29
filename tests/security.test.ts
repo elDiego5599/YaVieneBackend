@@ -7,7 +7,15 @@ process.env.ADMIN_API_KEY = 'test-admin-key';
 
 import { hashPin, verifyPin } from '../src/auth/passwords';
 import { signToken, verifyToken } from '../src/auth/tokens';
-import { requestKey, SlidingWindowRateLimiter } from '../src/security/rate_limiter';
+import {
+  adminRateLimiter,
+  fleetWriteRateLimiter,
+  loginIpRateLimiter,
+  loginRateLimiter,
+  readRateLimiter,
+  requestKey,
+  SlidingWindowRateLimiter,
+} from '../src/security/rate_limiter';
 
 function peticionFalsa(remoteAddress: string, headers: Record<string, string> = {}): IncomingMessage {
   return { socket: { remoteAddress }, headers } as unknown as IncomingMessage;
@@ -148,3 +156,30 @@ test('rate limiter rejects after the configured window budget', () => {
   assert.equal(limiter.allow('test-key'), false);
   assert.equal(limiter.allow('other-key'), true);
 });
+
+// Los topes son la política, no un detalle: el comentario de cada limitador
+// en `rate_limiter.ts` explica su número. Sin fijarlos aquí, subir el de
+// login de 5 a 6 o el de lectura de 120 a 121 pasaba la suite entera
+// (auditoría 2026-09-27, R-05: F_R4 y F_R6 vivos). Cada fila prueba el
+// último intento que entra, el primero que se rechaza y que la ventana de
+// un minuto lo devuelve.
+const TOPES: Array<[string, SlidingWindowRateLimiter, number]> = [
+  ['login', loginRateLimiter, 5],
+  ['loginIp', loginIpRateLimiter, 20],
+  ['admin', adminRateLimiter, 20],
+  ['read', readRateLimiter, 120],
+  ['fleetWrite', fleetWriteRateLimiter, 60],
+];
+
+for (const [nombre, limitador, tope] of TOPES) {
+  test(`rate limiter ${nombre}: entran ${tope} por minuto y la siguiente se rechaza`, () => {
+    const clave = `tope-${nombre}-${process.pid}`;
+    const t0 = 1_000_000;
+    for (let i = 1; i <= tope; i += 1) {
+      assert.equal(limitador.allow(clave, t0), true, `la petición ${i} de ${tope} debe entrar`);
+    }
+    assert.equal(limitador.allow(clave, t0), false, `la petición ${tope + 1} debe dar 429`);
+    assert.equal(limitador.allow(clave, t0 + 59_999), false, 'dentro del minuto sigue cerrado');
+    assert.equal(limitador.allow(clave, t0 + 60_000), true, 'pasado el minuto vuelve a entrar');
+  });
+}
