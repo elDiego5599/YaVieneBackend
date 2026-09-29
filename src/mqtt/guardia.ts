@@ -36,7 +36,8 @@ export const MQTT_CONNECT_TIMEOUT_MS = 10_000;
 /**
  * Cuántas conexiones de `/mqtt` puede tener una dirección abiertas sin
  * autenticar a la vez. La clave es la del limitador del HTTP (`requestKey`):
- * detrás de ngrok o de Fly es la IP del visitante. Un equipo pasa por este
+ * detrás de ngrok o de Fly es la IP del visitante, y una IPv6 cuenta por su
+ * /64. Un equipo pasa por este
  * estado lo que tarda su CONNECT en ir y volver, así que 20 deja sitio a
  * muchos buses detrás de la misma IP de un operador móvil reconectando a la
  * vez; los que no caben reintentan solos. Las conexiones ya autenticadas no

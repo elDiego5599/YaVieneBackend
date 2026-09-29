@@ -9,6 +9,7 @@ import { hashPin, verifyPin } from '../src/auth/passwords';
 import { signToken, verifyToken } from '../src/auth/tokens';
 import {
   adminRateLimiter,
+  BloqueoPorCuenta,
   fleetWriteRateLimiter,
   loginIpRateLimiter,
   loginRateLimiter,
@@ -76,6 +77,54 @@ test('requestKey: loopback IPv4 mapeado es el mismo túnel de confianza', () => 
   // Y sin cabecera, la clave va sin el prefijo: si no, el mismo cliente
   // ocupa dos cupos distintos según por dónde entre.
   assert.equal(requestKey(peticionFalsa('::ffff:203.0.113.5')), '203.0.113.5');
+});
+
+// Auditoría 2026-09, P2-2: un cliente IPv6 suele tener un /64 entero (2^64
+// direcciones) y la clave era la dirección completa, así que cambiando de
+// dirección en cada intento se estrenaba cupo: login, lecturas, sockets y
+// el tope de conexiones MQTT anónimas. La clave de una IPv6 es su /64.
+test('requestKey: una IPv6 cuenta por su /64, venga por el túnel, por Fly o directa', () => {
+  const previo = process.env.FLY_APP_NAME;
+  try {
+    delete process.env.FLY_APP_NAME;
+    const porTunel = (ip: string) =>
+      requestKey(peticionFalsa('127.0.0.1', { 'x-forwarded-for': ip }), 'login');
+    assert.equal(porTunel('2001:db8:aa:1::1'), porTunel('2001:db8:aa:1:ffff:ffff:ffff:fffe'),
+      'dos direcciones del mismo /64 son el mismo cliente');
+    assert.equal(porTunel('2001:0DB8:00aa:0001:0:0:0:7'), porTunel('2001:db8:aa:1::9'),
+      'la forma de escribirla no cambia la clave');
+    assert.notEqual(porTunel('2001:db8:aa:1::1'), porTunel('2001:db8:aa:2::1'),
+      'otro /64 es otro cliente');
+    assert.equal(porTunel('2001:db8:aa:1::1'), '2001:db8:aa:1::/64:login');
+
+    // Directa, sin túnel (el servidor escucha en '::').
+    assert.equal(requestKey(peticionFalsa('2001:db8:bb:3::10')), requestKey(peticionFalsa('2001:db8:bb:3::11')));
+
+    process.env.FLY_APP_NAME = 'yaviene-backend';
+    const porFly = (ip: string) =>
+      requestKey(peticionFalsa('172.16.0.2', { 'fly-client-ip': ip }), 'read');
+    assert.equal(porFly('2a02:6ea0:c000:1::1'), porFly('2a02:6ea0:c000:1::2'));
+    assert.notEqual(porFly('2a02:6ea0:c000:1::1'), porFly('2a02:6ea0:c000:2::1'));
+  } finally {
+    if (previo === undefined) delete process.env.FLY_APP_NAME;
+    else process.env.FLY_APP_NAME = previo;
+  }
+});
+
+test('requestKey: las IPv4, mapeadas o no, siguen contando por dirección', () => {
+  const porTunel = (ip: string) => requestKey(peticionFalsa('127.0.0.1', { 'x-forwarded-for': ip }));
+  assert.equal(porTunel('203.0.113.7'), '203.0.113.7');
+  assert.notEqual(porTunel('203.0.113.7'), porTunel('203.0.113.8'));
+  // Una IPv4 mapeada es esa IPv4, no el /64 ::ffff:0:0, que juntaría a
+  // todos los clientes IPv4 en un solo cupo.
+  assert.equal(porTunel('::ffff:203.0.113.7'), '203.0.113.7');
+  assert.equal(porTunel('::ffff:cb00:7107'), '203.0.113.7');
+  assert.notEqual(porTunel('::ffff:203.0.113.7'), porTunel('::ffff:203.0.113.8'));
+  // El túnel en IPv6 (::1) sigue siendo de confianza: el /64 se calcula
+  // sobre la clave, no antes de decidir si se cree a X-Forwarded-For.
+  assert.equal(requestKey(peticionFalsa('::1', { 'x-forwarded-for': '198.51.100.4' })), '198.51.100.4');
+  // Lo que no es una dirección se queda como está.
+  assert.equal(porTunel('no-es-ip'), 'no-es-ip');
 });
 
 // La de arriba usa una petición construida a mano; esta comprueba contra un
@@ -189,3 +238,39 @@ for (const [nombre, limitador, tope] of TOPES) {
     assert.equal(limitador.allow(clave, t0 + 60_000), true, 'pasado el minuto vuelve a entrar');
   });
 }
+
+// P2-3: el bloqueo por cuenta, con el reloj en la mano. Lo que se prueba
+// contra el backend (10 fallos desde IP distintas, 429 con Retry-After,
+// otra cuenta sin enterarse) está en seguridad_p2.test.ts.
+test('bloqueo por cuenta: se cierra en el fallo 10, se abre solo y no se alarga', () => {
+  const hora = 60 * 60_000;
+  const bloqueo = new BloqueoPorCuenta(10, hora, hora);
+  for (let i = 0; i < 9; i++) assert.equal(bloqueo.fallo('300', i), false);
+  assert.equal(bloqueo.restante('300', 9), 0, 'con 9 fallos todavía puede intentarlo');
+  assert.equal(bloqueo.fallo('300', 10), true, 'el décimo la cierra');
+  assert.equal(bloqueo.restante('300', 10), hora);
+  assert.equal(bloqueo.restante('301', 10), 0, 'otra cuenta no se entera');
+  // Intentar durante el bloqueo no lo alarga: el login no llega a apuntar
+  // fallos mientras dure, así que el reloj es el del fallo que lo cerró.
+  assert.equal(bloqueo.restante('300', 10 + hora / 2), hora / 2);
+  assert.equal(bloqueo.restante('300', 10 + hora), 0, 'pasada la hora se abre');
+  // Y se abre con la cuenta a cero, no a un fallo de volver a cerrarse.
+  assert.equal(bloqueo.fallo('300', 11 + hora), false);
+});
+
+test('bloqueo por cuenta: los fallos viejos caducan y un acierto borra la cuenta', () => {
+  const bloqueo = new BloqueoPorCuenta(3, 1000, 5000);
+  bloqueo.fallo('a', 0);
+  bloqueo.fallo('a', 1);
+  assert.equal(bloqueo.fallo('a', 1500), false, 'los de t=0 y t=1 ya salieron de la ventana');
+  bloqueo.fallo('b', 0);
+  bloqueo.fallo('b', 1);
+  bloqueo.acierto('b');
+  assert.equal(bloqueo.fallo('b', 2), false, 'tras un acierto empieza de cero');
+  assert.equal(bloqueo.fallo('b', 3), false);
+  assert.equal(bloqueo.fallo('b', 4), true);
+  // El barrido quita lo que ya no cuenta: la memoria no crece con cada
+  // teléfono que alguien prueba una vez.
+  bloqueo.sweep(10_000);
+  assert.equal(bloqueo.size, 0);
+});

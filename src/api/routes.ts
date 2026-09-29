@@ -28,7 +28,7 @@ import { authenticateRequest, isAdminRequest, isDriverForBus, authenticateCompan
 import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
 import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
-import { getMetrics } from '../observability/metrics';
+import { getMetrics, incrementMetric } from '../observability/metrics';
 import { MAX_INTERNO, TIPOLOGIAS, MAX_CAPACIDAD, MIN_CAPACIDAD, getBusRouteId, normalizeCapacidad, normalizeTipologia } from '../data/fleet_admin';
 import { esRutaDeEmpresa, isRouteId, MAX_NOMBRE_RUTA } from '../data/routes_store';
 import {
@@ -36,6 +36,8 @@ import {
   fleetWriteRateLimiter,
   loginIpRateLimiter,
   loginRateLimiter,
+  MAX_FALLOS_PIN_POR_CUENTA,
+  pinPorCuentaBloqueo,
   readRateLimiter,
   requestKey,
   SlidingWindowRateLimiter,
@@ -296,7 +298,15 @@ function provisionDriver(
     busId,
     pinHash: hashPin(pin),
   });
+  // Mismo 409 que el alta desde el panel, sin decir de quién es el bus.
+  if (driver === 'taken') {
+    writeError(res, 409, 'BUS_TAKEN', 'Ese bus ya está registrado en otra empresa');
+    return;
+  }
   revokeSessionsForDriver(driver.driverId);
+  // El alta pone un PIN nuevo con la clave de administración: el bloqueo por
+  // PIN fallidos de esa línea ya no protege nada y el equipo entra enseguida.
+  pinPorCuentaBloqueo.levantar(phoneNumber);
 
   writeJson(res, 201, {
     status: 'provisioned',
@@ -328,11 +338,27 @@ addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
     return;
   }
 
+  // Y un tercero por la cuenta sola (P2-3): los dos de arriba no ven los
+  // intentos contra un mismo teléfono repartidos entre muchas IP. Mientras
+  // dura el bloqueo no se mira el PIN, ni siquiera el bueno. Mismo 429 que
+  // los otros topes: el equipo ya sabe esperar y reintentar.
+  const bloqueo = pinPorCuentaBloqueo.restante(phoneNumber);
+  if (bloqueo > 0) {
+    res.setHeader('Retry-After', String(Math.ceil(bloqueo / 1000)));
+    writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
+    return;
+  }
+
   const driver = getDriver(phoneNumber);
   if (!driver || !verifyPin(pin, driver.pinHash) || !driver.companyId || !driver.busId) {
+    if (pinPorCuentaBloqueo.fallo(phoneNumber)) {
+      incrementMetric('login.cuenta_bloqueada');
+      console.warn(`[Auth] Cuenta …${phoneNumber.slice(-4)} bloqueada tras ${MAX_FALLOS_PIN_POR_CUENTA} PIN fallidos`);
+    }
     writeError(res, 401, 'INVALID_CREDENTIALS', 'Invalid driver credentials');
     return;
   }
+  pinPorCuentaBloqueo.acierto(phoneNumber);
 
   if (requestedBusId && requestedBusId !== driver.busId) {
     writeError(res, 403, 'BUS_FORBIDDEN', 'The driver is not assigned to this bus');

@@ -4,8 +4,18 @@
 import { randomUUID } from 'crypto';
 import { getDb } from './database';
 import { DriverInfo } from './bus_types';
+import { busCompanyCache } from './fleet_admin';
 
 export const driverCache = new Map<string, DriverInfo>();
+
+/**
+ * `'taken'` si el bus ya es de otra empresa (auditoría 2026-09, P2-1). Antes
+ * el alta se lo pasaba a la nueva sin avisar —el mismo robo silencioso que
+ * `createBus` ya cerraba— y sin tocar `busCompanyCache`, así que la empresa
+ * vieja seguía pudiendo ocultar, editar o borrar un bus que ya no era suyo
+ * hasta reiniciar el backend. En ese caso no se escribe nada.
+ */
+export type RegisterDriverError = 'taken';
 
 export function registerDriver(
   phoneNumber: string,
@@ -17,7 +27,7 @@ export function registerDriver(
     busId?: string;
     pinHash?: string;
   } = {},
-): DriverInfo {
+): DriverInfo | RegisterDriverError {
   const db = getDb();
   const now = Date.now();
   const driverId = options.driverId ?? phoneNumber;
@@ -25,7 +35,13 @@ export function registerDriver(
   const busId = options.busId ?? null;
   const pinHash = options.pinHash ?? null;
 
-  const save = db.transaction(() => {
+  const save = db.transaction((): RegisterDriverError | null => {
+    if (companyId && busId) {
+      const bus = db.prepare('SELECT company_id FROM buses WHERE bus_id = ?')
+        .get(busId) as { company_id: string } | undefined;
+      if (bus && bus.company_id !== companyId) return 'taken';
+    }
+
     db.prepare(`
       INSERT INTO drivers (
         phone_number, driver_id, name, route_id, company_id, bus_id, pin_hash, registered_at
@@ -45,7 +61,6 @@ export function registerDriver(
         INSERT INTO buses (bus_id, company_id, created_at, updated_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(bus_id) DO UPDATE SET
-          company_id = excluded.company_id,
           updated_at = excluded.updated_at
       `).run(busId, companyId, now, now);
 
@@ -61,8 +76,14 @@ export function registerDriver(
         ) VALUES (?, ?, ?, ?, ?, ?, 'active')
       `).run(randomUUID(), driverId, busId, companyId, routeId, now);
     }
+    return null;
   });
-  save();
+  const error = save();
+  if (error) return error;
+  // La caché de «de quién es el bus» guarda también los «no está»: un bus
+  // que el panel preguntó antes de existir quedaba sin empresa en memoria y
+  // su dueña recibía 404 hasta reiniciar. Tras el alta dice lo que la base.
+  if (companyId && busId) busCompanyCache.set(busId, companyId);
   const driver = {
     driverId,
     phoneNumber,

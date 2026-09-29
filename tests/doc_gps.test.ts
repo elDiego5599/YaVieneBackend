@@ -19,6 +19,7 @@ import {
 } from '../src/security/physics';
 import { ZONA } from '../src/security/zona';
 import { MAX_MQTT_ANONIMAS_POR_IP, MAX_PAQUETE_MQTT, MQTT_CONNECT_TIMEOUT_MS } from '../src/mqtt/guardia';
+import { BLOQUEO_PIN_MS, MAX_FALLOS_PIN_POR_CUENTA, VENTANA_FALLOS_PIN_MS } from '../src/security/rate_limiter';
 
 const raiz = join(__dirname, '..');
 const doc = readFileSync(join(raiz, 'docs', 'integracion-gps.md'), 'utf8');
@@ -66,6 +67,13 @@ test('doc GPS: los límites que dice el documento son los del código', () => {
     doc.includes(`${MAX_MQTT_ANONIMAS_POR_IP} conexiones abiertas sin autenticar`),
     'falta el tope de conexiones anónimas por IP',
   );
+  // El bloqueo de PIN por línea (P2-3): el documento lo dice en horas.
+  assert.equal(VENTANA_FALLOS_PIN_MS, 3_600_000, 'el documento dice «en una hora»');
+  assert.ok(
+    doc.includes(`${MAX_FALLOS_PIN_POR_CUENTA} PIN fallidos en una hora`),
+    'falta el tope de PIN fallidos por línea',
+  );
+  assert.ok(doc.includes(`durante ${BLOQUEO_PIN_MS / 3_600_000} hora`), 'falta cuánto dura el bloqueo');
   for (const numero of [ZONA.latMin, ZONA.latMax, ZONA.lonMin, ZONA.lonMax]) {
     assert.ok(doc.includes(String(numero)), `la zona del documento no dice ${numero}`);
   }

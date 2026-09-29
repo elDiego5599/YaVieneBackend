@@ -103,7 +103,7 @@ Las lecturas públicas admiten 120 por minuto e IP (`429 TOO_MANY_REQUESTS`).
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/auth/login` | `{ phoneNumber, pin, busId?, routeId? }` → `{ driver, token }` |
+| POST | `/api/auth/login` | `{ phoneNumber, pin, busId?, routeId? }` → `{ driver, token }`. 10 PIN fallidos en una hora bloquean la línea 1 hora: `429 RATE_LIMITED` con `Retry-After` |
 | GET | `/api/drivers/:phone` | Ficha propia con token de conductor. Sin permiso: siempre 403, exista o no |
 | POST | `/api/buses/:busId/offline` | Fin de turno: quita el bus del mapa y revoca la sesión |
 
@@ -111,7 +111,7 @@ Las lecturas públicas admiten 120 por minuto e IP (`429 TOO_MANY_REQUESTS`).
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/admin/drivers` | Provisiona una credencial `{ phoneNumber, name, pin, companyId, busId, routeId }`. `/api/drivers/register` es el mismo endpoint |
+| POST | `/api/admin/drivers` | Provisiona una credencial `{ phoneNumber, name, pin, companyId, busId, routeId }`. `/api/drivers/register` es el mismo endpoint. Un `busId` de otra empresa: `409 BUS_TAKEN` |
 | POST | `/api/admin/empresas/:companyId/admin` | Crea o actualiza la cuenta de panel `{ username, password }` (12+ caracteres) |
 | GET | `/api/metrics` | Contadores operativos |
 

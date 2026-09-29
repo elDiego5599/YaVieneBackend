@@ -64,7 +64,8 @@ Los buses de la demo no se arrancan a mano: el propio backend levanta doce
 simuladores al iniciar (`src/demo/flota_demo.ts`). Para apagarlos —tráfico real,
 donde esas posiciones falsas viajarían por el mismo canal que las buenas—
 `YA_VIENE_FLOTA_DEMO=0` delante del arranque. Mientras la flota esté
-encendida, el entorno necesita `PIN` (en `local.env` y en `fly.toml`): es el
+encendida, el entorno necesita `PIN` (en `local.env`, y en Fly como secreto):
+es el
 PIN con el que los simuladores registran e inician sesión, y sin él el
 backend no arranca (`validateConfig`).
 
@@ -130,6 +131,54 @@ que el conjunto se recupera solo— está `bash demo-crash-recovery.sh` en
 `YaViene`. Tarda menos de un minuto (espera hasta 20 s a `/api/ready` y hasta
 25 s a que los simuladores vuelvan) y termina con el sistema en pie. No es para
 usarlo en mitad de una demo: es el ensayo del día anterior.
+
+## Si muchos equipos GPS reciben 429 tras un reinicio
+
+Al volver el backend, todos los equipos reconectan a la vez. Hasta que su
+CONNECT es aceptado, cada uno cuenta como conexión anónima, y una misma IP
+(con IPv6, un mismo /64) puede tener **20** abiertas a la vez
+(`src/mqtt/guardia.ts`). Muchos buses detrás de la IP de un mismo operador
+móvil pueden chocar con ese tope: la conexión 21 recibe `429` al abrir el
+WebSocket y el equipo tiene que reintentar. Se ve en las métricas:
+
+```bash
+curl -s -H "x-admin-key: $ADMIN_API_KEY" http://127.0.0.1:3000/api/metrics \
+  | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).counters["mqtt.rechazado.anonimas_ip"]))'
+```
+
+Qué hacer:
+
+1. **Esperar uno o dos minutos.** Cada equipo sale del cupo en cuanto se
+   autentica, así que los que reintentan van entrando. Si el contador deja
+   de subir y los buses vuelven a verse «En línea» en el panel, no hay nada
+   más que hacer.
+2. **Si sigue subiendo pasados unos minutos** y los buses no vuelven —más de
+   20 equipos detrás de una misma IP que reintentan todos en el mismo
+   segundo—, subir el tope con `YA_VIENE_MAX_MQTT_ANONIMAS_IP` y reiniciar:
+
+   ```bash
+   echo 'YA_VIENE_MAX_MQTT_ANONIMAS_IP=60' >> local.env
+   launchctl kickstart -k gui/$UID/com.yaviene.backend   # o el arranque a mano de arriba
+   ```
+
+   En Fly va en `[env]` de `fly.toml` y se aplica al desplegar.
+3. Subirlo no abre la puerta a llenar la memoria: eso lo cortan el tope de
+   16 KB por paquete y el plazo de 10 s para el CONNECT, que no cambian. El
+   cupo solo limita cuántas conexiones mudas tiene una IP a la vez. Cuando
+   pase, borrar la línea de `local.env` y volver al valor por defecto.
+4. Si los `429` no coinciden con un reinicio y no hay buses caídos, no es
+   una reconexión en masa sino alguien abriendo conexiones sin
+   autenticarse: no se sube el tope.
+
+### Un equipo que no puede iniciar sesión (429 en el login)
+
+Diez PIN fallidos en una hora bloquean esa línea durante una hora, vengan
+de donde vengan (`login.cuenta_bloqueada` en las métricas, y una línea
+`[Auth] Cuenta …1234 bloqueada` en el log). Si es un equipo propio mal
+configurado: corregir su PIN y esperar a que termine el bloqueo, o volver a
+provisionarlo con `POST /api/admin/drivers`. El bloqueo vive en memoria, así
+que reiniciar el backend también lo levanta, pero si nadie tocó el equipo es
+alguien probando PIN y el bloqueo está haciendo su trabajo.
 
 ## Si la base no arranca
 
@@ -283,14 +332,26 @@ equipo, revocable sin tocar el resto— todavía no existe; es la tarea T4.3.
 ## Fly, el respaldo
 
 No se despliega hasta el día anterior a presentar: es una decisión del dueño, no
-un olvido. Cuando toque, lo mínimo es desplegar, despertar la máquina y dejar
-provisionadas las cuentas de panel de la demo:
+un olvido. Cuando toque, lo mínimo es poner el PIN de la flota demo, desplegar,
+despertar la máquina y dejar provisionadas las cuentas de panel de la demo:
 
 ```bash
+fly secrets set --stage PIN=$(node -e 'console.log(require("crypto").randomInt(1e7, 1e8))')
 fly deploy
 fly scale count 1 --yes && fly machine start
 fly ssh console   # y dentro: node scripts/crear-admin-empresa.mjs …
 ```
+
+El PIN de la flota demo es un **secreto de Fly**, no una línea de
+`fly.toml`: con el PIN y los teléfonos de la demo en el repo, cualquiera que
+lo leyera entraba como uno de sus buses. Va aleatorio, de 8 dígitos, y nunca
+`1234`, que queda en el historial de git. Los simuladores dan de alta su
+conductor con él cada vez que arrancan, así que cambiarlo no pide tocar el
+volumen. `--stage` lo guarda sin reiniciar la máquina y lo aplica el
+siguiente `fly deploy`; `fly secrets list` confirma que está (sin enseñar el
+valor). Sin él, con la flota encendida, el backend de Fly no arranca
+(`[Config] PIN: …`). Cuando la flota pase a `"0"` se quita con
+`fly secrets unset PIN`.
 
 La máquina duerme sola (`auto_stop_machines`) y la despierta la primera
 petición, con un arranque en frío de unos segundos —por eso las apps esperan

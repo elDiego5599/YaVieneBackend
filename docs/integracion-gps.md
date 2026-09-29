@@ -39,7 +39,8 @@ anónimo no le llene la memoria:
 - **El CONNECT tiene que llegar dentro de 10 s** después de abrir el
   WebSocket. Si no, la conexión se cierra.
 - **Una misma IP puede tener 20 conexiones abiertas sin autenticar** a la
-  vez. La siguiente recibe `429` en el WebSocket, antes de abrirlo. Una
+  vez (con IPv6 cuenta el /64 entero, no cada dirección). La siguiente
+  recibe `429` en el WebSocket, antes de abrirlo. Una
   conexión deja de contar en cuanto el CONNECT es aceptado, así que muchos
   equipos detrás de la misma IP de un operador móvil solo chocan aquí si
   reconectan todos en el mismo instante. El equipo que recibe `429` tiene
@@ -61,6 +62,13 @@ La respuesta trae `token`, y dentro de él van la empresa, el bus, la ruta y
 un `sessionId` nuevo. El token dura **24 horas**; pasado ese tiempo la
 conexión se rechaza y hay que volver a pedirlo.
 
+**10 PIN fallidos en una hora bloquean la línea durante 1 hora**, vengan
+de la IP que vengan. Mientras dure, el login responde `429` con
+`Retry-After` (segundos que faltan), también con el PIN bueno. Un login
+correcto borra la cuenta de fallos, y volver a dar de alta la línea levanta
+el bloqueo. Un equipo que recibe `401` no debe reintentar en bucle con el
+mismo PIN: el PIN no va a cambiar solo, y cada intento acerca el bloqueo.
+
 Un bus tiene **una sola sesión viva**. Si el mismo bus entra otra vez, la
 sesión nueva desplaza a la anterior y la vieja deja de poder publicar. Eso
 es lo que permite que un equipo que se reinicia vuelva a entrar de
@@ -68,7 +76,9 @@ inmediato, sin esperar a que el servidor note que el anterior murió.
 
 El alta del equipo (línea, PIN, empresa, bus y ruta) se hace contra
 `POST /api/admin/drivers` con la clave de administración. No es algo que el
-equipo pueda hacer por su cuenta.
+equipo pueda hacer por su cuenta. Volver a darlo de alta con otra línea o
+con otro PIN vale; con un bus que ya es de otra empresa responde
+`409 BUS_TAKEN` y no cambia nada.
 
 ## Topics
 

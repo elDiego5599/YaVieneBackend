@@ -27,12 +27,12 @@ primary_region = "iad"
   # respaldo real del piloto, esta línea se cambia a "0". El arranque deja un
   # aviso en el log mientras esté en "1".
   YA_VIENE_FLOTA_DEMO = "1"
-  # PIN con el que los buses simulados registran e inician sesión. La flota
-  # demo de arriba viene encendida, y validateConfig no deja arrancar con la
-  # flota encendida y sin PIN: antes el script usaba «1234» por omisión.
-  # El valor es el mismo de siempre (los conductores demo del volumen lo
-  # tienen hasheado); con la flota en "0" esta línea se puede borrar.
-  PIN = "1234"
+  # El PIN con el que los buses simulados registran e inician sesión NO va
+  # aquí: este archivo está en el repo, y con el PIN y los teléfonos de la
+  # demo cualquiera que lo leyera entraba como uno de sus buses (auditoría
+  # 2026-09, P2-3). Es un secreto de Fly, `PIN`, que se pone antes de
+  # desplegar (docs/runbook.md, «Fly, el respaldo»). Sin él, validateConfig
+  # no deja arrancar con la flota encendida.
   # Con NODE_ENV=production una base nueva nace vacía (src/config.ts,
   # siembraDemoHabilitada). El espejo de la demo necesita a Sobusa (EMP-01) y
   # su catálogo de rutas, que es lo que recorre la flota de arriba. En un

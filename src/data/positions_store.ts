@@ -43,9 +43,10 @@ function busDelCatalogo(busId: string): { route_id: string | null } | undefined 
 
 /**
  * Si el bus existe en el catálogo. Se consulta la base y no
- * `busCompanyCache`: esa caché guarda también los «no está», y el alta de un
- * conductor crea la fila del bus sin pasar por ella, así que un bus
- * preguntado antes de provisionarse quedaría rechazado para siempre.
+ * `busCompanyCache`: esa caché guarda también los «no está», y cualquier
+ * camino que cree la fila del bus sin corregirla (el alta de conductor lo
+ * hacía hasta P2-1) dejaría un bus preguntado antes de existir rechazado
+ * para siempre.
  */
 export function busInCatalog(busId: string): boolean {
   return busDelCatalogo(busId) !== undefined;
@@ -152,13 +153,23 @@ export function upsertPosition(phoneNumber: string, data: {
 // sin bus en el catálogo es un bus borrado, no uno sin empresa que haya que
 // enseñar. `visible` NULL sigue contando como visible, igual que en
 // `getBusVisibility`.
+//
+// Segunda barrera de P1-2 (auditoría 2026-09): una ruta del catálogo solo
+// enseña buses de su empresa. El alta y la edición ya no dejan poner un bus
+// en la ruta de otra, pero un bus colado antes del arreglo seguía saliendo
+// en el mapa de los pasajeros ajenos. Una ruta que no está en ningún
+// catálogo (buses viejos provisionados sin ruta de catálogo) no tiene dueña
+// que proteger y sigue como antes. `company_routes` es única por
+// `route_id` (migración 20): el LEFT JOIN no duplica filas.
 export function getPositionsByRoute(routeId: string): BusPosition[] {
   const db = getDb();
   const rows = db.prepare(`
     SELECT p.*, b.company_id AS bus_company_id
     FROM positions p
     JOIN buses b ON b.bus_id = p.bus_id
+    LEFT JOIN company_routes cr ON cr.route_id = p.route_id
     WHERE p.route_id = ? AND (b.visible = 1 OR b.visible IS NULL)
+      AND (cr.company_id IS NULL OR cr.company_id = b.company_id)
   `).all(routeId) as PositionRow[];
   return rows.map(rowToPosition);
 }

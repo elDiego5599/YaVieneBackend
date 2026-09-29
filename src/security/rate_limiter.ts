@@ -1,4 +1,5 @@
 import { IncomingMessage } from 'http';
+import { isIPv6 } from 'net';
 
 import { setMetric } from '../observability/metrics';
 
@@ -87,12 +88,107 @@ export const readRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
 // deja a una persona ocultar treinta buses uno a uno sin tropezar.
 export const fleetWriteRateLimiter = new SlidingWindowRateLimiter(60, 60_000);
 
-const LIMITADORES: Record<string, SlidingWindowRateLimiter> = {
+/**
+ * Bloqueo temporal de una cuenta tras muchos fallos seguidos (auditoría
+ * 2026-09, P2-3). Los topes de login cuentan por IP y por (IP, cuenta): quien
+ * reparte los intentos contra un mismo teléfono entre muchas IP no tropieza
+ * con ninguno, y el PIN del equipo puede ser de 4 dígitos. Éste cuenta los
+ * fallos de la cuenta sola, sin IP: al llegar a `maxFallos` dentro de
+ * `ventanaMs`, la cuenta queda cerrada `bloqueoMs`, también para el PIN
+ * bueno —si no, probar durante el bloqueo diría cuál es—. Un acierto borra
+ * los fallos, y los intentos durante el bloqueo no lo alargan: quien lo
+ * provoca a propósito solo consigue que el equipo espere, no dejarlo fuera
+ * para siempre.
+ *
+ * La memoria está acotada igual que en [SlidingWindowRateLimiter]: como
+ * mucho `maxFallos` marcas por cuenta, y un barrido quita las que ya no
+ * tienen ni fallos vivos ni bloqueo.
+ */
+export class BloqueoPorCuenta {
+  private readonly fallos = new Map<string, number[]>();
+  private readonly bloqueadas = new Map<string, number>();
+  private llamadasDesdeBarrido = 0;
+
+  constructor(
+    private readonly maxFallos: number,
+    private readonly ventanaMs: number,
+    private readonly bloqueoMs: number,
+    private readonly barrerCada = 64,
+  ) {}
+
+  /** Milisegundos que le quedan al bloqueo de `cuenta`, o 0 si puede intentarlo. */
+  restante(cuenta: string, now: number = Date.now()): number {
+    const hasta = this.bloqueadas.get(cuenta);
+    if (hasta === undefined) return 0;
+    if (hasta > now) return hasta - now;
+    this.bloqueadas.delete(cuenta);
+    return 0;
+  }
+
+  /** Apunta un fallo. `true` si con él la cuenta queda bloqueada. */
+  fallo(cuenta: string, now: number = Date.now()): boolean {
+    if (++this.llamadasDesdeBarrido >= this.barrerCada) {
+      this.llamadasDesdeBarrido = 0;
+      this.sweep(now);
+    }
+    const vivos = (this.fallos.get(cuenta) ?? []).filter((t) => now - t < this.ventanaMs);
+    vivos.push(now);
+    if (vivos.length < this.maxFallos) {
+      this.fallos.set(cuenta, vivos);
+      return false;
+    }
+    this.fallos.delete(cuenta);
+    this.bloqueadas.set(cuenta, now + this.bloqueoMs);
+    return true;
+  }
+
+  /** Un acierto: la cuenta empieza de cero. */
+  acierto(cuenta: string): void {
+    this.fallos.delete(cuenta);
+  }
+
+  /** Quita fallos y bloqueo: lo hace quien administra, al dar un PIN nuevo. */
+  levantar(cuenta: string): void {
+    this.fallos.delete(cuenta);
+    this.bloqueadas.delete(cuenta);
+  }
+
+  sweep(now: number = Date.now()): void {
+    for (const [cuenta, marcas] of this.fallos) {
+      if (!marcas.some((t) => now - t < this.ventanaMs)) this.fallos.delete(cuenta);
+    }
+    for (const [cuenta, hasta] of this.bloqueadas) {
+      if (hasta <= now) this.bloqueadas.delete(cuenta);
+    }
+  }
+
+  /** Cuentas recordadas, con fallos o bloqueadas (métricas y pruebas). */
+  get size(): number {
+    return this.fallos.size + this.bloqueadas.size;
+  }
+}
+
+// 10 fallos en una hora cierran la cuenta una hora. Un equipo bien
+// configurado no falla nunca y una persona que teclea mal no llega a diez;
+// a quien adivina le deja 10 intentos por hora y cuenta, así que barrer los
+// 10 000 PIN de 4 dígitos pasa de minutos a más de un mes, y cada bloqueo
+// queda en las métricas (`login.cuenta_bloqueada`).
+export const MAX_FALLOS_PIN_POR_CUENTA = 10;
+export const VENTANA_FALLOS_PIN_MS = 60 * 60_000;
+export const BLOQUEO_PIN_MS = 60 * 60_000;
+export const pinPorCuentaBloqueo = new BloqueoPorCuenta(
+  MAX_FALLOS_PIN_POR_CUENTA,
+  VENTANA_FALLOS_PIN_MS,
+  BLOQUEO_PIN_MS,
+);
+
+const LIMITADORES: Record<string, { readonly size: number }> = {
   login: loginRateLimiter,
   loginIp: loginIpRateLimiter,
   admin: adminRateLimiter,
   read: readRateLimiter,
   fleetWrite: fleetWriteRateLimiter,
+  pinCuenta: pinPorCuentaBloqueo,
 };
 
 // La memoria de cada limitador está acotada por el barrido, pero nadie la
@@ -112,7 +208,7 @@ const yaAvisados = new Set<string>();
  * vuelve a avisar. Corre con el volcado de métricas (`index.ts`).
  */
 export function registrarTamanosLimitadores(
-  limitadores: Record<string, SlidingWindowRateLimiter> = LIMITADORES,
+  limitadores: Record<string, { readonly size: number }> = LIMITADORES,
   avisar: (mensaje: string) => void = console.warn,
 ): void {
   for (const [nombre, limitador] of Object.entries(limitadores)) {
@@ -146,6 +242,39 @@ function normalizarIp(direccion: string): string {
   return mapeada ? mapeada[1] : direccion;
 }
 
+/** Los ocho grupos de 16 bits de una IPv6 válida (`isIPv6`), con o sin `::` y con o sin IPv4 al final. */
+function gruposIpv6(direccion: string): number[] {
+  const trozos = (parte: string): number[] => parte === '' ? [] : parte.split(':').flatMap((g) => {
+    if (!g.includes('.')) return [parseInt(g, 16)];
+    const [a, b, c, d] = g.split('.').map(Number);
+    return [(a << 8) | b, (c << 8) | d];
+  });
+  const hueco = direccion.indexOf('::');
+  if (hueco === -1) return trozos(direccion);
+  const antes = trozos(direccion.slice(0, hueco));
+  const despues = trozos(direccion.slice(hueco + 2));
+  return [...antes, ...new Array(8 - antes.length - despues.length).fill(0), ...despues];
+}
+
+// Auditoría 2026-09, P2-2: un cliente IPv6 no tiene una dirección sino un
+// /64 entero —2^64 direcciones, y el sistema operativo estrena una cada poco
+// por privacidad—. Con la dirección completa de clave, cambiar de dirección
+// en cada intento estrenaba cupo en todos los topes: login, lecturas,
+// sockets y conexiones MQTT anónimas. El /64 es la unidad que un proveedor
+// entrega a un cliente, así que es la que se cuenta. Una IPv4 mapeada, en
+// cualquiera de sus dos formas, es esa IPv4: su /64 (::ffff:0:0) juntaría a
+// todos los clientes IPv4 en un solo cupo.
+function claveDeIp(direccion: string): string {
+  const ip = normalizarIp(direccion);
+  const sinZona = ip.split('%')[0];
+  if (!isIPv6(sinZona)) return ip;
+  const g = gruposIpv6(sinZona);
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) {
+    return [g[6] >> 8, g[6] & 0xff, g[7] >> 8, g[7] & 0xff].join('.');
+  }
+  return `${g.slice(0, 4).map((x) => x.toString(16)).join(':')}::/64`;
+}
+
 export function requestKey(req: IncomingMessage, suffix = ''): string {
   // En Fly (el respaldo) no hay túnel en loopback: todo llega desde el
   // proxy de Fly por su red privada, así que la IP del socket era la del
@@ -156,14 +285,17 @@ export function requestKey(req: IncomingMessage, suffix = ''): string {
   // máquina de Fly, así que fuera de ella la cabecera no se mira.
   const flyClientIp = process.env.FLY_APP_NAME ? req.headers['fly-client-ip'] : undefined;
   if (typeof flyClientIp === 'string' && flyClientIp.trim()) {
-    const ip = flyClientIp.trim();
+    const ip = claveDeIp(flyClientIp.trim());
     return suffix ? `${ip}:${suffix}` : ip;
   }
+  // La confianza en el túnel se decide con la dirección tal cual (sin /64):
+  // '::1' es loopback, pero su /64 no lo es.
   const remota = normalizarIp(req.socket.remoteAddress ?? '');
   const trustedProxy = TRUSTED_PROXY_ADDRESSES.has(remota);
   const forwarded = trustedProxy ? req.headers['x-forwarded-for'] : undefined;
   const ip = typeof forwarded === 'string'
     ? forwarded.split(',').pop()!.trim() // último hop = el que agregó el proxy
     : remota || 'unknown';
-  return suffix ? `${ip}:${suffix}` : ip;
+  const clave = claveDeIp(ip);
+  return suffix ? `${clave}:${suffix}` : clave;
 }

@@ -506,7 +506,9 @@ test('las consultas calientes buscan por índice, sin recorrer tablas', () => {
       SELECT p.*, b.company_id AS bus_company_id
       FROM positions p
       JOIN buses b ON b.bus_id = p.bus_id
-      WHERE p.route_id = ? AND (b.visible = 1 OR b.visible IS NULL)`, ['R-1']],
+      LEFT JOIN company_routes cr ON cr.route_id = p.route_id
+      WHERE p.route_id = ? AND (b.visible = 1 OR b.visible IS NULL)
+        AND (cr.company_id IS NULL OR cr.company_id = b.company_id)`, ['R-1']],
     // fleet_admin.ts · getFleetPositions
     getFleetPositions: [`
       SELECT b.bus_id FROM buses b

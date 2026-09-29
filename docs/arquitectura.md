@@ -48,6 +48,8 @@ Antes de los candados, una guardia (`src/mqtt/guardia.ts`) corta lo que
 no hace falta autenticar para rechazar: un paquete que anuncia más de
 16 KB, una conexión que no manda CONNECT en 10 s y, en `/mqtt`, más de 20
 conexiones sin autenticar desde la misma dirección (`429` en el upgrade).
+Como en todos los topes por dirección (`requestKey`), una IPv6 cuenta por
+su /64.
 
 Tres candados, en `src/mqtt/broker.ts`:
 
@@ -117,6 +119,11 @@ Socket.io en la ruta `/ws` (`src/socket/handler.ts`). Dos clases de sala:
 Lo que sale por cada una **no es lo mismo**: al pasajero se le quita el
 teléfono del conductor y el identificador de empresa (`toPublicPosition`).
 El panel sí los ve, porque son suyos.
+
+La foto de una ruta (`positions:batch` y `GET /api/routes/:routeId/positions`,
+las dos con `getPositionsByRoute`) solo trae buses de la empresa dueña de la
+ruta: un bus ajeno que haya quedado en ella no sale. Una ruta que no está
+en ningún catálogo no tiene dueña y trae los buses que tenga.
 
 Eventos que emite el servidor:
 
