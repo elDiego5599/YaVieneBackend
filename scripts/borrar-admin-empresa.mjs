@@ -61,4 +61,7 @@ db.prepare('DELETE FROM empresa_admins WHERE username = ?').run(username);
 db.close();
 
 console.log(`[OK] Admin '${username}' borrado de la empresa '${admin.company_id}'.`);
-console.log('     Su token sigue siendo válido hasta que expire (8h).');
+// El backend mira la cuenta en cada petición del panel (isAdminTokenCurrent,
+// src/data/empresas.ts) y revisa los paneles conectados cada minuto: borrar
+// la fila corta el acceso sin esperar a que el token caduque.
+console.log('     Su token deja de valer en la siguiente petición, y un panel abierto se cierra en menos de un minuto.');

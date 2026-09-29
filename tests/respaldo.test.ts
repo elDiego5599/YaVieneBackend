@@ -137,6 +137,68 @@ test('respaldar: la poda deja los recientes y un diario por día', () => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
+// Auditoría 2026-09, P2-5: las copias vivían solo en el disco de la base, y
+// sacarlas de ahí dependía de acordarse. Con BACKUP_DIR_EXTERNO (una USB,
+// una carpeta sincronizada) cada copia revisada va también ahí; si no está
+// montado o no se configuró, la copia local sale igual y el log avisa en
+// cuanto la última copia de fuera pasa de 24 h.
+test('respaldar: con BACKUP_DIR_EXTERNO la copia revisada sale también del disco', () => {
+  const tmp = carpeta('respaldo-externo');
+  const dbPath = join(tmp, 'yaviene.db');
+  const destino = join(tmp, 'backups');
+  const externo = join(tmp, 'usb');
+  mkdirSync(externo);
+  baseDeMentira(dbPath, 7);
+
+  const { code, salida } = correr('respaldar.mjs', {
+    DB_PATH: dbPath, BACKUP_DIR: destino, BACKUP_DIR_EXTERNO: externo,
+  });
+  assert.equal(code, 0, salida);
+  const locales = readdirSync(destino).filter((n) => n.endsWith('.db'));
+  const fuera = readdirSync(externo).filter((n) => n.endsWith('.db'));
+  assert.deepEqual(fuera, locales, 'la copia de fuera es la misma que la local');
+  const copia = new Database(join(externo, fuera[0]), { readonly: true });
+  assert.equal(copia.pragma('integrity_check', { simple: true }), 'ok');
+  assert.equal((copia.prepare('SELECT count(*) n FROM buses').get() as { n: number }).n, 7);
+  copia.close();
+  assert.doesNotMatch(salida, /AVISO/);
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+test('respaldar: sin copia de fuera en 24 h, el log lo dice y la local sale igual', () => {
+  const tmp = carpeta('respaldo-sin-externo');
+  const dbPath = join(tmp, 'yaviene.db');
+  const destino = join(tmp, 'backups');
+  baseDeMentira(dbPath, 1);
+
+  // Sin configurar.
+  const sinConfigurar = correr('respaldar.mjs', { DB_PATH: dbPath, BACKUP_DIR: destino });
+  assert.equal(sinConfigurar.code, 0, sinConfigurar.salida);
+  assert.match(sinConfigurar.salida, /AVISO.*BACKUP_DIR_EXTERNO/);
+
+  // Configurado pero sin montar: no se crea la carpeta (sería una carpeta
+  // en el mismo disco con nombre de USB), y la última copia de fuera, de
+  // hace media hora, todavía no merece aviso.
+  const externo = join(tmp, 'usb');
+  mkdirSync(externo);
+  assert.equal(correr('respaldar.mjs', { DB_PATH: dbPath, BACKUP_DIR: destino, BACKUP_DIR_EXTERNO: externo }).code, 0);
+  rmSync(externo, { recursive: true, force: true });
+  const reciente = correr('respaldar.mjs', { DB_PATH: dbPath, BACKUP_DIR: destino, BACKUP_DIR_EXTERNO: externo });
+  assert.equal(reciente.code, 0, reciente.salida);
+  assert.match(reciente.salida, /no está/);
+  assert.doesNotMatch(reciente.salida, /AVISO/);
+  assert.equal(readdirSync(tmp).includes('usb'), false, 'no se inventa la carpeta de fuera');
+
+  // Pasadas 24 h sin copia de fuera, sí.
+  const marca = join(destino, '.ultima-copia-externa');
+  const hace25h = new Date(Date.now() - 25 * 3_600_000);
+  utimesSync(marca, hace25h, hace25h);
+  const vieja = correr('respaldar.mjs', { DB_PATH: dbPath, BACKUP_DIR: destino, BACKUP_DIR_EXTERNO: externo });
+  assert.equal(vieja.code, 0, vieja.salida);
+  assert.match(vieja.salida, /AVISO.*24 h/);
+  rmSync(tmp, { recursive: true, force: true });
+});
+
 test('probar-restauracion: una copia sana pasa y dice cuánto tardó', () => {
   const tmp = carpeta('restaurar-ok');
   const dbPath = join(tmp, 'yaviene.db');

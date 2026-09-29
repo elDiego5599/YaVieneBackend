@@ -229,9 +229,26 @@ copia, si la más nueva tiene más de tres horas (`MAX_EDAD_HORAS`), si no pasa
 viva sale vacía en la copia. Es la comprobación que conviene correr el día
 antes de presentar.
 
-Las copias viven en el mismo Mac que la base: una copia de `data/backups/` a
-iCloud o a una USB sigue siendo parte del trabajo, porque un disco que se
-muera se lleva las dos cosas.
+Un disco que se muere se lleva la base y `data/backups/` a la vez, así que
+cada copia revisada sale también a un segundo destino fuera del disco: una
+USB o una carpeta sincronizada con iCloud, en `BACKUP_DIR_EXTERNO` dentro de
+`local.env` (el servicio lo lee al correr):
+
+```bash
+echo 'BACKUP_DIR_EXTERNO=/Volumes/<USB>/yaviene-backups' >> local.env
+```
+
+La carpeta tiene que existir: si el disco no está montado no se crea (sería
+otra carpeta en el mismo disco), la copia local sale igual y
+`respaldo.log` lo anota. Cuando la última copia de fuera pasa de **24 h**, o
+si `BACKUP_DIR_EXTERNO` no está puesto, la línea empieza por `[AVISO]`:
+
+```bash
+grep AVISO ~/Library/Logs/YaViene/respaldo.log | tail -3
+```
+
+La poda de fuera es la misma que la de dentro (48 recientes y una por día
+hasta 30 días).
 
 Restaurar, paso a paso:
 
@@ -286,10 +303,13 @@ Cambiar la contraseña sube la versión de la credencial, y eso invalida los
 tokens ya emitidos:
 
 ```bash
-node scripts/crear-admin-empresa.mjs <companyId> <username> <password> [nombre]
+node scripts/crear-admin-empresa.mjs <companyId> <username> - [nombre]
 ```
 
-La contraseña ha de tener 12 caracteres o más. El backend revisa los paneles
+El «-» va en lugar de la contraseña: el script la pide y se teclea sin eco
+(también se puede pasar por la entrada estándar o en `CLAVE_PANEL`). Escrita
+en el argumento se rechaza, porque quedaría en el historial y en `ps`. La
+contraseña ha de tener 12 caracteres o más. El backend revisa los paneles
 conectados cada minuto, así que una sesión abierta se cae sola en menos de 60 s
 y el panel muestra «Tu sesión expiró». Si en ese momento la base no responde,
 la revisión deja pasar al panel y lo saca en la primera vuelta en que la base
@@ -302,9 +322,9 @@ node scripts/borrar-admin-empresa.mjs <username>
 ```
 
 Avisa y no borra si es la única cuenta de esa empresa, porque dejaría el panel
-de esa empresa sin forma de entrar. **Borrar no revoca**: el token que esa
-persona ya tiene sigue valiendo hasta ocho horas. Si hay prisa, primero cambiar
-la contraseña (que sí revoca) y después borrar.
+de esa empresa sin forma de entrar. Borrar también revoca: el token que esa
+persona ya tiene deja de valer en su siguiente petición, y un panel abierto se
+cierra en menos de un minuto, igual que al cambiar la contraseña.
 
 Las contraseñas se teclean en el momento: no van en este documento, ni en un
 script, ni en la CI.
@@ -339,7 +359,7 @@ despertar la máquina y dejar provisionadas las cuentas de panel de la demo:
 fly secrets set --stage PIN=$(node -e 'console.log(require("crypto").randomInt(1e7, 1e8))')
 fly deploy
 fly scale count 1 --yes && fly machine start
-fly ssh console   # y dentro: node scripts/crear-admin-empresa.mjs …
+fly ssh console   # y dentro: node scripts/crear-admin-empresa.mjs <companyId> <username> -
 ```
 
 El PIN de la flota demo es un **secreto de Fly**, no una línea de

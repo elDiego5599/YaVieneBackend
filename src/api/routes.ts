@@ -25,7 +25,7 @@ import {
 } from '../data/buses';
 import { getEmpresas } from '../data/empresas';
 import { authenticateRequest, isAdminRequest, isDriverForBus, authenticateCompanyAdmin } from '../auth/http';
-import { hashPin, verifyPin, hashSecret, verifySecret } from '../auth/passwords';
+import { hashPin, hashSecret, verifySecretSinDelatar } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
 import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
 import { getMetrics, incrementMetric } from '../observability/metrics';
@@ -260,6 +260,12 @@ addRoute('POST', '/api/gps', (_req, res) => {
   writeError(res, 410, 'HTTP_GPS_DISABLED', 'GPS ingestion is available through authenticated MQTT only');
 });
 
+/** Un segmento de topic MQTT: sin separador ni comodines ni controles, hasta 64. */
+const IDENTIFICADOR_DE_TOPIC = /^[^/+#\u0000-\u001f\u007f]{1,64}$/;
+/** Texto de una línea, sin caracteres de control: la línea hasta 32, el nombre hasta 120. */
+const TELEFONO_DE_TEXTO = /^[^\u0000-\u001f\u007f]{1,32}$/;
+const NOMBRE_DE_TEXTO = /^[^\u0000-\u001f\u007f]{1,120}$/;
+
 function provisionDriver(
   req: IncomingMessage,
   res: ServerResponse,
@@ -289,6 +295,21 @@ function provisionDriver(
 
   if (!phoneNumber || !name || !routeId || !busId || !companyId || !/^\d{4,8}$/.test(pin)) {
     writeError(res, 400, 'INVALID_DRIVER_PROVISION', 'phoneNumber, name, routeId, busId, companyId and a numeric pin are required');
+    return;
+  }
+  // Formas (auditoría 2026-09, P3-10). Solo se cierra lo que nunca pudo
+  // funcionar: un busId o companyId con /, + o # arma un topic MQTT que el
+  // broker no acepta, una ruta sin forma de ruta no la ve ningún pasajero,
+  // y un caracter de control o un texto de kilobytes no es una línea ni un
+  // nombre. Antes todo eso entraba con 201 y el equipo quedaba mudo.
+  if (
+    !IDENTIFICADOR_DE_TOPIC.test(busId)
+    || !IDENTIFICADOR_DE_TOPIC.test(companyId)
+    || !isRouteId(routeId)
+    || !TELEFONO_DE_TEXTO.test(phoneNumber)
+    || !NOMBRE_DE_TEXTO.test(name)
+  ) {
+    writeError(res, 400, 'INVALID_DRIVER_PROVISION', 'busId and companyId cannot contain /, + or #; routeId must look like a route; phoneNumber and name must be short plain text');
     return;
   }
 
@@ -350,7 +371,10 @@ addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
   }
 
   const driver = getDriver(phoneNumber);
-  if (!driver || !verifyPin(pin, driver.pinHash) || !driver.companyId || !driver.busId) {
+  // scrypt corre siempre, exista o no la línea (P3-1): si no, el tiempo de
+  // respuesta decía qué teléfonos están dados de alta.
+  const pinBueno = verifySecretSinDelatar(pin, driver?.pinHash);
+  if (!driver || !pinBueno || !driver.companyId || !driver.busId) {
     if (pinPorCuentaBloqueo.fallo(phoneNumber)) {
       incrementMetric('login.cuenta_bloqueada');
       console.warn(`[Auth] Cuenta …${phoneNumber.slice(-4)} bloqueada tras ${MAX_FALLOS_PIN_POR_CUENTA} PIN fallidos`);
@@ -421,7 +445,9 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
   }
 
   const admin = getCompanyAdminByUsername(username);
-  if (!admin || !verifySecret(password, admin.passwordHash)) {
+  // Igual que en el login del equipo (P3-1): el tiempo no dice si el
+  // usuario existe.
+  if (!verifySecretSinDelatar(password, admin?.passwordHash) || !admin) {
     writeError(res, 401, 'INVALID_CREDENTIALS', 'Invalid admin credentials');
     return;
   }

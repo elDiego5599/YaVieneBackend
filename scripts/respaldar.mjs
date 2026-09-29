@@ -16,8 +16,9 @@
 // Uso:
 //   node scripts/respaldar.mjs
 //   DB_PATH=... BACKUP_DIR=... RETENCION_HORARIOS=48 RETENCION_DIARIOS=30
+//   BACKUP_DIR_EXTERNO=/Volumes/USB/yaviene   (copia fuera del disco, opcional)
 import Database from 'better-sqlite3';
-import { existsSync, mkdirSync, rmSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 // YA_VIENE_DB_PATH es la que mira el backend: si algún día local.env la
@@ -27,6 +28,15 @@ const DB_PATH =
 const BACKUP_DIR = process.env.BACKUP_DIR || path.join(path.dirname(DB_PATH), 'backups');
 const HORARIOS = Number(process.env.RETENCION_HORARIOS ?? 48);
 const DIARIOS = Number(process.env.RETENCION_DIARIOS ?? 30);
+// Auditoría 2026-09, P2-5: con las copias en el mismo disco que la base, un
+// disco que muere se lleva las dos. Este segundo destino —una USB, una
+// carpeta sincronizada con iCloud— recibe cada copia ya revisada y se poda
+// igual. Tiene que existir: si no está montado no se crea (sería una carpeta
+// más en el mismo disco con nombre de USB), la copia local sale igual y el
+// log avisa cuando la última copia de fuera pasa de 24 h.
+const EXTERNO = process.env.BACKUP_DIR_EXTERNO || '';
+const MARCA_EXTERNA = '.ultima-copia-externa';
+const AVISO_EXTERNA_MS = 24 * 3_600_000;
 
 const PATRON = /^yaviene-(\d{8})-\d{6}\.db$/;
 
@@ -111,3 +121,27 @@ const bytes = statSync(destino).size;
 const { guardadas, borradas } = podar(BACKUP_DIR, nombre);
 console.log(`Respaldo ${destino} (${bytes} bytes, ${Date.now() - desde} ms), integridad ok.`);
 console.log(`Guardados: ${guardadas} (hasta ${HORARIOS} recientes y ${DIARIOS} diarios) · borrados: ${borradas}`);
+
+// La marca vive junto a las copias locales y no en el destino de fuera: es
+// justo cuando ese destino no está cuando hace falta saber de cuándo es la
+// última copia que llegó ahí.
+const marca = path.join(BACKUP_DIR, MARCA_EXTERNA);
+if (!EXTERNO) {
+  console.warn('[AVISO] Sin copia fuera del disco: define BACKUP_DIR_EXTERNO (una USB o una carpeta sincronizada).');
+} else if (!existsSync(EXTERNO)) {
+  const ultima = existsSync(marca) ? statSync(marca).mtimeMs : 0;
+  const horas = ultima ? ((Date.now() - ultima) / 3_600_000).toFixed(1) : null;
+  const linea = `${EXTERNO} no está (¿desmontado?): la copia se quedó solo en este disco`;
+  if (!ultima || Date.now() - ultima > AVISO_EXTERNA_MS) {
+    console.warn(`[AVISO] ${linea}, y la última copia de fuera ${horas ? `es de hace ${horas} h` : 'no existe'} (más de 24 h).`);
+  } else {
+    console.log(`${linea}; la última copia de fuera es de hace ${horas} h.`);
+  }
+} else {
+  copyFileSync(destino, path.join(EXTERNO, nombre));
+  const fuera = podar(EXTERNO, nombre);
+  writeFileSync(marca, `${new Date().toISOString()}\n`);
+  const ahora = new Date();
+  utimesSync(marca, ahora, ahora);
+  console.log(`Copia fuera del disco: ${path.join(EXTERNO, nombre)} · guardados ${fuera.guardadas}, borrados ${fuera.borradas}`);
+}

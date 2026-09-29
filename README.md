@@ -111,7 +111,7 @@ Las lecturas públicas admiten 120 por minuto e IP (`429 TOO_MANY_REQUESTS`).
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/admin/drivers` | Provisiona una credencial `{ phoneNumber, name, pin, companyId, busId, routeId }`. `/api/drivers/register` es el mismo endpoint. Un `busId` de otra empresa: `409 BUS_TAKEN` |
+| POST | `/api/admin/drivers` | Provisiona una credencial `{ phoneNumber, name, pin, companyId, busId, routeId }`. `/api/drivers/register` es el mismo endpoint. Un `busId` de otra empresa: `409 BUS_TAKEN`. `busId` y `companyId` sin `/`, `+` ni `#` y de hasta 64; `routeId` con forma de ruta; `phoneNumber` hasta 32 y `name` hasta 120, sin caracteres de control: si no, `400 INVALID_DRIVER_PROVISION` |
 | POST | `/api/admin/empresas/:companyId/admin` | Crea o actualiza la cuenta de panel `{ username, password }` (12+ caracteres) |
 | GET | `/api/metrics` | Contadores operativos |
 

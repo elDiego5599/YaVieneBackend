@@ -5,6 +5,11 @@ import jwt from 'jsonwebtoken';
 // nunca se roten tokens en silencio (apps con "sesión expiró").
 const JWT_ISSUER = 'ya-viene-backend';
 const JWT_AUDIENCE = 'ya-viene-mqtt';
+// Uno solo, fijado al firmar y al verificar (auditoría 2026-09, P3-7). Sin
+// la lista, `verify` acepta cualquier HMAC que valide con el secreto: hoy es
+// seguro, pero deja la puerta a un cambio de librería o de clave que la
+// abra. HS256 es el que ya se usaba, así que ningún token vivo se cae.
+const JWT_ALGORITMO = 'HS256';
 
 function jwtSecret(): string {
   const secret = process.env.JWT_SECRET;
@@ -48,6 +53,7 @@ export function signToken(payload: TokenPayload): string {
     // sigue en 24h a propósito, porque es el que sostiene la conexión MQTT
     // del bus: expirarlo a las 8 horas dejaría al bus mudo a media jornada.
     expiresIn: payload.role === 'admin' ? '8h' : '24h',
+    algorithm: JWT_ALGORITMO,
     issuer: JWT_ISSUER,
     audience: JWT_AUDIENCE,
   });
@@ -56,6 +62,7 @@ export function signToken(payload: TokenPayload): string {
 export function verifyToken(token: string): TokenPayload | null {
   try {
     const decoded = jwt.verify(token, jwtSecret(), {
+      algorithms: [JWT_ALGORITMO],
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
     });

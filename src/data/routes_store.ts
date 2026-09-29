@@ -13,12 +13,16 @@ const RUTAS_CON_TRAZADO_EN_LA_APP = new Set([
   'R-101', 'R-102', 'R-103', 'R-104', 'R-105', 'R-106',
 ]);
 
-/** Nombre de la ruta en el catálogo de cualquier empresa (`route_id` es único, migración 20). */
-function nombreEnCatalogo(routeId: string): string | undefined {
-  const fila = getDb()
-    .prepare('SELECT name FROM company_routes WHERE route_id = ? LIMIT 1')
-    .get(routeId) as { name: string } | undefined;
-  return fila?.name;
+/**
+ * Nombre de una ruta que la empresa usa sin tenerla en su catálogo (buses
+ * viejos provisionados sin ruta de catálogo). Antes se buscaba con una
+ * consulta por ruta en el catálogo de cualquier empresa (auditoría 2026-09,
+ * P3-8), y como las propias ya salen de su catálogo, lo único que esa
+ * búsqueda encontraba era el nombre que OTRA empresa le puso a su ruta: se
+ * enseñaba en este panel y ocupaba ese nombre aquí. Sale el de siempre.
+ */
+function nombrePorDefecto(routeId: string): string {
+  return `Ruta ${routeId}`;
 }
 
 export function getCompanyRoutes(companyId: string): {
@@ -75,7 +79,7 @@ export function getCompanyRoutes(companyId: string): {
     if (seen.has(row.route_id)) continue;
     merged.push({
       routeId: row.route_id,
-      name: byId.get(row.route_id) ?? nombreEnCatalogo(row.route_id) ?? `Ruta ${row.route_id}`,
+      name: byId.get(row.route_id) ?? nombrePorDefecto(row.route_id),
       terminalA: null,
       terminalB: null,
       total: row.total,
@@ -94,16 +98,18 @@ export function routeNameExists(companyId: string, name: string, excludeRouteId?
     'SELECT 1 FROM company_routes WHERE company_id = ? AND LOWER(name) = ? AND route_id != ? LIMIT 1',
   ).get(companyId, cleaned, excluded);
   if (inCatalog) return true;
+  // Las del catálogo propio ya se miraron arriba por su nombre; las demás
+  // se llaman con el nombre por defecto.
   const derived = db.prepare(`
     SELECT COALESCE(p.route_id, b.route_id) AS route_id
     FROM buses b
     LEFT JOIN positions p ON p.bus_id = b.bus_id
     WHERE b.company_id = ? AND COALESCE(p.route_id, b.route_id) IS NOT NULL
-  `).all(companyId) as { route_id: string }[];
+      AND COALESCE(p.route_id, b.route_id) NOT IN (SELECT route_id FROM company_routes WHERE company_id = ?)
+  `).all(companyId, companyId) as { route_id: string }[];
   return derived.some((r) => {
     if (r.route_id === excluded) return false;
-    const fallback = nombreEnCatalogo(r.route_id) ?? `Ruta ${r.route_id}`;
-    return fallback.toLowerCase() === cleaned;
+    return nombrePorDefecto(r.route_id).toLowerCase() === cleaned;
   });
 }
 
