@@ -209,15 +209,14 @@ addRoute('GET', '/api/routes/:routeId/positions', (req, res, params) => {
 addRoute('GET', '/api/buses/:busId', (req, res, params) => {
   if (!guardPublicRead(req, res)) return;
   const bus = getPosition(params.busId);
-  if (!bus) {
+  // Un bus oculto contesta lo mismo que uno que no existe: con un 200
+  // `{visible:false}` aparte, cualquiera distinguía «existe pero la empresa
+  // lo esconde» de «no hay tal bus» probando ids (T3.4, YV-21).
+  if (!bus || !bus.visible) {
     writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
     return;
   }
-  const { visible, ...position } = bus;
-  if (!visible) {
-    writeJson(res, 200, { busId: bus.busId, visible: false });
-    return;
-  }
+  const { visible: _visible, ...position } = bus;
   writeJson(res, 200, toPublicPosition(position));
 });
 

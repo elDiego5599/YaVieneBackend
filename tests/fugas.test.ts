@@ -33,8 +33,9 @@ process.env.JWT_SECRET = 'test-jwt-secret';
 type ModuloHandler = typeof import('../src/socket/handler');
 let handler: ModuloHandler;
 
-// Las rutas de la demo existen siempre (`routes_store.routeNameMap`), así
-// que `subscribe:route` las acepta sin tener que sembrar la base.
+// Fuera de producción la base nueva nace con el catálogo de Sobusa
+// (`siembraDemoHabilitada`), así que `subscribe:route` acepta estas rutas
+// sin sembrar nada a mano.
 const RUTAS = ['R-101', 'R-102', 'R-103'];
 const VUELTAS = 200;
 const A_LA_VEZ = 20;

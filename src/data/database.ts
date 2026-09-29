@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { siembraDemoHabilitada } from '../config';
 
 const DB_DIR = path.join(__dirname, '..', '..', 'data');
 const DB_PATH = process.env.YA_VIENE_DB_PATH || path.join(DB_DIR, 'yaviene.db');
@@ -169,7 +170,14 @@ function initSchema(): void {
     (d.prepare('SELECT version FROM schema_migrations').all() as { version: number }[])
       .map((row) => row.version),
   );
-  const migrations: { version: number; apply: () => void }[] = [
+  // `siembra`: la migración solo mete datos de Sobusa (ni tablas ni
+  // columnas). Con la siembra apagada se salta SIN registrarse, así que
+  // encenderla después las corre en su orden (9 → 12 → 16) y la base queda
+  // igual que si hubiera nacido sembrada. Las rutas R-101…R-106 están
+  // reservadas (`routes_store.ts`), así que ninguna empresa puede ocuparlas
+  // mientras tanto y chocar con el índice único de la migración 20.
+  const sembrar = siembraDemoHabilitada();
+  const migrations: { version: number; siembra?: true; apply: () => void }[] = [
     {
       version: 1,
       apply: () => {
@@ -398,6 +406,7 @@ function initSchema(): void {
     },
     {
       version: 9,
+      siembra: true,
       apply: () => {
         const sobusaRoutes: [string, string][] = [
           ['R-101', 'Tcherassi'],
@@ -458,11 +467,16 @@ function initSchema(): void {
         for (const [routeId, [terminalA, terminalB]] of Object.entries(endpoints)) {
           setEndpoints.run(terminalA, terminalB, 'EMP-01', routeId);
         }
+        // Sin efecto en ninguna base conocida: EMP-02 nunca tuvo R-101 en su
+        // catálogo (la migración 20 hace además `route_id` único y R-101 es
+        // de EMP-01). Se deja porque esta migración ya está aplicada en todas
+        // las bases vivas y editarla no cambiaría nada (T9.3).
         setEndpoints.run('Centro', 'Soledad', 'EMP-02', 'R-101');
       },
     },
     {
       version: 12,
+      siembra: true,
       apply: () => {
         // Catálogo real de Sobusa (códigos de servicio desde los KMZ oficiales).
         const sobusa: Record<string, [string, string, string]> = {
@@ -525,6 +539,7 @@ function initSchema(): void {
     },
     {
       version: 16,
+      siembra: true,
       apply: () => {
         // Sobusa nunca se insertó en `empresas`: las migraciones 8 y 11 solo
         // la ACTUALIZAN ("SET name = 'Terminal Central'", "SET name =
@@ -741,6 +756,7 @@ function initSchema(): void {
 
   for (const migration of migrations) {
     if (applied.has(migration.version)) continue;
+    if (migration.siembra && !sembrar) continue;
     const applyMigration = d.transaction(() => {
       migration.apply();
       d.prepare(

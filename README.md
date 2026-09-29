@@ -53,6 +53,7 @@ YA_VIENE_FLOTA_DEMO=0 npm start
 | `CORS_ORIGINS` | Orígenes web autorizados, separados por coma. Sin ella no se emite CORS |
 | `YA_VIENE_DB_PATH` | Ruta del archivo SQLite |
 | `YA_VIENE_FLOTA_DEMO` | `0` apaga la flota simulada, `1` la enciende. Sin la variable: encendida en desarrollo, apagada con `NODE_ENV=production` |
+| `YA_VIENE_SEED_DEMO` | `1` hace que una base **nueva** nazca con Sobusa (`EMP-01`) y su catálogo de rutas; `0` la deja vacía. Sin la variable: sembrada en desarrollo, vacía con `NODE_ENV=production`. Una base ya sembrada no cambia |
 
 Producción es `NODE_ENV=production` (lo pone el Dockerfile). El arranque
 **se detiene** con un mensaje `[Config]` si:
@@ -89,7 +90,7 @@ hasta 32 KB.
 | GET | `/api/companies/:id/routes` | Rutas de una empresa |
 | GET | `/api/companies/:id/buses` | Buses visibles de una empresa |
 | GET | `/api/routes/:routeId/positions` | `{ routeId, buses }` con las posiciones actuales |
-| GET | `/api/buses/:busId` | Posición de un bus (`{ busId, visible: false }` si está oculto) |
+| GET | `/api/buses/:busId` | Posición de un bus (un bus oculto da el mismo `404` que uno inexistente) |
 | POST | `/api/gps` | **Retirado.** 410: las posiciones entran solo por MQTT autenticado |
 
 Las lecturas públicas admiten 120 por minuto e IP (`429 TOO_MANY_REQUESTS`).

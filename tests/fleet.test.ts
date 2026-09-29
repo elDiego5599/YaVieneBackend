@@ -310,10 +310,15 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
     const batch = await batch2;
     assert.equal(batch.buses.some((b: any) => b.busId === bus1), false);
 
-    // Bug corregido: consultarlo por ID tampoco debe filtrar su posición real
+    // Consultarlo por ID no filtra su posición ni delata que existe: contesta
+    // lo mismo que un id inventado (T3.4).
     const hiddenById = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/buses/${bus1}`);
-    assert.equal(hiddenById.status, 200);
-    assert.deepEqual(await hiddenById.json(), { busId: bus1, visible: false });
+    const missingById = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/buses/BUS-NOEXISTE`);
+    assert.equal(hiddenById.status, 404);
+    assert.deepEqual(
+      { status: hiddenById.status, body: await hiddenById.json() },
+      { status: missingById.status, body: await missingById.json() },
+    );
 
     // Mostrar: el pasajero recibe bus:visible con posición y vuelven las posiciones
     const visibleEvent = waitForSocketEvent(passenger, 'bus:visible', (p) => p?.busId === bus1);
@@ -367,7 +372,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
   const MQTT_PORT = 8911;
 
   try {
-    backend = spawn(process.execPath, ['dist/index.js'], {
+    backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
       env: {
         ...process.env,
         HTTP_PORT: String(HTTP_PORT),
@@ -452,7 +457,9 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     assert.ok(routes.some((r) => r.routeId === 'R-101'), 'catálogo incluye R-101');
     assert.ok(routes.some((r) => r.routeId === 'R-140'), 'catálogo incluye R-140 creada');
     const r101 = routes.find((r) => r.routeId === 'R-101');
-    assert.equal(r101.name, 'Tcherassi');
+    // El nombre sale del catálogo de Sobusa, el mismo que ve el pasajero; la
+    // lista fija de la demo («Tcherassi») se fue con T9.3.
+    assert.equal(r101.name, 'B18 Tcherassi');
     assert.ok(r101.total >= 1);
 
     // Editar placa, ruta e interno
@@ -514,7 +521,7 @@ test('fleet: CRUD de buses por admin (crear/editar/borrar, placa, filtros de rut
     const dup = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/fleet/routes`, {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ routeId: 'R-999', name: 'TCherassi' }),
+      body: JSON.stringify({ routeId: 'R-999', name: 'b18 TCherassi' }),
     });
     assert.equal(dup.status, 400);
     assert.equal(((await dup.json()) as any).error.code, 'DUPLICATE_ROUTE');

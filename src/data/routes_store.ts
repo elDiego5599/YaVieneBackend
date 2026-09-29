@@ -1,16 +1,25 @@
-// Catálogo de rutas por empresa (company_routes) + los nombres de ruta
-// heredados de la demo original (routeNameMap), que siguen siendo el
-// fallback cuando una ruta deriva de posiciones pero no está en catálogo.
+// Catálogo de rutas por empresa (company_routes). Los nombres salen solo de
+// ahí: la lista fija de la demo original (`routeNameMap`) daba nombre y
+// existencia a R-101…R-106 aunque la base no tuviera Sobusa (T9.3).
 import { getDb } from './database';
 
-export const routeNameMap: Record<string, string> = {
-  'R-101': 'Tcherassi',
-  'R-102': 'Carrera 14 - Silencio',
-  'R-103': 'Vivero Paraíso',
-  'R-104': 'Carrera 50 - Paraiso',
-  'R-105': 'Carrera 54 - Uninorte',
-  'R-106': 'Calle 72 - Uninorte',
-};
+/**
+ * Identificadores con recorrido dibujado en la app del pasajero
+ * (`app_pasajero/assets/data/rutas.json`). No son datos de la demo sino un
+ * contrato con la app: una ruta de otra empresa con uno de estos códigos
+ * heredaría el trazado de Sobusa en el mapa, así que el alta los rechaza.
+ */
+const RUTAS_CON_TRAZADO_EN_LA_APP = new Set([
+  'R-101', 'R-102', 'R-103', 'R-104', 'R-105', 'R-106',
+]);
+
+/** Nombre de la ruta en el catálogo de cualquier empresa (`route_id` es único, migración 20). */
+function nombreEnCatalogo(routeId: string): string | undefined {
+  const fila = getDb()
+    .prepare('SELECT name FROM company_routes WHERE route_id = ? LIMIT 1')
+    .get(routeId) as { name: string } | undefined;
+  return fila?.name;
+}
 
 export function getCompanyRoutes(companyId: string): {
   routeId: string;
@@ -66,7 +75,7 @@ export function getCompanyRoutes(companyId: string): {
     if (seen.has(row.route_id)) continue;
     merged.push({
       routeId: row.route_id,
-      name: byId.get(row.route_id) ?? routeNameMap[row.route_id] ?? `Ruta ${row.route_id}`,
+      name: byId.get(row.route_id) ?? nombreEnCatalogo(row.route_id) ?? `Ruta ${row.route_id}`,
       terminalA: null,
       terminalB: null,
       total: row.total,
@@ -93,7 +102,7 @@ export function routeNameExists(companyId: string, name: string, excludeRouteId?
   `).all(companyId) as { route_id: string }[];
   return derived.some((r) => {
     if (r.route_id === excluded) return false;
-    const fallback = routeNameMap[r.route_id] ?? `Ruta ${r.route_id}`;
+    const fallback = nombreEnCatalogo(r.route_id) ?? `Ruta ${r.route_id}`;
     return fallback.toLowerCase() === cleaned;
   });
 }
@@ -116,8 +125,7 @@ export function isRouteId(routeId: string): boolean {
 
 /**
  * Si la ruta existe en alguna parte: en el catálogo de alguna empresa, como
- * ruta de algún bus o de alguna posición guardada, o entre las rutas de la
- * demo. Son las mismas tres fuentes de las que sale la lista de rutas que ve
+ * ruta de algún bus o de alguna posición guardada. Son las mismas tres fuentes de las que sale la lista de rutas que ve
  * el pasajero, así que lo que la app puede pedir, existe.
  *
  * `isRouteId` solo mira la forma: `ZZ-999` la pasa sin existir, y el socket
@@ -125,7 +133,6 @@ export function isRouteId(routeId: string): boolean {
  * salas aunque respete el formato.
  */
 export function routeExists(routeId: string): boolean {
-  if (Object.prototype.hasOwnProperty.call(routeNameMap, routeId)) return true;
   const hit = getDb().prepare(`
     SELECT 1 FROM company_routes WHERE route_id = ?
     UNION ALL SELECT 1 FROM buses WHERE route_id = ?
@@ -147,7 +154,7 @@ export const MAX_NOMBRE_RUTA = 60;
 /**
  * Alta de una ruta en el catálogo de la empresa. Devuelve la ruta, `null` si
  * el nombre o el identificador no valen, o `'taken'` si el identificador ya
- * es de una ruta, de esta empresa o de cualquier otra, o de la demo.
+ * es de una ruta, de esta empresa o de cualquier otra, o tiene trazado en la app.
  *
  * El choque con la misma empresa se resolvía con `ON CONFLICT DO UPDATE SET
  * name`: un alta con un identificador repetido renombraba en silencio la ruta
@@ -163,9 +170,9 @@ export const MAX_NOMBRE_RUTA = 60;
  */
 export type AddRouteError = 'taken';
 
-/** El número más alto de las rutas de la demo (R-106): la cuenta sigue desde ahí. */
-const MAYOR_RUTA_DEMO = Math.max(
-  ...Object.keys(routeNameMap).map((id) => parseInt(id.slice(2), 10)),
+/** El número más alto con trazado en la app (R-106): la cuenta sigue desde ahí. */
+const MAYOR_RUTA_RESERVADA = Math.max(
+  ...[...RUTAS_CON_TRAZADO_EN_LA_APP].map((id) => parseInt(id.slice(2), 10)),
 );
 
 export function addCompanyRoute(
@@ -186,13 +193,11 @@ export function addCompanyRoute(
       FROM company_routes
       WHERE route_id GLOB 'R-[0-9]*' AND substr(route_id, 3) NOT GLOB '*[^0-9]*'
     `).get() as { mayor: number | null };
-    const next = Math.max(mayor ?? 0, MAYOR_RUTA_DEMO) + 1;
+    const next = Math.max(mayor ?? 0, MAYOR_RUTA_RESERVADA) + 1;
     cleanedId = `R-${String(next).padStart(3, '0')}`;
   }
   if (!isRouteId(cleanedId)) return null;
-  // Las de la demo tienen su recorrido dibujado en la app del pasajero
-  // (assets/data/rutas.json): otra empresa con ese código heredaría el mapa.
-  if (Object.prototype.hasOwnProperty.call(routeNameMap, cleanedId)) return 'taken';
+  if (RUTAS_CON_TRAZADO_EN_LA_APP.has(cleanedId)) return 'taken';
   // Sin columna en el ON CONFLICT: vale para la clave (empresa, ruta) y para
   // el índice único de `route_id` solo.
   const result = db.prepare(`

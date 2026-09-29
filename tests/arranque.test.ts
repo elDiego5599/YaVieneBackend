@@ -90,7 +90,9 @@ test('validateConfig: flota demo encendida en producción deja aviso', () => {
   const prod = {
     NODE_ENV: 'production', JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA, HTTP_TLS_EXTERNO: '1',
   };
-  const encendida = validateConfig({ ...prod, YA_VIENE_FLOTA_DEMO: '1', PIN: '1234' });
+  // Con la siembra también encendida (como en fly.toml): sin ella el arranque
+  // suma el aviso de «flota demo sin siembra», que prueba `siembra.test.ts`.
+  const encendida = validateConfig({ ...prod, YA_VIENE_FLOTA_DEMO: '1', YA_VIENE_SEED_DEMO: '1', PIN: '1234' });
   assert.deepEqual(encendida.errores, []);
   assert.equal(encendida.avisos.length, 1);
   assert.match(encendida.avisos[0], /flota demo ENCENDIDA en producción/);

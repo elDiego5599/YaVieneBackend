@@ -141,6 +141,12 @@ export function validateConfig(
     );
   }
 
+  // La flota demo recorre el catálogo de EMP-01 (`flota_demo.ts`): sin la
+  // siembra, en una base nueva no hay rutas y arranca sin un solo bus.
+  if (flotaDemoHabilitada(env) && !siembraDemoHabilitada(env)) {
+    avisos.push('flota demo encendida sin siembra (YA_VIENE_SEED_DEMO=0): en una base nueva no hay rutas de EMP-01 que recorrer');
+  }
+
   if (produccion && flotaDemoHabilitada(env)) {
     avisos.push('flota demo ENCENDIDA en producción (YA_VIENE_FLOTA_DEMO=1): los buses simulados publican en el mismo canal que los reales');
   }
@@ -159,5 +165,19 @@ export function validateConfig(
  */
 export function flotaDemoHabilitada(env: NodeJS.ProcessEnv = process.env): boolean {
   const valor = env.YA_VIENE_FLOTA_DEMO ?? (env.NODE_ENV === 'production' ? '0' : '1');
+  return valor !== '0';
+}
+
+/**
+ * Si una base nueva nace con Sobusa (`EMP-01`) y su catálogo de rutas. La
+ * siembra vivía dentro de las migraciones 9, 12 y 16 y corría en toda base
+ * nueva: un despliegue para otra empresa arrancaba con Sobusa y sus seis
+ * rutas en el selector del pasajero (T9.3, YV-13). Misma regla que la flota
+ * demo: en desarrollo sí por defecto, en producción solo con
+ * YA_VIENE_SEED_DEMO=1 escrito en el despliegue. Solo decide en bases que
+ * aún no la tienen: las migraciones ya aplicadas no se tocan.
+ */
+export function siembraDemoHabilitada(env: NodeJS.ProcessEnv = process.env): boolean {
+  const valor = env.YA_VIENE_SEED_DEMO ?? (env.NODE_ENV === 'production' ? '0' : '1');
   return valor !== '0';
 }

@@ -10,14 +10,14 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --import ./tests/entorno.ts --test tests/*.test.ts",
     "test:aforo": "python -m unittest discover -s prototipo-aforo/tests",
     "backup": "node scripts/backup-db.mjs",
     "respaldo": "node scripts/respaldar.mjs",
     "respaldo:probar": "node scripts/probar-restauracion.mjs",
     "carga": "node --import tsx scripts/carga.ts",
-    "test:cobertura": "node --import tsx --test --experimental-test-coverage --test-coverage-exclude=\"tests/**\" --test-coverage-exclude=\"scripts/**\" --test-coverage-exclude=\"dist/**\" --test-coverage-lines=92 --test-coverage-branches=79 --test-coverage-functions=92 tests/*.test.ts",
-    "contrato:actualizar": "ACTUALIZAR_CONTRATO=1 node --import tsx --test tests/contrato.test.ts"
+    "test:cobertura": "node --import tsx --import ./tests/entorno.ts --test --experimental-test-coverage --test-coverage-exclude=\"tests/**\" --test-coverage-exclude=\"scripts/**\" --test-coverage-exclude=\"dist/**\" --test-coverage-lines=92 --test-coverage-branches=79 --test-coverage-functions=92 tests/*.test.ts",
+    "contrato:actualizar": "ACTUALIZAR_CONTRATO=1 node --import tsx --import ./tests/entorno.ts --test tests/contrato.test.ts"
   },
   "keywords": [
     "barranquilla",

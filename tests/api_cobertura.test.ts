@@ -78,7 +78,7 @@ test.before(async () => {
   registerDriver(TELEFONO, 'Cob', 'R-900', {
     companyId: EMPRESA, busId: bus.busId, pinHash: hashSecret(PIN),
   });
-  // Viva pero invisible: el pasajero ve {visible:false}; el offline la usa.
+  // Viva pero invisible: para el pasajero no existe; el offline sí la usa.
   upsertPosition(TELEFONO, {
     busId: 'BUS-API001', routeId: 'R-900', lat: 10.9, lon: -74.8, driverValidated: true,
   });
@@ -116,11 +116,15 @@ test('lecturas públicas del catálogo y del bus', async () => {
   assert.equal((await llamar('GET', `/api/companies/${EMPRESA}/routes`)).estado, 200);
   assert.equal((await llamar('GET', `/api/companies/${EMPRESA}/buses`)).estado, 200);
 
-  // Sin posición no hay bus; con el alta invisible se dice visible:false.
-  assert.equal((await llamar('GET', '/api/buses/BUS-NO')).estado, 404);
+  // Un bus oculto no se delata: status y cuerpo idénticos a los de un id
+  // que no existe (T3.4).
+  const inexistente = await llamar('GET', '/api/buses/BUS-NO');
   const oculto = await llamar('GET', '/api/buses/BUS-API001');
-  assert.equal(oculto.estado, 200);
-  assert.equal(oculto.cuerpo.visible, false);
+  assert.equal(inexistente.estado, 404);
+  assert.deepEqual(
+    { estado: oculto.estado, cuerpo: oculto.cuerpo },
+    { estado: inexistente.estado, cuerpo: inexistente.cuerpo },
+  );
 
   assert.equal((await llamar('POST', '/api/gps', {})).estado, 410);
 });

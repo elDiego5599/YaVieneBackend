@@ -33,11 +33,17 @@ primary_region = "iad"
   # El valor es el mismo de siempre (los conductores demo del volumen lo
   # tienen hasheado); con la flota en "0" esta línea se puede borrar.
   PIN = "1234"
+  # Con NODE_ENV=production una base nueva nace vacía (src/config.ts,
+  # siembraDemoHabilitada). El espejo de la demo necesita a Sobusa (EMP-01) y
+  # su catálogo de rutas, que es lo que recorre la flota de arriba. En un
+  # volumen ya sembrado no cambia nada: las migraciones aplicadas no se
+  # repiten. Para el piloto real, "0" o borrar la línea.
+  YA_VIENE_SEED_DEMO = "1"
 
-# El volumen es lo que hace persistente a SQLite. Se siembra sola al
-# arrancar (src/data/database.ts crea el esquema e inserta Sobusa EMP-01 con
-# el catálogo real de rutas), así que un volumen vacío se llena en el primer
-# arranque.
+# El volumen es lo que hace persistente a SQLite. src/data/database.ts crea
+# el esquema al arrancar y, con YA_VIENE_SEED_DEMO=1 (arriba), inserta Sobusa
+# EMP-01 con el catálogo real de rutas, así que un volumen vacío se llena en
+# el primer arranque.
 [mounts]
   source = "yaviene_data"
   destination = "/app/data"
