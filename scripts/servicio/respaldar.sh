@@ -11,6 +11,8 @@
 # No toca la base viva: `.backup()` de SQLite copia en caliente, con el
 # backend en pie y sin bloquearlo.
 set -u
+# Copias y log solo del dueño: la base trae teléfonos y hashes.
+umask 077
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO" || exit 1

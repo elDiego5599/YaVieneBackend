@@ -17,7 +17,7 @@
 // (HTTP 3190, MQTT 8960; el reparto de los demás está en arranque.test.ts).
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, copyFileSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -86,6 +86,42 @@ test('respaldar: la copia se abre, está íntegra y trae los mismos datos', () =
   assert.equal(copia.pragma('integrity_check', { simple: true }), 'ok');
   assert.equal((copia.prepare('SELECT count(*) n FROM buses').get() as { n: number }).n, 12);
   copia.close();
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+test('respaldar: las copias nacen legibles solo por el dueño (600, carpeta 700)', { skip: process.platform === 'win32' }, () => {
+  // Verificación 2026-09-29, SEC-02: la base trae teléfonos y hashes, y
+  // las copias nacían en 644 aunque la base viva estuviera en 600. Un
+  // chmod a mano no aguanta la copia de la hora siguiente: el permiso lo
+  // pone el script. Con umask 022, que es el de una sesión normal.
+  const tmp = carpeta('respaldo-permisos');
+  const dbPath = join(tmp, 'yaviene.db');
+  const destino = join(tmp, 'backups');
+  const externo = join(tmp, 'usb');
+  mkdirSync(externo);
+  baseDeMentira(dbPath, 3);
+  // Una copia de antes del arreglo, en 644 y en una carpeta 755: la
+  // siguiente corrida las cierra, no solo lo que crea ella.
+  mkdirSync(destino, { mode: 0o755 });
+  const vieja = join(destino, 'yaviene-20260929-120000.db');
+  copyFileSync(dbPath, vieja);
+  chmodSync(destino, 0o755);
+  chmodSync(vieja, 0o644);
+
+  const r = spawnSync('/bin/sh', ['-c', `umask 022 && exec "${process.execPath}" scripts/respaldar.mjs`], {
+    env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', DB_PATH: dbPath, BACKUP_DIR: destino, BACKUP_DIR_EXTERNO: externo },
+    encoding: 'utf8',
+  });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+
+  const modo = (ruta: string) => (statSync(ruta).mode & 0o777).toString(8);
+  assert.equal(modo(destino), '700', 'la carpeta de copias');
+  for (const [dir, cuantas] of [[destino, 2], [externo, 1]] as const) {
+    const copias = readdirSync(dir).filter((n) => n.endsWith('.db'));
+    assert.equal(copias.length, cuantas, dir);
+    for (const c of copias) assert.equal(modo(join(dir, c)), '600', join(dir, c));
+  }
+  assert.equal(modo(join(destino, '.ultima-copia-externa')), '600');
   rmSync(tmp, { recursive: true, force: true });
 });
 

@@ -233,6 +233,15 @@ test('P1-2, segunda barrera: la lista de una ruta solo trae buses de su dueña',
     posicion.run('BUS-AAA501', 'R-501', ahora, '3005010002', ahora);
     posicion.run('BUS-BBB601', 'R-501', ahora, '3006010001', ahora);
     posicion.run('BUS-VIEJO688', 'R-688', ahora, '3006880001', ahora);
+
+    // Precondición, no decoración: si el de B no quedara visible, en R-501
+    // y con su posición ahí, la lista lo dejaría fuera por otra razón y la
+    // prueba pasaría aunque la barrera de empresa no existiera (falso verde).
+    const colado = base.prepare(`
+      SELECT b.visible, b.route_id, b.company_id, p.route_id AS pos_ruta
+      FROM buses b JOIN positions p ON p.bus_id = b.bus_id WHERE b.bus_id = 'BUS-BBB601'
+    `).get();
+    assert.deepEqual(colado, { visible: 1, route_id: 'R-501', company_id: EMPRESA_B, pos_ruta: 'R-501' });
   } finally {
     base.close();
   }

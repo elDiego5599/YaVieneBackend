@@ -18,7 +18,7 @@
 //   DB_PATH=... BACKUP_DIR=... RETENCION_HORARIOS=48 RETENCION_DIARIOS=30
 //   BACKUP_DIR_EXTERNO=/Volumes/USB/yaviene   (copia fuera del disco, opcional)
 import Database from 'better-sqlite3';
-import { copyFileSync, existsSync, mkdirSync, rmSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 // YA_VIENE_DB_PATH es la que mira el backend: si algún día local.env la
@@ -76,7 +76,11 @@ function podar(dir, reciente) {
 
   let borradas = 0;
   for (const copia of todas) {
-    if (guardadas.has(copia.nombre)) continue;
+    if (guardadas.has(copia.nombre)) {
+      // Las de antes de 2026-09-30 nacieron en 644: se cierran al pasar.
+      chmodSync(path.join(dir, copia.nombre), 0o600);
+      continue;
+    }
     rmSync(path.join(dir, copia.nombre), { force: true });
     borradas += 1;
   }
@@ -88,7 +92,12 @@ if (!existsSync(DB_PATH)) {
   process.exit(1);
 }
 
-mkdirSync(BACKUP_DIR, { recursive: true });
+// La base trae teléfonos y hashes: las copias son solo del dueño. umask
+// para lo que nazca aquí (la copia, sus -wal/-shm de la prueba, la marca)
+// y chmod explícito para lo que ya existía con permisos de antes.
+process.umask(0o077);
+mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
+chmodSync(BACKUP_DIR, 0o700);
 
 const desde = Date.now();
 const nombre = `yaviene-${sello(new Date())}.db`;
@@ -96,6 +105,7 @@ const destino = path.join(BACKUP_DIR, nombre);
 
 const viva = new Database(DB_PATH, { readonly: true });
 await viva.backup(destino);
+chmodSync(destino, 0o600);
 viva.close();
 
 // Una copia que no se abre no es una copia. Se revisa aquí y no en el
@@ -139,8 +149,12 @@ if (!EXTERNO) {
   }
 } else {
   copyFileSync(destino, path.join(EXTERNO, nombre));
+  // Explícito y no fiado al umask: sobre un archivo que ya existía (misma
+  // hora, disco con otros permisos) se conservaría el modo viejo.
+  chmodSync(path.join(EXTERNO, nombre), 0o600);
   const fuera = podar(EXTERNO, nombre);
   writeFileSync(marca, `${new Date().toISOString()}\n`);
+  chmodSync(marca, 0o600);
   const ahora = new Date();
   utimesSync(marca, ahora, ahora);
   console.log(`Copia fuera del disco: ${path.join(EXTERNO, nombre)} · guardados ${fuera.guardadas}, borrados ${fuera.borradas}`);
