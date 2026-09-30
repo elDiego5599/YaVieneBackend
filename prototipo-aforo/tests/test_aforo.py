@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Tests del aforo (stdlib unittest: corren sin GPU, sin torch, hasta en Mac).
+"""Tests del aforo (stdlib unittest: corren sin GPU y sin torch, hasta en Mac).
 
-Cubre lo que hoy solo estaba verificado a mano: bandas %, legado absoluto,
-ventana móvil, densidad de apiñado y CLI. Lo que exige GPU/cámara
-(Detector, VideoSource contra RTSP, train.py) queda fuera a propósito y se
-verifica con video real en la torre.
+Cubre la regla «tira pa abajo», el promedio de probabilidades, el CLI y el
+salto de fotogramas. Lo que pide torch (Clasificador, train.py) se prueba
+en test_modelo.py, que se salta si torch no está instalado.
 """
+import contextlib
+import io
 import json
 import os
 import sys
@@ -13,120 +14,121 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import aforo_yolo11 as A
+import aforo as A
 
 
-def estable(ventana, capacidad, n, repeticiones=5):
-    s = A.Suavizador(ventana, capacidad)
-    med = None
-    for _ in range(repeticiones):
-        med = s.agregar(n, 0.0)
-    return med
+class TestDecidir(unittest.TestCase):
+    def test_seguro_de_cada_estado(self):
+        self.assertEqual(A.decidir([0.9, 0.08, 0.02]), "VACÍO")
+        self.assertEqual(A.decidir([0.1, 0.8, 0.1]), "MEDIO")
+        self.assertEqual(A.decidir([0.02, 0.08, 0.9]), "LLENO")
+
+    def test_empate_entre_dos_gana_el_bajo(self):
+        # Una red que duda 50/50 no alcanza ningún umbral alto.
+        self.assertEqual(A.decidir([0.5, 0.5, 0.0]), "VACÍO")
+        self.assertEqual(A.decidir([0.0, 0.5, 0.5]), "MEDIO")
+
+    def test_argmax_lleno_no_basta(self):
+        # P(lleno)=0.60 es la mayor, pero no llega a 0.80: dice MEDIO.
+        self.assertEqual(A.decidir([0.30, 0.10, 0.60]), "MEDIO")
+        # Y con P(≥medio)=0.55 < 0.60, ni siquiera MEDIO.
+        self.assertEqual(A.decidir([0.45, 0.30, 0.25]), "VACÍO")
+
+    def test_bordes_exactos_incluyen(self):
+        self.assertEqual(A.decidir([0.0, 0.2, 0.8]), "LLENO")
+        self.assertEqual(A.decidir([0.4, 0.3, 0.3]), "MEDIO")
+
+    def test_umbrales_propios(self):
+        self.assertEqual(A.decidir([0.3, 0.1, 0.6], umbral_lleno=0.55), "LLENO")
+        self.assertEqual(A.decidir([0.45, 0.3, 0.25], umbral_medio=0.5), "MEDIO")
+
+    def test_nunca_pasa_de_la_mediana(self):
+        # Propiedad del sesgo: con umbrales ≥ 0.5 el estado nunca pasa de la
+        # mediana ordinal (el nivel más alto con P(≥ nivel) ≥ 0.5). Ojo: SÍ
+        # puede pasar del argmax: (0.4, 0.3, 0.3) es MEDIO porque hay 60 %
+        # de que vaya al menos medio. Rejilla a pasos de 0.05.
+        pasos = [i / 20 for i in range(21)]
+        for pv in pasos:
+            for pm in pasos:
+                pl = round(1 - pv - pm, 10)
+                if pl < 0:
+                    continue
+                probs = [pv, pm, pl]
+                mediana = max(k for k in range(3) if sum(probs[k:]) >= 0.5 - 1e-9)
+                nivel = A.ESTADOS.index(A.decidir(probs))
+                self.assertLessEqual(nivel, mediana, probs)
+
+    def test_longitud_mala_falla(self):
+        with self.assertRaises(ValueError):
+            A.decidir([0.5, 0.5])
 
 
-class TestBandas(unittest.TestCase):
-    def test_bordes_40_85_cap40(self):
-        self.assertEqual(estable(5, 40.0, 5).estado_ocupacion, "VACÍO")    # 12.5
-        self.assertEqual(estable(5, 40.0, 15).estado_ocupacion, "VACÍO")   # 37.5
-        m = estable(5, 40.0, 16)
-        self.assertEqual(m.pct_promediado, 40.0)
-        self.assertEqual(m.estado_ocupacion, "MEDIO")                      # 40.0 exacto
-        m = estable(5, 40.0, 34)
-        self.assertEqual(m.pct_promediado, 85.0)
-        self.assertEqual(m.estado_ocupacion, "LLENO")                      # 85.0 exacto
-        self.assertEqual(estable(5, 40.0, 40).estado_ocupacion, "LLENO")   # 100
-
-    def test_pct_en_medicion(self):
-        m = estable(5, 60.0, 30)
-        self.assertEqual(m.pct_promediado, 50.0)
-        self.assertEqual(m.capacidad, 60.0)
-        self.assertEqual(m.estado_ocupacion, "MEDIO")
-
-
-class TestLegado(unittest.TestCase):
-    def test_sin_capacidad_umbrales_absolutos(self):
-        self.assertEqual(estable(5, None, 4).estado_ocupacion, "VACÍO")
-        self.assertEqual(estable(5, None, 5).estado_ocupacion, "MEDIO")
-        self.assertEqual(estable(5, None, 15).estado_ocupacion, "MEDIO")
-        self.assertEqual(estable(5, None, 16).estado_ocupacion, "LLENO")
-        m = estable(5, None, 7)
-        self.assertIsNone(m.pct_promediado)
-        self.assertIsNone(m.capacidad)
-
-    def test_capacidad_cero_no_divide_cae_a_legado(self):
-        m = estable(5, 0.0, 20)
-        self.assertEqual(m.estado_ocupacion, "LLENO")  # 20 > 15, sin ZeroDivision
-
-
-class TestVentana(unittest.TestCase):
+class TestSuavizador(unittest.TestCase):
     def test_promedia_y_expulsa_viejos(self):
-        s = A.Suavizador(5, None)
+        s = A.Suavizador(ventana=2)
+        s.agregar([0.0, 0.0, 1.0])
+        m = s.agregar([1.0, 0.0, 0.0])
+        self.assertEqual(m.probs, [0.5, 0.0, 0.5])
+        self.assertEqual(m.estado_ocupacion, "VACÍO")  # 0.5 < 0.6: tira pa abajo
+        m = s.agregar([1.0, 0.0, 0.0])                  # el LLENO ya salió
+        self.assertEqual(m.probs, [1.0, 0.0, 0.0])
+        self.assertEqual(m.probs_crudas, [1.0, 0.0, 0.0])
+
+    def test_un_fotograma_raro_no_cambia_el_estado(self):
+        s = A.Suavizador(ventana=5)
         for _ in range(4):
-            s.agregar(10, 0.0)
-        self.assertEqual(s.agregar(0, 0.0).conteo_promediado, 8.0)  # (40+0)/5
-        for _ in range(5):
-            m = s.agregar(20, 0.0)
-        self.assertEqual(m.conteo_promediado, 20.0)  # los 10/0 ya salieron
-        self.assertEqual(m.conteo_crudo, 20)
+            s.agregar([0.9, 0.1, 0.0])
+        self.assertEqual(s.agregar([0.0, 0.0, 1.0]).estado_ocupacion, "VACÍO")
 
+    def test_usa_sus_umbrales(self):
+        s = A.Suavizador(ventana=1, umbral_lleno=0.5)
+        self.assertEqual(s.agregar([0.2, 0.2, 0.6]).estado_ocupacion, "LLENO")
 
-class TestDensidad(unittest.TestCase):
-    def test_vacia(self):
-        self.assertEqual(A.densidad([], 640, 480), (0.0, 0.0))
-
-    def test_una_caja_sin_solape(self):
-        cob, sol = A.densidad([(0, 0, 100, 100)], 640, 480)
-        self.assertEqual(cob, round(10000 / (640 * 480), 3))  # redondeo a 3
-        self.assertEqual(sol, 0.0)
-
-    def test_gemelas_solape_uno_y_cobertura_doble(self):
-        cob, sol = A.densidad([(0, 0, 100, 100), (0, 0, 100, 100)], 640, 480)
-        self.assertEqual(sol, 1.0)
-        self.assertEqual(cob, round(2 * 10000 / (640 * 480), 3))
-
-    def test_separadas_solape_cero(self):
-        _, sol = A.densidad([(0, 0, 10, 10), (100, 100, 110, 110)], 640, 480)
-        self.assertEqual(sol, 0.0)
-
-    def test_degeneradas_no_rompen(self):
-        self.assertEqual(A.densidad([(5, 5, 5, 5)], 640, 480)[0], 0.0)  # área 0
-        A.densidad([(10, 10, 0, 0)], 640, 480)  # invertida: max(0) la tapa
-        A.densidad([(-50, -50, 3000, 3000)], 640, 480)  # fuera de marco
+    def test_ventana_invalida_y_longitud_mala(self):
+        with self.assertRaises(ValueError):
+            A.Suavizador(ventana=0)
+        with self.assertRaises(ValueError):
+            A.Suavizador().agregar([1.0])
 
     def test_sale_json_serializable(self):
-        # Regresión real: cobertura float32 reventaba json.dumps del JSONL.
-        import numpy as np
-        arr = np.array([[0, 0, 100, 100], [50, 50, 150, 150]], dtype="float32")
-        cob, sol = A.densidad(arr, 640, 480)
-        self.assertIsInstance(cob, float)
-        self.assertIsInstance(sol, float)
-        json.dumps({"cobertura": cob, "solape_medio": sol})
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("sin numpy")
+        m = A.Suavizador().agregar(np.array([0.1, 0.2, 0.7], dtype=np.float32))
+        linea = json.loads(json.dumps(m.__dict__, ensure_ascii=False))
+        self.assertEqual(linea["probs"], [0.1, 0.2, 0.7])
+        self.assertEqual(set(linea), {"timestamp", "estado_ocupacion", "probs", "probs_crudas"})
 
 
 class TestCLI(unittest.TestCase):
-    def test_defaults_legado(self):
-        cfg = A.parse_args(["--source", "x.mp4"])
-        self.assertIsNone(cfg.capacidad)
-        self.assertEqual((cfg.conf, cfg.iou, cfg.vacio_pct, cfg.lleno_pct),
-                         (0.40, 0.70, 40.0, 85.0))
+    def _falla(self, argv):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            A.parse_args(argv)
 
-    def test_tipologia_pone_default(self):
-        cfg = A.parse_args(["--source", "x.mp4", "--tipologia", "padron"])
-        self.assertEqual(cfg.capacidad, 60.0)
+    def test_defaults(self):
+        c = A.parse_args(["--source", "v.mp4", "--modelo", "best.pt"])
+        self.assertEqual((c.stride_seconds, c.ventana, c.device, c.show),
+                         (2.0, 5, "auto", True))
+        self.assertEqual((c.umbral_lleno, c.umbral_medio), (A.UMBRAL_LLENO, A.UMBRAL_MEDIO))
 
-    def test_capacidad_manda_sobre_tipologia(self):
-        cfg = A.parse_args(["--source", "x.mp4", "--tipologia", "PADRON",
-                            "--capacidad", "55"])
-        self.assertEqual(cfg.capacidad, 55.0)
+    def test_flags(self):
+        c = A.parse_args(["--source", "rtsp://x", "--modelo", "m.pt", "--cada-segundos", "1",
+                          "--ventana", "3", "--umbral-lleno", "0.9", "--umbral-medio", "0.7",
+                          "--no-show", "--save-jsonl", "a.jsonl", "--device", "cpu"])
+        self.assertEqual((c.stride_seconds, c.ventana, c.umbral_lleno, c.umbral_medio),
+                         (1.0, 3, 0.9, 0.7))
+        self.assertEqual((c.show, c.save_jsonl, c.device), (False, "a.jsonl", "cpu"))
 
-    def test_tipologia_invalida_falla_en_voz_alta(self):
-        with self.assertRaises(SystemExit):
-            A.parse_args(["--source", "x.mp4", "--tipologia", "BUSETA"])
+    def test_modelo_obligatorio(self):
+        self._falla(["--source", "v.mp4"])
 
-    def test_bandas_invertidas_fallan_en_voz_alta(self):
-        with self.assertRaises(SystemExit):
-            A.parse_args(["--source", "x.mp4", "--capacidad", "40",
-                          "--vacio-pct", "90", "--lleno-pct", "10"])
+    def test_valores_invalidos_fallan_en_voz_alta(self):
+        base = ["--source", "v.mp4", "--modelo", "m.pt"]
+        self._falla(base + ["--cada-segundos", "0"])
+        self._falla(base + ["--ventana", "0"])
+        self._falla(base + ["--umbral-lleno", "0"])
+        self._falla(base + ["--umbral-medio", "1.5"])
 
 
 class TestStride(unittest.TestCase):
@@ -165,22 +167,6 @@ class TestStride(unittest.TestCase):
         finally:
             import shutil
             shutil.rmtree(tmp, ignore_errors=True)
-
-
-class TestConsistenciaBackend(unittest.TestCase):
-    def test_mismos_aforos_que_fleet_admin_ts(self):
-        # Doble fuente de verdad (TS + PY) para 30/60/80: si derivan, el %
-        # cambia en silencio. Este test lee el archivo real del backend.
-        ts = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "..", "src", "data", "fleet_admin.ts")
-        self.assertTrue(os.path.exists(ts), f"no existe {ts}")
-        import re
-        with open(ts, encoding="utf-8") as f:
-            cuerpo = f.read()
-        m = re.search(r"CAPACIDAD_POR_TIPOLOGIA[^=]*=\s*\{([^}]*)\}", cuerpo)
-        self.assertIsNotNone(m, "CAPACIDAD_POR_TIPOLOGIA no encontrado en fleet_admin.ts")
-        pares = dict(re.findall(r"(SENCILLO|PADRON|ARTICULADO)\s*:\s*(\d+)", m.group(1)))
-        self.assertEqual({k: float(v) for k, v in pares.items()}, A.TIPOLOGIA_AFORO)
 
 
 if __name__ == "__main__":

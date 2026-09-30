@@ -1,78 +1,111 @@
-# Cómo sacar el dataset y entrenar (torre con RTX 5070, Windows)
+# Cómo sacar el dataset, entrenar y calibrar
 
-Todo corre en la torre. Este Mac no tiene NVIDIA: aquí solo se escribe código.
+Entrenar va mejor en la torre (RTX 5070, CUDA); en el Mac también corre, con
+MPS y más lento. La inferencia (`aforo.py`) no necesita GPU. El porqué de
+EfficientNet y de la regla «tira pa abajo» está en el
+[README del prototipo](../README.md).
+
+Los comandos van desde `prototipo-aforo/entrenamiento/`. En Windows cambia
+`/` por `\`.
 
 ## 0. Instalar (una vez, con internet)
 
-    pip install -r ..\requirements.txt
-    python -c "import torch; print(torch.cuda.get_device_capability())"
-    # Esperado: (12, 0). Si no, actualiza torch antes de seguir.
+    pip install -r ../requirements.txt
+    # Torre: añade --extra-index-url https://download.pytorch.org/whl/cu128
+    python -c "import torch; print(torch.cuda.get_device_capability())"   # torre: (12, 0)
 
-## 1. Grabar (tú, en los buses)
+La primera corrida baja los pesos de ImageNet (unos 20 MB) a `~/.cache/torch`.
 
-- 2 cámaras por bus: frontal→atrás y trasera→adelante. Graba **por separado**.
-- Por cámara: 2-5 min de cada escenario que puedas: vacío, medio, lleno,
-  día y noche. Mejor poco video de MUCHAS situaciones que mucho de una sola.
-- Meta realista: **300-800 fotos útiles** entre ambas vistas. Con menos de
-  ~200 el fine-tune apenas se mueve; con 500+ el salto se nota.
+## 1. Grabar (en los buses, con autorización de la empresa)
 
-## 2. Extraer + pre-etiquetar (ahorra ~70% del trabajo)
+- Hay dos cámaras por bus: la frontal, que mira hacia atrás, y la trasera,
+  que mira hacia adelante. Graba cada una por separado.
+- Por cámara, graba 2 a 5 minutos de cada escenario: vacío, medio y lleno,
+  de día y de noche, y con varios buses. Sirve más poco video de muchas
+  situaciones que mucho de una sola.
+- Nombra cada video por cámara, bus y hora (`frontal_bus12_0930.mp4`), no
+  por estado. El nombre es la **sesión** y mantiene juntas sus fotos al
+  repartir.
+- Meta: **300 o más fotos útiles por clase**, en al menos 3 sesiones por
+  clase. LLENO es la más difícil de conseguir; búscala en la hora pico.
 
-    python extraer_frames.py --video frontal_lleno.mp4 --salida dataset\crudo --cada-segundos 3
-    python autoetiquetar.py --fotos dataset\crudo --salida dataset\pre --conf 0.30
+## 2. Extraer fotos
 
-## 3. Corregir a mano (el paso que no se puede automatizar)
+    python extraer_frames.py --video frontal_bus12_0930.mp4 --salida dataset/crudo --cada-segundos 3
 
-Sube los `.jpg` + `.txt` a **Roboflow** (gratis, en navegador): borra falsos
-positivos y encierra a los sentados que el COCO no vio. Caja ajustada a
-cabeza-hombros visible, ni muy grande ni puntual. Incluye buses VACÍOS
-(fotos sin cajas): también enseñan.
+## 3. Etiquetar: mover cada foto a su carpeta
 
-## 4. Repartir + entrenar
+    dataset/etiquetado/vacio/    dataset/etiquetado/medio/
+    dataset/etiquetado/lleno/    dataset/etiquetado/descartadas/
 
-    python split_dataset.py --origen dataset\etiquetado --destino dataset
-    :: apunta train:/val: de data.yaml a dataset\images\train y \val
-    python train.py --data data.yaml --epochs 100
+La regla se mide contra el aforo del bus (`CAPACIDAD_POR_TIPOLOGIA` en
+`src/data/fleet_admin.ts`: sentados más de pie):
 
-Mira `results.png` y la matriz de confusión de `runs/aforo/bus_*/`:
-mAP50 > 0.7 en val = listo para el piloto. Si hay overfitting (train alto,
-val bajo), más variedad de escenarios, no más épocas.
+- **VACÍO**: quedan puestos libres. Va a menos del 40 % del aforo, más o menos.
+- **MEDIO**: los puestos están llenos y hay gente de pie, pero el pasillo
+  todavía se ve.
+- **LLENO**: el pasillo está tapado y no se ve el fondo. Va al 85 % del aforo
+  o más.
+- **descartadas/**: fotos negras, movidas o en las que dudas. No entran al
+  entrenamiento. Mejor descartar que etiquetar mal.
 
-## 5. Probar el peso en el script de inferencia
+Si una foto queda entre dos estados, ponle **el más bajo**: es el mismo
+sesgo que usa el modelo.
 
-    python ..\aforo_yolo11.py --source prueba.mp4 --modelo runs\aforo\bus_<fecha>\weights\best.pt
+## 4. Repartir sin fuga
 
-## Decisiones del piloto (ya habladas)
+    python split_dataset.py --origen dataset/etiquetado --destino dataset/partido
 
-- **1 foto/min por cámara**: 20 buses × 2 = 40 fotos/min ≈ 1.2 s de GPU.
-  Tranquilo; si quieres, baja a 30 s sin despeinar la tarjeta. Escalonar
-  los buses para no mandar las 40 a la vez.
-- **Fusión de las 2 cámaras (`../fusion.py`): estados, NO conteos.** Cada
-  cámara publica su estado suavizado; si coinciden sale ese (confianza
-  alta); si difieren sale el MÁS ALTO (confianza media, conservador: nunca
-  se promete espacio). No se suman (cuentan doble el centro) ni se
-  promedian (subcuentan y colapsan si una cámara se tapa).
-- **Outliers**: si |conteoA - conteoB| > 10 (`DIF_MAXIMA`), `outlier=True`
-  para revisión operativa (cámara tapada/sucia/caída). El bus sigue
-  publicando con la cámara sana: una cámara en negro no tumba la lectura.
-- **Umbrales por tipología**: <5 / 5-15 / >15 son placeholders. Calibra un
-  juego para buseta y otro para padrón comparando lectura del sistema vs
-  conteo manual en 50 fotos. Se calibra contra LO QUE MIDE el sistema (el
-  máximo), no contra el total real: el sesgo se absorbe ahí.
-- **Estados, no conteo exacto**: el detector cuenta, los umbrales deciden.
-  No entrenes un clasificador VACÍO/MEDIO/LLENO: pierdes las cajas (la
-  prueba visual del panel) y necesitas rehacerlo por cada tipología.
+El reparto queda en 70 % train, 15 % val y 15 % test, **por sesión**:
+
+- las fotos de un video nunca quedan partidas entre grupos;
+- el reparto se estratifica por clase;
+- si una clase tiene menos de 3 sesiones, sale un aviso.
+
+## 5. Entrenar
+
+    python train.py --datos dataset/partido
+
+Los valores por defecto son B0, 30 épocas, 3 de calentamiento y paciencia 8.
+
+- Guarda `runs/aforo/<fecha>/best.pt` y `metricas.json`.
+- La mejor época es la de mayor macro-F1 en val; si empatan, gana la de
+  menos sobreestimación.
+- Si val se queda muy por debajo de train, el modelo sobreajusta: hace falta
+  más variedad de buses y horas, no más épocas.
+- Si B0 se queda corto con datos suficientes, prueba
+  `--arch efficientnet_b2`.
+
+## 6. Calibrar los umbrales (en val) y medir (en test)
+
+    python evaluar.py --modelo ../runs/aforo/<fecha>/best.pt --datos dataset/partido/val --barrer
+    python evaluar.py --modelo ../runs/aforo/<fecha>/best.pt --datos dataset/partido/test \
+        --umbral-lleno <el del barrido> --umbral-medio <el del barrido>
+
+El barrido elige los umbrales con mejor macro-F1 entre los que dejan la
+**sobreestimación**, es decir, decir más gente de la que hay, en 5 % o menos
+(`--objetivo-sobre`).
+
+Test se mira **una sola vez**, al final. Si lo usas para ajustar, deja de
+medir la verdad.
+
+Los umbrales finales se pasan a `aforo.py`, o se escriben en `UMBRAL_LLENO` y
+`UMBRAL_MEDIO` con el número del barrido en un comentario.
+
+## 7. Probar en video
+
+    python ../aforo.py --source prueba.mp4 --modelo ../runs/aforo/<fecha>/best.pt \
+        --umbral-lleno 0.85 --umbral-medio 0.65 --save-jsonl frontal.jsonl
+    python ../fusion.py --a frontal.jsonl --b trasera.jsonl
 
 ## Llevarlo a la torre (Windows, RTX 5070)
 
-1. Copia `prototipo-aforo.zip` (USB o `scp`) y descomprime en `C:\yaviene\`.
-2. Instala Python 3.11+ de python.org (marca Add to PATH) y el driver
-   NVIDIA actualizado.
-3. `cd C:\yaviene\prototipo-aforo` y `pip install -r requirements.txt`.
-4. Verifica: `python -c "import torch; print(torch.cuda.get_device_capability())"`
-   Esperado `(12, 0)`. Si no sale, actualiza torch antes de seguir.
-5. Prueba en seco: `python aforo_yolo11.py --source prueba.mp4`
-   (cualquier video sirve para ver el banner; el conteo real pide un
-   interior de bus).
-6. Dataset: pasos 1-4 de arriba. En `data.yaml` pon tus rutas `C:/...`.
-7. Nada de esto se instala en el Mac ni toca el backend vivo.
+1. Copia la carpeta `prototipo-aforo/` con USB o `scp`, **sin** `dataset/` ni
+   `runs/` si ya los tienes allá. Descomprímela en `C:\yaviene\`.
+2. Instala Python 3.11 o más reciente de python.org, marcando «Add to PATH»,
+   y el driver NVIDIA al día.
+3. Instala los requisitos con el índice cu128 (paso 0) y comprueba que salga
+   `(12, 0)`.
+4. Pasos 2 a 6. Para bajar el peso al Mac basta con `best.pt`, que pesa
+   unos 16 MB con B0.
+5. Nada de esto se instala en el backend vivo ni lo toca.

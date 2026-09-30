@@ -1,80 +1,76 @@
 #!/usr/bin/env python3
 """Fusión de las 2 cámaras del bus a UN estado (VACÍO / MEDIO / LLENO).
 
-NO suma ni promedia conteos: cada cámara ya trae su estado (suavizado por
-el promedio móvil en aforo_yolo11.py) y aquí se decide el estado del bus.
+Cada cámara ya trae su estado, suavizado y decidido en aforo.py. Aquí solo
+se decide el del bus, con la misma línea que el resto del aforo: tirar pa
+abajo. Decir «lleno» de un bus con espacio le quita pasajeros a la empresa.
 
 Reglas, en orden:
-  1. Si ambas cámaras dicen lo mismo -> ese estado, confianza alta.
-  2. Si difieren -> el estado MÁS ALTO, confianza media. Es conservador a
-     propósito: nunca se promete espacio que quizá no hay. El desacuerdo
-     fino (4 vs 5 personas, VACÍO vs MEDIO) se resuelve solo porque cada
-     cámara ya viene suavizada.
-  3. Outlier: sin capacidades, |conteoA - conteoB| > DIF_MAXIMA marca
-     outlier=True (cámara tapada, sucia o caída). Con capacidades
-     (--cap-a/--cap-b o campo `capacidad` del JSONL), manda la diferencia
-     en puntos porcentuales: |pctA - pctB| > DIF_PP_MAX. El absoluto no
-     escala (10 en sencillo es escándalo, en articulado es ruido).
-     El bus sigue publicando con la cámara sana en ambos casos.
+  1. Si solo hay una cámara (la otra caída o sin datos) -> su estado,
+     confianza baja. Una cámara en negro no tumba la lectura del bus.
+  2. Si ambas dicen lo mismo -> ese estado, confianza alta.
+  3. Si difieren -> el estado MÁS BAJO, confianza media. Una cámara que ve
+     su mitad llena y otra que ve la suya vacía describen un bus con espacio.
+  4. Si difieren en dos niveles (VACÍO contra LLENO) -> además outlier=True:
+     lo más probable es una cámara tapada, sucia o mal apuntada, y alguien
+     de la operación debe mirarla.
 
 Uso como librería:
     from fusion import fusionar
-    estado, confianza, outlier = fusionar("MEDIO", "VACÍO", 8, 3)
-    estado, confianza, outlier = fusionar("MEDIO", "MEDIO", 20, 60,
-                                          cap_a=40, cap_b=40)
+    estado, confianza, outlier = fusionar("MEDIO", "VACÍO")
+    estado, confianza, outlier = fusionar("LLENO", None)
 
-Demo con dos JSONL del script de inferencia (última línea de cada uno):
+Con los JSONL de aforo.py (última línea de cada uno):
     python fusion.py --a camara_frontal.jsonl --b camara_trasera.jsonl
-    python fusion.py --a frontal.jsonl --b trasera.jsonl --cap-a 40 --cap-b 40
+    python fusion.py --a camara_frontal.jsonl          # solo una cámara
 """
+from __future__ import annotations
+
 import argparse
 import json
 
-DIF_MAXIMA = 10  # legado sin capacidades: diferencia cruda sospechosa
-DIF_PP_MAX = 25.0  # con capacidades: puntos porcentuales sospechosos
-ORDEN = {"VACÍO": 0, "MEDIO": 1, "LLENO": 2}
+from modelo import ESTADOS
+
+ORDEN = {estado: nivel for nivel, estado in enumerate(ESTADOS)}
 
 
-def fusionar(estado_a: str, estado_b: str, n_a: int, n_b: int,
-             cap_a: float | None = None, cap_b: float | None = None,
-             dif_pp_max: float = DIF_PP_MAX):
-    """Devuelve (estado, confianza, outlier). Nunca inventa pasajeros:
-    el máximo es cota inferior del total real."""
-    if cap_a and cap_b:
-        outlier = abs(n_a / cap_a * 100 - n_b / cap_b * 100) > dif_pp_max
-    else:
-        outlier = abs(n_a - n_b) > DIF_MAXIMA
-    if estado_a == estado_b:
-        return estado_a, "alta", outlier
-    ganador = estado_a if ORDEN[estado_a] > ORDEN[estado_b] else estado_b
-    return ganador, "media", outlier
+def _nivel(estado: str) -> int:
+    if estado not in ORDEN:
+        raise ValueError(f"estado desconocido {estado!r}; se esperaba uno de {list(ESTADOS)}")
+    return ORDEN[estado]
+
+
+def fusionar(estado_a: str | None, estado_b: str | None):
+    """Devuelve (estado, confianza, outlier). None = cámara sin dato."""
+    if estado_a is None and estado_b is None:
+        raise ValueError("ninguna cámara trae estado")
+    if estado_a is None or estado_b is None:
+        unico = estado_b if estado_a is None else estado_a
+        _nivel(unico)
+        return unico, "baja", False
+    na, nb = _nivel(estado_a), _nivel(estado_b)
+    if na == nb:
+        return estado_a, "alta", False
+    return ESTADOS[min(na, nb)], "media", abs(na - nb) >= 2
 
 
 def _ultima(ruta: str) -> dict:
     with open(ruta, encoding="utf-8") as f:
-        lineas = [l for l in f if l.strip()]
+        lineas = [linea for linea in f if linea.strip()]
     if not lineas:
         raise SystemExit(f"sin mediciones en {ruta}")
     return json.loads(lineas[-1])
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description="Fusiona 2 cámaras a un estado.")
     p.add_argument("--a", required=True, help="JSONL cámara frontal")
-    p.add_argument("--b", required=True, help="JSONL cámara trasera")
-    p.add_argument("--cap-a", type=float, default=None,
-                   help="capacidad bus cámara A (si no, lee `capacidad` del JSONL)")
-    p.add_argument("--cap-b", type=float, default=None)
-    p.add_argument("--dif-pp", type=float, default=DIF_PP_MAX)
-    a = p.parse_args()
-    ma, mb = _ultima(a.a), _ultima(a.b)
-    cap_a = a.cap_a if a.cap_a else ma.get("capacidad")
-    cap_b = a.cap_b if a.cap_b else mb.get("capacidad")
+    p.add_argument("--b", default=None, help="JSONL cámara trasera (opcional)")
+    a = p.parse_args(argv)
+    ma = _ultima(a.a)
+    mb = _ultima(a.b) if a.b else None
     estado, confianza, outlier = fusionar(
-        ma["estado_ocupacion"], mb["estado_ocupacion"],
-        ma["conteo_crudo"], mb["conteo_crudo"],
-        cap_a=cap_a, cap_b=cap_b, dif_pp_max=a.dif_pp,
-    )
+        ma["estado_ocupacion"], mb["estado_ocupacion"] if mb else None)
     print(json.dumps({
         "estado": estado,
         "confianza": confianza,

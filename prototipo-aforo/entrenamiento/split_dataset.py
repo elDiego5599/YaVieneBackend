@@ -1,65 +1,132 @@
 #!/usr/bin/env python3
-"""Reparte fotos+etiquetas en train/val (80/20) SIN fuga entre ambos.
+"""Reparte las fotos etiquetadas en train / val / test SIN fuga entre ellos.
 
-Regla crítica: se parte POR SESIÓN DE GRABACIÓN, no por foto. Los frames
-de un mismo video se parecen demasiado; si van mitad a train y mitad a val,
-la métrica de val miente (el modelo "reconoce" el bus, no a la gente).
-Todas las fotos de `frontal_lleno_*.jpg` van juntas a train O a val.
+Regla crítica: se parte POR SESIÓN DE GRABACIÓN, no por foto. Los fotogramas
+de un mismo video se parecen demasiado; si van unos a train y otros a val,
+la métrica miente (el modelo reconoce ESE bus a ESA hora, no el aforo). Todas
+las fotos de `frontal_bus12_0930_*.jpg` van juntas al mismo grupo, aunque
+unas estén en `lleno/` y otras en `medio/` (el bus se llenó en el video).
+
+Además se estratifica: cada sesión cuenta para la clase de la mayoría de sus
+fotos, y cada clase se reparte por separado. Así LLENO, que es la escasa,
+aparece en val y en test y no solo en train.
 
 Uso:
-    python split_dataset.py --origen dataset/etiquetado --destino dataset
-Espera: origen/*.jpg con su *.txt al lado (fotos de bus vacío sin .txt
-también sirven: enséñale cómo se ve un bus vacío).
+    python split_dataset.py --origen dataset/etiquetado --destino dataset/partido
+Espera: origen/vacio/*.jpg, origen/medio/*.jpg, origen/lleno/*.jpg.
+Sale:   destino/{train,val,test}/{vacio,medio,lleno}/*.jpg
 """
+from __future__ import annotations
+
 import argparse
 import random
 import re
+import sys
+from collections import Counter
 from pathlib import Path
 from shutil import copy2
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from modelo import CARPETAS, listar_fotos  # noqa: E402
+
 PATRON_SESION = re.compile(r"^(?P<sesion>.+)_\d{4}$")
+GRUPOS = ("train", "val", "test")
 
 
 def sesion_de(foto: Path) -> str:
+    """`frontal_bus12_0930_0042.jpg` -> `frontal_bus12_0930` (el nombre que
+    le pone extraer_frames.py: el video más un número de 4 cifras)."""
     m = PATRON_SESION.match(foto.stem)
     return m.group("sesion") if m else foto.stem
 
 
-def main() -> None:
-    p = argparse.ArgumentParser()
+def repartir(fotos: list[tuple[Path, int]], val: float, test: float,
+             semilla: int) -> tuple[dict[str, list[tuple[Path, int]]], list[str]]:
+    """Devuelve ({grupo: [(foto, nivel)]}, avisos). Determinista por semilla."""
+    if not (0 <= val < 1 and 0 <= test < 1 and val + test < 1):
+        raise ValueError("val y test deben estar en [0, 1) y sumar menos de 1")
+    sesiones: dict[str, list[tuple[Path, int]]] = {}
+    for foto, nivel in fotos:
+        sesiones.setdefault(sesion_de(foto), []).append((foto, nivel))
+
+    por_clase: dict[int, list[str]] = {n: [] for n in range(len(CARPETAS))}
+    for nombre, lista in sesiones.items():
+        conteo = Counter(nivel for _, nivel in lista)
+        # Empate: gana el nivel más bajo (el orden de most_common no se fía).
+        mayor = max(conteo.values())
+        por_clase[min(n for n, c in conteo.items() if c == mayor)].append(nombre)
+
+    asignado: dict[str, str] = {}
+    avisos: list[str] = []
+    for nivel, nombres in por_clase.items():
+        if not nombres:
+            avisos.append(f"{CARPETAS[nivel]}: no hay ninguna sesión de esta clase")
+            continue
+        nombres = sorted(nombres)
+        random.Random(f"{semilla}-{nivel}").shuffle(nombres)
+        total = sum(len(sesiones[s]) for s in nombres)
+        necesita = 1 + (val > 0) + (test > 0)
+        if len(nombres) < necesita:
+            avisos.append(f"{CARPETAS[nivel]}: {len(nombres)} sesión(es); hacen falta "
+                          f"{necesita} para que salga en todos los grupos. Graba más.")
+        pendientes = list(nombres)
+        # train se queda siempre con al menos una sesión: sin ella la clase
+        # no se aprende. Luego test y val, por fotos, hasta su fracción.
+        for grupo, fraccion in (("test", test), ("val", val)):
+            quedan_para_despues = 1 + (grupo == "test" and val > 0)
+            meta, llevan = fraccion * total, 0
+            while (fraccion > 0 and llevan < meta
+                   and len(pendientes) > quedan_para_despues):
+                s = pendientes.pop()
+                asignado[s] = grupo
+                llevan += len(sesiones[s])
+        for s in pendientes:
+            asignado[s] = "train"
+
+    grupos: dict[str, list[tuple[Path, int]]] = {g: [] for g in GRUPOS}
+    for nombre, lista in sorted(sesiones.items()):
+        grupos[asignado[nombre]] += lista
+    for grupo in ("val", "test"):
+        if (val if grupo == "val" else test) > 0:
+            faltan = [CARPETAS[n] for n in range(len(CARPETAS))
+                      if not any(nv == n for _, nv in grupos[grupo])]
+            if faltan:
+                avisos.append(f"{grupo} sin fotos de: {', '.join(faltan)}")
+    return grupos, avisos
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="Reparte el dataset por sesión.")
     p.add_argument("--origen", required=True)
     p.add_argument("--destino", required=True)
-    p.add_argument("--val", type=float, default=0.20)
+    p.add_argument("--val", type=float, default=0.15)
+    p.add_argument("--test", type=float, default=0.15)
     p.add_argument("--semilla", type=int, default=42)
-    a = p.parse_args()
+    a = p.parse_args(argv)
 
-    fotos = sorted(Path(a.origen).glob("*.jpg"))
-    sesiones: dict[str, list[Path]] = {}
-    for f in fotos:
-        sesiones.setdefault(sesion_de(f), []).append(f)
+    destino = Path(a.destino)
+    if destino.exists() and any(destino.iterdir()):
+        # Restos de un reparto viejo = fuga garantizada entre grupos.
+        p.error(f"{destino} ya tiene archivos: bórralo o usa otra carpeta")
+    fotos = listar_fotos(a.origen)
+    if not fotos:
+        p.error(f"no hay fotos en {a.origen}/{{{','.join(CARPETAS)}}}")
+    grupos, avisos = repartir(fotos, a.val, a.test, a.semilla)
 
-    # Sesiones grandes primero: así el 20% no se lo come una sola sesión.
-    orden = sorted(sesiones, key=lambda s: len(sesiones[s]), reverse=True)
-    rnd = random.Random(a.semilla)
-    # Baraja solo dentro de cada tamaño para no romper el orden anterior.
-    val, train, n_val = [], [], max(1, round(len(fotos) * a.val))
-    for s in orden:
-        (val if sum(map(len, val)) < n_val else train).append(sesiones[s])
-
-    grupos = {"val": [f for s in val for f in s],
-              "train": [f for s in train for f in s]}
     for grupo, lista in grupos.items():
-        for ext in ("images", "labels"):
-            (Path(a.destino) / ext / grupo).mkdir(parents=True, exist_ok=True)
-        for f in lista:
-            copy2(f, Path(a.destino) / "images" / grupo / f.name)
-            txt = f.with_suffix(".txt")
-            destino = Path(a.destino) / "labels" / grupo / (f.stem + ".txt")
-            copy2(txt, destino) if txt.exists() else destino.write_text("")
-    print({k: len(v) for k, v in grupos.items()}, flush=True)
-    print("sesiones en val:", sorted(sesion_de(f) for f in grupos["val"]),
-          flush=True)
+        for carpeta in CARPETAS:
+            (destino / grupo / carpeta).mkdir(parents=True, exist_ok=True)
+        for foto, nivel in lista:
+            copy2(foto, destino / grupo / CARPETAS[nivel] / foto.name)
+        conteo = Counter(CARPETAS[n] for _, n in lista)
+        print(f"{grupo:5s} {len(lista):5d} fotos  "
+              + "  ".join(f"{c}={conteo.get(c, 0)}" for c in CARPETAS)
+              + f"  sesiones={len({sesion_de(f) for f, _ in lista})}", flush=True)
+    for aviso in avisos:
+        print(f"[aviso] {aviso}", flush=True)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

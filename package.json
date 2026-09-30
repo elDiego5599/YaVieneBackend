@@ -11,7 +11,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "test": "node --import tsx --import ./tests/entorno.ts --test tests/*.test.ts",
-    "test:aforo": "python -m unittest discover -s prototipo-aforo/tests",
+    "test:aforo": "python3 -m unittest discover -s prototipo-aforo/tests",
     "backup": "node scripts/backup-db.mjs",
     "respaldo": "node scripts/respaldar.mjs",
     "respaldo:probar": "node scripts/probar-restauracion.mjs",

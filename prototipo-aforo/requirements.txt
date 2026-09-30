@@ -1,8 +1,12 @@
-# Solo en la máquina con la RTX 5070 (NO en el Mac del backend: ahí no hay CUDA).
-# torch con CUDA ≥12.8 (Blackwell sm_120 exige torch ≥2.8; verifica con
-# python -c "import torch; print(torch.cuda.get_device_capability())" -> (12, 0)).
---extra-index-url https://download.pytorch.org/whl/cu128
-torch
-ultralytics>=8.3
+# Clasificador de aforo (EfficientNet de torchvision). Ver README.md.
+#
+# Mac (inferencia y pruebas; usa MPS o CPU): pip install -r requirements.txt
+# Torre con la RTX 5070 (entrenamiento): la Blackwell (sm_120) exige
+# torch ≥ 2.8 con CUDA ≥ 12.8. Instala así:
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128
+# y verifica: python -c "import torch; print(torch.cuda.get_device_capability())"  -> (12, 0)
+torch>=2.8
+torchvision>=0.23
 opencv-python>=4.10
 numpy>=1.26
+pillow>=10

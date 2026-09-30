@@ -1,12 +1,42 @@
 #!/usr/bin/env python3
 """Saca fotos de los videos de las cámaras del bus para etiquetar.
 
+Graba 2-5 min por cámara y escenario (vacío, medio, lleno; día y noche) y
+extrae 1 foto cada N segundos. Fotos seguidas se parecen mucho: mejor poco
+video de MUCHAS situaciones que mucho video de una sola.
+
+El nombre del video es la SESIÓN: cada foto sale como `<video>_NNNN.jpg`
+y split_dataset.py mantiene juntas las fotos de una misma sesión para que
+no haya fuga entre train, val y test. Nombra los videos por cámara, bus y
+hora (`frontal_bus12_0930.mp4`), no por estado: un video puede empezar
+vacío y terminar lleno. Luego mueve cada foto a su carpeta de clase
+(`vacio/`, `medio/`, `lleno/`; las dudosas a `descartadas/`).
+
+Uso:
+    python extraer_frames.py --video frontal_bus12_0930.mp4 --salida dataset/crudo --cada-segundos 3
+"""Saca fotos de los videos de las cámaras del bus para etiquetar.
+
 Graba 2-5 min por cámara y escenario (vacío, medio, lleno, día, noche) y
 extrae 1 frame cada N segundos. OJO: frames consecutivos se parecen mucho;
 mejor poco video de MUCHAS situaciones que mucho video de una sola.
 
 Uso:
     python extraer_frames.py --video camara_frontal_lleno.mp4 --salida dataset/crudo --cada-segundos 3
+"""Saca fotos de los videos de las cámaras del bus para etiquetar.
+
+Graba 2-5 min por cámara y escenario (vacío, medio, lleno; día y noche) y
+extrae 1 foto cada N segundos. Fotos seguidas se parecen mucho: mejor poco
+video de MUCHAS situaciones que mucho video de una sola.
+
+El nombre del video es la SESIÓN: cada foto sale como `<video>_NNNN.jpg`
+y split_dataset.py mantiene juntas las fotos de una misma sesión para que
+no haya fuga entre train, val y test. Nombra los videos por cámara, bus y
+hora (`frontal_bus12_0930.mp4`), no por estado: un video puede empezar
+vacío y terminar lleno. Luego mueve cada foto a su carpeta de clase
+(`vacio/`, `medio/`, `lleno/`; las dudosas a `descartadas/`).
+
+Uso:
+    python extraer_frames.py --video frontal_bus12_0930.mp4 --salida dataset/crudo --cada-segundos 3
 """
 import argparse
 from pathlib import Path

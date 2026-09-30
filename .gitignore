@@ -6,8 +6,10 @@ dist/
 .DS_Store
 
 local.env
-# Modelo/dataset local + caches Python: nunca entran al repo (40MB+).
-prototipo-aforo/yolo11m.pt
+# Pesos, corridas y fotos del aforo + caches Python: nunca entran al repo
+# (pesan decenas de MB y las fotos muestran pasajeros: Ley 1581).
+prototipo-aforo/**/*.pt
+prototipo-aforo/runs/
 prototipo-aforo/dataset/
 **/__pycache__/
 
