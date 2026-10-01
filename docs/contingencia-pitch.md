@@ -32,14 +32,14 @@ El orden, que es el mismo de la demo en vivo:
    nueva hace falta `YA_VIENE_SEED_DEMO=1` (Fly lo trae en `fly.toml`; ver el
    `README.md`).
 4. **Toca el mapa** para poner su punto de espera, y luego **toca un bus**.
-   Salen los dos de la ruta: `B-055` viene hacia el punto y `B-042` ya pasó.
-   Conviene tocar `B-055`.
+   Salen los dos de la ruta: `WGV705` viene hacia el punto y `WFK042` ya pasó.
+   Conviene tocar `WGV705`.
 5. **La tarjeta del bus**: el número grande con la distancia («850», «m de ti»)
    bajando sola mientras el bus se acerca. Distancia, no tiempo estimado: eso es
    deliberado y vale la pena decirlo en voz alta mientras se graba.
 6. **Armar el aviso** con «Avisarme cuando esté cerca». Si el bus ya está a menos
    de un kilómetro el botón sale bloqueado y dice «El bus ya está cerca»: por eso
-   se toca `B-055` cuando todavía viene lejos.
+   se toca `WGV705` cuando todavía viene lejos.
 7. **Volver al panel** y mostrar el mismo bus ahí, con su placa. Es la frase que
    cierra: las dos pantallas están viendo lo mismo, al mismo tiempo.
 

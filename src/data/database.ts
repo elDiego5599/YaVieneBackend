@@ -319,9 +319,10 @@ function initSchema(): void {
       apply: () => {
         ensureColumn(d, 'buses', 'route_id', 'TEXT');
         const plates = [
-          'SFA-482', 'TUH-513', 'LKA-794', 'RQT-106', 'DMV-238',
-          'WNP-659', 'JCB-871', 'PGX-340', 'HLF-925', 'XRD-617',
-          'MNP-083', 'TKG-462', 'VLC-579', 'BDR-214', 'QWF-731',
+          // Sin guion, como las de verdad y como las valida `normalizePlaca`.
+          'SFA482', 'TUH513', 'LKA794', 'RQT106', 'DMV238',
+          'WNP659', 'JCB871', 'PGX340', 'HLF925', 'XRD617',
+          'MNP083', 'TKG462', 'VLC579', 'BDR214', 'QWF731',
         ];
         d.exec(`
           UPDATE buses SET route_id = (

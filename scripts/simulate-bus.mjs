@@ -21,7 +21,7 @@ import { fileURLToPath } from 'url';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
 const MQTT_PORT = parseInt(process.env.MQTT_PORT || '8883', 10);
-const BUS_ID = process.env.BUS_ID || 'B-042';
+const BUS_ID = process.env.BUS_ID || 'BUS-WGV705';
 const PHONE = process.env.PHONE || '3000000000';
 const PIN = process.env.PIN;
 if (!PIN) {

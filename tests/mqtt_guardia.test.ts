@@ -31,7 +31,7 @@ function sesionReal(): Buffer {
       clientId: 'equipo-bus-001', username: '', password: Buffer.from('e'.repeat(420)),
     }),
     mqttPacket.generate({
-      cmd: 'publish', topic: 'empresa/EMP-01/bus/B-201/posicion', qos: 0, retain: false, dup: false,
+      cmd: 'publish', topic: 'empresa/EMP-01/bus/BUS-SKR201/posicion', qos: 0, retain: false, dup: false,
       payload: Buffer.from(JSON.stringify({
         protocolVersion: 1, sequence: 1, capturedAt: 1_767_225_600_000, lat: 10.98, lon: -74.8, speedKmh: 32,
       })),

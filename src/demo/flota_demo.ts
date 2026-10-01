@@ -19,11 +19,15 @@
 import { ChildProcess, spawn } from 'child_process';
 import { join } from 'path';
 import { getDb } from '../data/database';
+import { busCompanyCache, busIdFromPlaca, deleteBus } from '../data/fleet_admin';
 import { flotaDemoHabilitada } from '../config';
 
 /** Un bus simulado: dónde arranca y cada cuánto publica. */
-interface BusDemo {
+export interface BusDemo {
+  /** `BUS-<placa>`, como el id de un bus dado de alta en el panel. */
   busId: string;
+  /** Tres letras y tres números, como las placas de verdad (WGV705). */
+  placa: string;
   routeId: string;
   /** Punto del recorrido donde nace, de 0 (terminal A) a 1 (terminal B). */
   fraccion: number;
@@ -45,18 +49,32 @@ const INTERVALO_RAPIDO = process.env.CAPTURE_INTERVAL_MS || '400';
 const INTERVALO_LENTO = process.env.CAPTURE_INTERVAL_MS_RESTO || '1500';
 
 // Dos buses por ruta y en extremos opuestos del recorrido, para que en
-// cualquier ruta que se abra haya uno acercándose y otro alejándose. Los
-// identificadores son los de `scripts/demo-buses.sh`, a propósito: B-901 ya
-// existía en R-101 de una demo vieja y así deja de ser el fantasma "sin
-// señal" que ensuciaba esa ruta.
+// cualquier ruta que se abra haya uno acercándose y otro alejándose. Las
+// placas son de tres letras y tres números como las de Barranquilla (dueño,
+// 2026-09-30): con «B-042» la app decía «Ruta - B-042», una placa que no
+// existe. Los números siguen los de los ids viejos (B-042 → WFK042, B-201 →
+// SKR201) para que los registros de antes se lean contra los de ahora. En
+// R-106, la de la presentación, WGV705 es el que viene hacia el pasajero.
+// `scripts/demo-buses.sh` usa las mismas: correr los dos no duplica buses.
 const FLOTA_CONOCIDA: Record<string, Array<[string, number, string]>> = {
-  'R-101': [['B-901', 0.35, '3000000999'], ['B-201', 0.7, '3000000201']],
-  'R-102': [['B-202', 0.2, '3000000202'], ['B-203', 0.65, '3000000203']],
-  'R-103': [['B-204', 0.25, '3000000204'], ['B-205', 0.75, '3000000205']],
-  'R-104': [['B-206', 0.3, '3000000206'], ['B-207', 0.6, '3000000207']],
-  'R-105': [['B-208', 0.1, '3000000208'], ['B-209', 0.55, '3000000209']],
-  'R-106': [['B-042', 0.8, '3000000000'], ['B-055', 0.15, '3000000001']],
+  'R-101': [['TNM901', 0.35, '3000000999'], ['SKR201', 0.7, '3000000201']],
+  'R-102': [['UBL202', 0.2, '3000000202'], ['VJD203', 0.65, '3000000203']],
+  'R-103': [['SNZ204', 0.25, '3000000204'], ['TPH205', 0.75, '3000000205']],
+  'R-104': [['WGA206', 0.3, '3000000206'], ['UHE207', 0.6, '3000000207']],
+  'R-105': [['VXR208', 0.1, '3000000208'], ['SDC209', 0.55, '3000000209']],
+  'R-106': [['WFK042', 0.8, '3000000000'], ['WGV705', 0.15, '3000000001']],
 };
+
+/**
+ * Los ids que usó la flota hasta el 2026-09-30. Se quedaban en la base al
+ * cambiar de placa: el panel los enseñaba sin señal para siempre y el
+ * pasajero los veía como fantasmas. Los derivados eran `B-<número>A/B`.
+ */
+const IDS_VIEJOS = [
+  'B-042', 'B-055', 'B-901', 'B-201', 'B-202', 'B-203',
+  'B-204', 'B-205', 'B-206', 'B-207', 'B-208', 'B-209',
+];
+const ID_VIEJO_DERIVADO = /^B-[0-9]{3}[AB]$/;
 
 /**
  * Las rutas del catálogo, tal cual las ve el pasajero en el selector.
@@ -74,22 +92,27 @@ function rutasDelCatalogo(): string[] {
   return filas.map((f) => f.route_id);
 }
 
-/** Para una ruta fuera de [FLOTA_CONOCIDA], dos buses derivados de su id. */
+/**
+ * Para una ruta fuera de [FLOTA_CONOCIDA], dos buses derivados de su número:
+ * YVA117 y YVB117 en R-117. Las letras YV no salen en ninguna de arriba, así
+ * que no chocan con ellas.
+ */
 function busesDerivados(routeId: string): Array<[string, number, string]> {
   const numero = routeId.replace(/\D/g, '').padStart(3, '0').slice(-3);
   return [
-    [`B-${numero}A`, 0.25, `3001${numero}01`],
-    [`B-${numero}B`, 0.7, `3001${numero}02`],
+    [`YVA${numero}`, 0.25, `3001${numero}01`],
+    [`YVB${numero}`, 0.7, `3001${numero}02`],
   ];
 }
 
-function construirFlota(): BusDemo[] {
+export function construirFlota(): BusDemo[] {
   const flota: BusDemo[] = [];
   for (const routeId of rutasDelCatalogo()) {
     const buses = FLOTA_CONOCIDA[routeId] ?? busesDerivados(routeId);
-    for (const [busId, fraccion, telefono] of buses) {
+    for (const [placa, fraccion, telefono] of buses) {
       flota.push({
-        busId,
+        busId: busIdFromPlaca(placa),
+        placa,
         routeId,
         fraccion,
         telefono,
@@ -99,6 +122,59 @@ function construirFlota(): BusDemo[] {
     }
   }
   return flota;
+}
+
+/**
+ * Deja la base lista para la flota y devuelve los buses que pueden rodar.
+ *
+ * Retira los ids viejos de la empresa demo con `deleteBus`, que también
+ * avisa a los pasajeros y a los paneles que los tenían en pantalla. Y da de
+ * alta cada bus con su placa antes de que el simulador se registre: el
+ * registro del conductor solo crea el bus por su id, y sin `plate_number` el
+ * panel enseñaba «BUS-WGV705». Una placa ya cambiada desde el panel se
+ * respeta. Un bus cuyo id o cuya placa ya son de otra empresa se queda
+ * fuera: el registro lo rechazaría igual y el simulador se reiniciaría en
+ * bucle.
+ */
+export function prepararFlota(flota: BusDemo[]): BusDemo[] {
+  const db = getDb();
+  const viejos = (db.prepare('SELECT bus_id FROM buses WHERE company_id = ?')
+    .all(EMPRESA_ID) as { bus_id: string }[])
+    .map((r) => r.bus_id)
+    .filter((id) => IDS_VIEJOS.includes(id) || ID_VIEJO_DERIVADO.test(id));
+  for (const id of viejos) deleteBus(id);
+  if (viejos.length > 0) {
+    console.log(`[FLOTA] Retirados ${viejos.length} buses con ids viejos (${viejos.join(', ')}).`);
+  }
+
+  const dueno = db.prepare('SELECT company_id FROM buses WHERE bus_id = ?');
+  const placaAjena = db.prepare('SELECT 1 FROM buses WHERE plate_number = ? AND bus_id <> ?');
+  const alta = db.prepare(`
+    INSERT INTO buses (bus_id, company_id, plate_number, route_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(bus_id) DO UPDATE SET
+      plate_number = COALESCE(buses.plate_number, excluded.plate_number),
+      route_id = COALESCE(buses.route_id, excluded.route_id)
+  `);
+  const listos: BusDemo[] = [];
+  db.transaction(() => {
+    for (const bus of flota) {
+      const fila = dueno.get(bus.busId) as { company_id: string } | undefined;
+      if (fila && fila.company_id !== EMPRESA_ID) continue;
+      if (placaAjena.get(bus.placa, bus.busId)) continue;
+      const ahora = Date.now();
+      alta.run(bus.busId, EMPRESA_ID, bus.placa, bus.routeId, ahora, ahora);
+      listos.push(bus);
+    }
+  })();
+  for (const bus of listos) busCompanyCache.set(bus.busId, EMPRESA_ID);
+  const fuera = flota.filter((b) => !listos.includes(b));
+  if (fuera.length > 0) {
+    console.warn(
+      `[FLOTA] ${fuera.map((b) => b.placa).join(', ')} ya son de otra empresa: no salen en la demo.`,
+    );
+  }
+  return listos;
 }
 
 const SIMULADOR = join(__dirname, '..', '..', 'scripts', 'simulate-bus.mjs');
@@ -177,11 +253,12 @@ export function arrancarFlotaDemo(): void {
     return;
   }
 
-  const flota = construirFlota();
-  if (flota.length === 0) {
+  const catalogo = construirFlota();
+  if (catalogo.length === 0) {
     console.warn(`[FLOTA] ${EMPRESA_ID} no tiene rutas en catálogo.`);
     return;
   }
+  const flota = prepararFlota(catalogo);
 
   console.log(
     `[FLOTA] ${flota.length} buses simulados en ${new Set(flota.map((b) => b.routeId)).size} rutas.`,

@@ -7,7 +7,7 @@ const {
 } = require('./helpers');
 
 const SECRET = process.env.JWT_SECRET;
-const DRIVER_A = '3000000000'; // bus B-042
+const DRIVER_A = '3000000000'; // bus BUS-WFK042
 const OTHER_BUS = 'B-PHASE3';  // bus objetivo del hijack
 const OTHER_PHONE = 'phase3driver';
 
@@ -60,8 +60,8 @@ async function t1_2_socket_injection() {
   socket.on('disconnect', (reason) => { kicked = reason; });
   socket.on('server:error', (data) => { record('T1.2: pasajero recibió server:error', !!data?.message); });
 
-  socket.emit('bus:position', { busId: 'B-042', lat: 10.99, lon: -74.79 });
-  socket.emit('bus:left', { busId: 'B-042' });
+  socket.emit('bus:position', { busId: 'BUS-WFK042', lat: 10.99, lon: -74.79 });
+  socket.emit('bus:left', { busId: 'BUS-WFK042' });
 
   await sleep(1500);
   record('T1.2: pasajero fue desconectado (disconnect(true)) tras emitir bus:position', kicked !== null, `reason=${kicked}`);
@@ -123,7 +123,7 @@ async function t1_4_jwt_and_session() {
   // 2. JWT expirado (firmado con expiresIn negativo)
   const expired = jwt.sign({
     sub: 'd1', driverId: 'd1', phoneNumber: DRIVER_A, role: 'driver',
-    companyId: 'EMP-01', busId: 'B-042', routeId: 'R-101', sessionId: 'expired-sess',
+    companyId: 'EMP-01', busId: 'BUS-WFK042', routeId: 'R-101', sessionId: 'expired-sess',
   }, SECRET, { expiresIn: '-60s', issuer: 'ya-viene-backend', audience: 'ya-viene-mqtt' });
   const bad2 = await new Promise((resolve) => {
     const c = mqtt.connect(MQTT_URL, {

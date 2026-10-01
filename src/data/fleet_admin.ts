@@ -226,8 +226,8 @@ export function createBus(
     : CAPACIDAD_POR_TIPOLOGIA[tipologia];
   const capacidad = extra?.capacidad === undefined ? capacidadBase : normalizeCapacidad(extra.capacidad);
   if (capacidad === null) return 'invalid';
-  // La misma placa puede estar en un bus cuyo id no sale de ella (los de la
-  // demo se llaman B-201, y la edición cambia la placa sin tocar el id).
+  // La misma placa puede estar en un bus cuyo id no sale de ella (la edición
+  // cambia la placa sin tocar el id: BUS-SKR201 puede llevar otra).
   // Sin esto el alta chocaría contra `idx_buses_plate` con un 500.
   if (placaDeOtroBus(normalized, busId)) return 'taken';
   // El número interno salía de COUNT(*)+1, y eso repite en cuanto se borra un

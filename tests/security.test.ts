@@ -186,7 +186,7 @@ test('JWT validates canonical claims and rejects tampering', () => {
     phoneNumber: '3000000000',
     role: 'driver',
     companyId: 'EMP-01',
-    busId: 'B-042',
+    busId: 'BUS-WFK042',
     routeId: 'R-101',
     sessionId: 'session-1',
   });

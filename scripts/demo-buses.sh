@@ -13,8 +13,8 @@
 #  cualquier ruta que se abra —en el panel o en la app del pasajero— tenga
 #  buses moviéndose sin ir a arrancar nada. Dos por ruta, en puntos
 #  distintos del recorrido. En R-106, la de la demo, van más rápido:
-#   B-042 → arranca al 80% del recorrido (YA PASÓ al pasajero del ~50%)
-#   B-055 → arranca al 15% del recorrido (VIENE hacia el pasajero)
+#   BUS-WFK042 → arranca al 80% del recorrido (YA PASÓ al pasajero del ~50%)
+#   BUS-WGV705 → arranca al 15% del recorrido (VIENE hacia el pasajero)
 #
 #  Y los mantiene vivos. Un simulador que se cae —se reinició el backend, se
 #  cortó el MQTT, se cerró la terminal— no hace ruido: el bus se queda
@@ -133,22 +133,24 @@ LENTO="${CAPTURE_INTERVAL_MS_RESTO:-1500}"
 
 # bus · ruta · fracción del recorrido donde arranca · teléfono · intervalo.
 # Dos por ruta y en extremos opuestos, para que en cualquier ruta que se abra
-# haya uno acercándose y otro alejándose. B-901 ya existía en R-101 de una
-# demo vieja: se reusa a propósito, así deja de ser el fantasma "sin señal"
-# que ensuciaba esa ruta y pasa a ser uno de los buses vivos.
+# haya uno acercándose y otro alejándose. Placas de tres letras y tres
+# números, como las de verdad, y el id `BUS-<placa>` de un bus dado de alta
+# en el panel: las mismas de src/demo/flota_demo.ts (allí está el porqué).
+# Este script no guarda la placa en la base: arranca el backend una vez con
+# la flota encendida para que el panel no enseñe el id entero.
 FLOTA=(
-  "B-042 R-106 0.80 3000000000 $RAPIDO"
-  "B-055 R-106 0.15 3000000001 $RAPIDO"
-  "B-901 R-101 0.35 3000000999 $LENTO"
-  "B-201 R-101 0.70 3000000201 $LENTO"
-  "B-202 R-102 0.20 3000000202 $LENTO"
-  "B-203 R-102 0.65 3000000203 $LENTO"
-  "B-204 R-103 0.25 3000000204 $LENTO"
-  "B-205 R-103 0.75 3000000205 $LENTO"
-  "B-206 R-104 0.30 3000000206 $LENTO"
-  "B-207 R-104 0.60 3000000207 $LENTO"
-  "B-208 R-105 0.10 3000000208 $LENTO"
-  "B-209 R-105 0.55 3000000209 $LENTO"
+  "BUS-WFK042 R-106 0.80 3000000000 $RAPIDO"
+  "BUS-WGV705 R-106 0.15 3000000001 $RAPIDO"
+  "BUS-TNM901 R-101 0.35 3000000999 $LENTO"
+  "BUS-SKR201 R-101 0.70 3000000201 $LENTO"
+  "BUS-UBL202 R-102 0.20 3000000202 $LENTO"
+  "BUS-VJD203 R-102 0.65 3000000203 $LENTO"
+  "BUS-SNZ204 R-103 0.25 3000000204 $LENTO"
+  "BUS-TPH205 R-103 0.75 3000000205 $LENTO"
+  "BUS-WGA206 R-104 0.30 3000000206 $LENTO"
+  "BUS-UHE207 R-104 0.60 3000000207 $LENTO"
+  "BUS-VXR208 R-105 0.10 3000000208 $LENTO"
+  "BUS-SDC209 R-105 0.55 3000000209 $LENTO"
 )
 
 # RUTAS_DEMO recorta la lista sin tocar el archivo, por si la máquina no da.
