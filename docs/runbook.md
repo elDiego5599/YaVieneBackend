@@ -92,10 +92,15 @@ La revisión completa, antes de cualquier demo:
 cd /Users/diegoangarita/YaViene/YaViene && bash check-demo.sh
 ```
 
-En unos veinte segundos comprueba el túnel, que los buses publiquen por el
-socket (lo mismo que ve la app) y que la base esté recibiendo posiciones
-frescas. Sale con código 1 si algo falla. Lo que no automatiza: abrir el panel
-y ver «En línea», y abrir el pasajero y ver los buses moverse.
+En unos veinte segundos comprueba que el túnel conteste `/api/ready`, que los
+dos buses de R-106 publiquen por el socket (lo mismo que ve la app) y que la
+base esté recibiendo posiciones frescas. En este Mac revisa además, sin
+cambiar nada, el resto del tablero del día (T10.3): los cuatro servicios de
+launchd, la corriente, que no se pueda dormir, una copia de menos de 2 h y
+logs por debajo de 50 MB. Sale con código 1 si algo falla; `--sin-mac` revisa
+solo el servidor desde otro equipo. Lo que no automatiza: abrir el panel y ver
+«En línea», abrir el pasajero y ver los buses moverse, y probar el punto de
+acceso del teléfono.
 
 ## Si se cae el túnel
 
@@ -387,10 +392,10 @@ simulados rodando y el respaldo enseñaría un mapa vacío.
 
 ## Que el Mac se levante solo
 
-Hoy el backend y el túnel viven de dos terminales abiertas, y el `caffeinate`
-que impide dormir al Mac se muere con la terminal que lo lanzó. Si el Mac se
-reinicia de madrugada —una actualización, un corte de luz—, la demo amanece
-caída y nadie se entera hasta que alguien abre la app.
+Antes el backend y el túnel vivían de dos terminales abiertas: si el Mac se
+reiniciaba de madrugada —una actualización, un corte de luz—, la demo
+amanecía caída y nadie se enteraba hasta que alguien abría la app. Hoy los
+cuatro servicios están cargados en este Mac y `check-demo.sh` lo confirma.
 
 `scripts/servicio/` trae cuatro servicios de launchd para eso: el backend, el
 túnel, la rotación de logs y el respaldo por hora. Se instalan una vez:
@@ -442,13 +447,11 @@ Lo que launchd no arregla, y toca a mano antes de un pitch:
 
 ## Lo que este runbook todavía no puede prometer
 
-- Copias automáticas y restauración cronometrada (T2.8).
 - Vigilancia externa que avise al teléfono del dueño cuando `/api/ready` deje
   de responder (T10.2): el chequeo real es `/api/ready`, no `/api/health` —
   `health` solo confirma que el proceso vive, así que con `health` una base
   caída pasaría desapercibida. Hoy, si nadie mira, nadie se entera.
-- Los servicios de launchd están escritos y probados en seco, pero todavía no
-  cargados en este Mac (T10.3): hacerlo reinicia backend y túnel, así que
-  espera a un rato sin demo. Los ajustes de energía y la prueba del punto de
-  acceso siguen siendo manuales.
+- Los ajustes de energía y la prueba del punto de acceso siguen siendo
+  manuales (T10.3): `check-demo.sh` avisa si el Mac va con batería o se puede
+  dormir, pero no lo arregla.
 - Alta y revocación de dispositivos GPS (T4.3).
