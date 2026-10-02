@@ -183,11 +183,14 @@ Qué hacer:
 
 ### Un equipo que no puede iniciar sesión (429 en el login)
 
-Diez PIN fallidos en una hora bloquean esa línea durante una hora, vengan
-de donde vengan (`login.cuenta_bloqueada` en las métricas, y una línea
-`[Auth] Cuenta …1234 bloqueada` en el log). Si es un equipo propio mal
-configurado: corregir su PIN y esperar a que termine el bloqueo, o volver a
-provisionarlo con `POST /api/admin/drivers`. El bloqueo vive en memoria, así
+Diez PIN fallidos en una hora bloquean esa línea, vengan de donde vengan:
+5 minutos la primera vez y el doble en cada bloqueo seguido, hasta 24 horas
+(`login.cuenta_bloqueada` en las métricas, y una línea
+`[Auth] Cuenta …1234 bloqueada N min` en el log). Varias líneas seguidas de
+la misma cuenta con los minutos creciendo son un equipo que reintenta en
+bucle o alguien adivinando. Si es un equipo propio mal configurado:
+corregir su PIN y volver a provisionarlo con `POST /api/admin/drivers`, que
+levanta el bloqueo y borra la racha; esperar sirve solo para los primeros. El bloqueo vive en memoria, así
 que reiniciar el backend también lo levanta, pero si nadie tocó el equipo es
 alguien probando PIN y el bloqueo está haciendo su trabajo.
 

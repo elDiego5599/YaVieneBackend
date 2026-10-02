@@ -94,39 +94,47 @@ export const fleetWriteRateLimiter = new SlidingWindowRateLimiter(60, 60_000);
  * reparte los intentos contra un mismo teléfono entre muchas IP no tropieza
  * con ninguno, y el PIN del equipo puede ser de 4 dígitos. Éste cuenta los
  * fallos de la cuenta sola, sin IP: al llegar a `maxFallos` dentro de
- * `ventanaMs`, la cuenta queda cerrada `bloqueoMs`, también para el PIN
- * bueno —si no, probar durante el bloqueo diría cuál es—. Un acierto borra
- * los fallos, y los intentos durante el bloqueo no lo alargan: quien lo
- * provoca a propósito solo consigue que el equipo espere, no dejarlo fuera
- * para siempre.
+ * `ventanaMs`, la cuenta queda cerrada, también para el PIN bueno —si no,
+ * probar durante el bloqueo diría cuál es—.
+ *
+ * La espera crece: el primer bloqueo dura `bloqueoBaseMs` y cada uno que
+ * le sigue sin un acierto en medio dura el doble, hasta `bloqueoTopeMs`. Así
+ * una persona que se equivoca o un equipo recién mal configurado esperan
+ * poco, y quien adivina se queda en el tope enseguida. La racha se olvida
+ * con un acierto, cuando quien administra da un PIN nuevo (`levantar`) o
+ * tras pasar `bloqueoTopeMs` sin bloqueo: esperar a que se olvide cuesta lo
+ * mismo que el tope, así que no sirve para abaratar la adivinanza.
+ *
+ * Los intentos durante el bloqueo no lo alargan: quien lo provoca a
+ * propósito solo consigue que el equipo espere, no dejarlo fuera para
+ * siempre.
  *
  * La memoria está acotada igual que en [SlidingWindowRateLimiter]: como
  * mucho `maxFallos` marcas por cuenta, y un barrido quita las que ya no
- * tienen ni fallos vivos ni bloqueo.
+ * tienen ni fallos vivos ni racha.
  */
 export class BloqueoPorCuenta {
   private readonly fallos = new Map<string, number[]>();
-  private readonly bloqueadas = new Map<string, number>();
+  /** Bloqueos seguidos de cada cuenta y hasta cuándo dura el último. */
+  private readonly rachas = new Map<string, { bloqueos: number; hasta: number }>();
   private llamadasDesdeBarrido = 0;
 
   constructor(
     private readonly maxFallos: number,
     private readonly ventanaMs: number,
-    private readonly bloqueoMs: number,
+    private readonly bloqueoBaseMs: number,
+    private readonly bloqueoTopeMs: number,
     private readonly barrerCada = 64,
   ) {}
 
   /** Milisegundos que le quedan al bloqueo de `cuenta`, o 0 si puede intentarlo. */
   restante(cuenta: string, now: number = Date.now()): number {
-    const hasta = this.bloqueadas.get(cuenta);
-    if (hasta === undefined) return 0;
-    if (hasta > now) return hasta - now;
-    this.bloqueadas.delete(cuenta);
-    return 0;
+    const hasta = this.rachas.get(cuenta)?.hasta ?? 0;
+    return Math.max(0, hasta - now);
   }
 
-  /** Apunta un fallo. `true` si con él la cuenta queda bloqueada. */
-  fallo(cuenta: string, now: number = Date.now()): boolean {
+  /** Apunta un fallo. Devuelve cuánto dura el bloqueo que cierra, o 0 si no cierra ninguno. */
+  fallo(cuenta: string, now: number = Date.now()): number {
     if (++this.llamadasDesdeBarrido >= this.barrerCada) {
       this.llamadasDesdeBarrido = 0;
       this.sweep(now);
@@ -135,51 +143,62 @@ export class BloqueoPorCuenta {
     vivos.push(now);
     if (vivos.length < this.maxFallos) {
       this.fallos.set(cuenta, vivos);
-      return false;
+      return 0;
     }
     this.fallos.delete(cuenta);
-    this.bloqueadas.set(cuenta, now + this.bloqueoMs);
-    return true;
+    const anterior = this.rachas.get(cuenta);
+    const bloqueos = anterior && now < anterior.hasta + this.bloqueoTopeMs ? anterior.bloqueos + 1 : 1;
+    const dura = Math.min(this.bloqueoBaseMs * 2 ** (bloqueos - 1), this.bloqueoTopeMs);
+    this.rachas.set(cuenta, { bloqueos, hasta: now + dura });
+    return dura;
   }
 
-  /** Un acierto: la cuenta empieza de cero. */
+  /** Un acierto: la cuenta empieza de cero, también la racha. */
   acierto(cuenta: string): void {
     this.fallos.delete(cuenta);
+    this.rachas.delete(cuenta);
   }
 
-  /** Quita fallos y bloqueo: lo hace quien administra, al dar un PIN nuevo. */
+  /** Quita fallos, bloqueo y racha: lo hace quien administra, al dar un PIN nuevo. */
   levantar(cuenta: string): void {
-    this.fallos.delete(cuenta);
-    this.bloqueadas.delete(cuenta);
+    this.acierto(cuenta);
   }
 
   sweep(now: number = Date.now()): void {
     for (const [cuenta, marcas] of this.fallos) {
       if (!marcas.some((t) => now - t < this.ventanaMs)) this.fallos.delete(cuenta);
     }
-    for (const [cuenta, hasta] of this.bloqueadas) {
-      if (hasta <= now) this.bloqueadas.delete(cuenta);
+    for (const [cuenta, { hasta }] of this.rachas) {
+      if (now >= hasta + this.bloqueoTopeMs) this.rachas.delete(cuenta);
     }
   }
 
-  /** Cuentas recordadas, con fallos o bloqueadas (métricas y pruebas). */
+  /** Cuentas recordadas, con fallos o con racha (métricas y pruebas). */
   get size(): number {
-    return this.fallos.size + this.bloqueadas.size;
+    return this.fallos.size + this.rachas.size;
   }
 }
 
-// 10 fallos en una hora cierran la cuenta una hora. Un equipo bien
-// configurado no falla nunca y una persona que teclea mal no llega a diez;
-// a quien adivina le deja 10 intentos por hora y cuenta, así que barrer los
-// 10 000 PIN de 4 dígitos pasa de minutos a más de un mes, y cada bloqueo
-// queda en las métricas (`login.cuenta_bloqueada`).
+// 10 fallos en una hora cierran la cuenta. Un equipo bien configurado no
+// falla nunca y una persona que teclea mal no llega a diez. El primer
+// bloqueo es de 5 minutos y se dobla con cada uno seguido (5, 10, 20… min)
+// hasta 24 horas, adonde se llega en el décimo. Quien adivina gasta sus
+// primeros 100 intentos en unas 43 horas y de ahí sigue a 10 por día, así
+// que barrer los 10 000 PIN de 4 dígitos pasa de minutos a más de dos años.
+// Cada bloqueo queda en las métricas (`login.cuenta_bloqueada`).
+//
+// Los números se calibran con el equipo de verdad (D2): cuánto reintenta
+// uno mal configurado dice si 5 minutos de entrada le bastan para que se
+// note en el log antes de llegar al tope.
 export const MAX_FALLOS_PIN_POR_CUENTA = 10;
 export const VENTANA_FALLOS_PIN_MS = 60 * 60_000;
-export const BLOQUEO_PIN_MS = 60 * 60_000;
+export const BLOQUEO_PIN_BASE_MS = 5 * 60_000;
+export const BLOQUEO_PIN_TOPE_MS = 24 * 60 * 60_000;
 export const pinPorCuentaBloqueo = new BloqueoPorCuenta(
   MAX_FALLOS_PIN_POR_CUENTA,
   VENTANA_FALLOS_PIN_MS,
-  BLOQUEO_PIN_MS,
+  BLOQUEO_PIN_BASE_MS,
+  BLOQUEO_PIN_TOPE_MS,
 );
 
 const LIMITADORES: Record<string, { readonly size: number }> = {

@@ -36,6 +36,7 @@ const EMPRESA_B = 'EMP-P2B';
 
 // Los de src/security; se repiten a propósito (ver mqtt_abuso.test.ts).
 const FALLOS_PARA_BLOQUEAR = 10;
+const BLOQUEO_PIN_BASE_MS = 5 * 60_000;
 const ANONIMAS_POR_IP = 20;
 const LOGINS_POR_IP = 20;
 
@@ -189,7 +190,8 @@ test('P2-3: diez PIN fallidos bloquean la cuenta aunque vengan de IP distintas',
   assert.equal(bloqueada.status, 429, bloqueada.texto);
   assert.equal(bloqueada.json.error.code, 'RATE_LIMITED');
   const espera = Number(bloqueada.headers.get('retry-after'));
-  assert.ok(espera > 0 && espera <= 3600, `Retry-After: ${bloqueada.headers.get('retry-after')}`);
+  // El primero es el corto: 5 minutos, no la hora fija de antes.
+  assert.ok(espera > 0 && espera <= BLOQUEO_PIN_BASE_MS / 1000, `Retry-After: ${bloqueada.headers.get('retry-after')}`);
 
   // Otra cuenta, desde las mismas IP, no se entera.
   assert.equal((await loginDesde('10.3.0.1', '3005030002', '135790')).status, 200);

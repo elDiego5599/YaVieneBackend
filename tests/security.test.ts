@@ -242,35 +242,93 @@ for (const [nombre, limitador, tope] of TOPES) {
 // P2-3: el bloqueo por cuenta, con el reloj en la mano. Lo que se prueba
 // contra el backend (10 fallos desde IP distintas, 429 con Retry-After,
 // otra cuenta sin enterarse) está en seguridad_p2.test.ts.
-test('bloqueo por cuenta: se cierra en el fallo 10, se abre solo y no se alarga', () => {
-  const hora = 60 * 60_000;
-  const bloqueo = new BloqueoPorCuenta(10, hora, hora);
-  for (let i = 0; i < 9; i++) assert.equal(bloqueo.fallo('300', i), false);
+test('bloqueo por cuenta: diez fallos la cierran, y ni el PIN bueno entra mientras dure', () => {
+  const minuto = 60_000;
+  const hora = 60 * minuto;
+  const bloqueo = new BloqueoPorCuenta(10, hora, 5 * minuto, 24 * hora);
+  for (let i = 0; i < 9; i++) assert.equal(bloqueo.fallo('300', i), 0);
   assert.equal(bloqueo.restante('300', 9), 0, 'con 9 fallos todavía puede intentarlo');
-  assert.equal(bloqueo.fallo('300', 10), true, 'el décimo la cierra');
-  assert.equal(bloqueo.restante('300', 10), hora);
+  assert.equal(bloqueo.fallo('300', 10), 5 * minuto, 'el décimo la cierra, la primera vez 5 minutos');
+  assert.equal(bloqueo.restante('300', 10), 5 * minuto);
   assert.equal(bloqueo.restante('301', 10), 0, 'otra cuenta no se entera');
   // Intentar durante el bloqueo no lo alarga: el login no llega a apuntar
   // fallos mientras dure, así que el reloj es el del fallo que lo cerró.
-  assert.equal(bloqueo.restante('300', 10 + hora / 2), hora / 2);
-  assert.equal(bloqueo.restante('300', 10 + hora), 0, 'pasada la hora se abre');
+  assert.equal(bloqueo.restante('300', 10 + 2 * minuto), 3 * minuto);
+  assert.equal(bloqueo.restante('300', 10 + 5 * minuto), 0, 'pasados los 5 minutos se abre');
   // Y se abre con la cuenta a cero, no a un fallo de volver a cerrarse.
-  assert.equal(bloqueo.fallo('300', 11 + hora), false);
+  assert.equal(bloqueo.fallo('300', 11 + 5 * minuto), 0);
+});
+
+test('bloqueo por cuenta: cada bloqueo seguido dura el doble, hasta el tope', () => {
+  const minuto = 60_000;
+  const hora = 60 * minuto;
+  const bloqueo = new BloqueoPorCuenta(10, hora, 5 * minuto, 24 * hora);
+  // Diez fallos en cuanto se abre, una y otra vez: lo que hace quien adivina
+  // y lo que hace un equipo mal configurado que reintenta en bucle.
+  let t = 0;
+  const duraciones: number[] = [];
+  for (let i = 0; i < 12; i++) {
+    let dura = 0;
+    for (let f = 0; f < 10; f++) dura = bloqueo.fallo('300', t++);
+    duraciones.push(dura / minuto);
+    t += bloqueo.restante('300', t);
+  }
+  assert.deepEqual(duraciones, [5, 10, 20, 40, 80, 160, 320, 640, 1280, 1440, 1440, 1440]);
+});
+
+test('bloqueo por cuenta: la racha se olvida con un acierto, con un PIN nuevo o tras un día quieta', () => {
+  const minuto = 60_000;
+  const hora = 60 * minuto;
+  const tope = 24 * hora;
+  const cerrar = (b: BloqueoPorCuenta, cuenta: string, desde: number): number => {
+    let dura = 0;
+    for (let f = 0; f < 10; f++) dura = b.fallo(cuenta, desde + f);
+    return dura;
+  };
+  const bloqueo = new BloqueoPorCuenta(10, hora, 5 * minuto, tope);
+
+  // Dos bloqueos seguidos y luego un acierto: el siguiente vuelve a 5.
+  assert.equal(cerrar(bloqueo, 'acierto', 0), 5 * minuto);
+  assert.equal(cerrar(bloqueo, 'acierto', 5 * minuto + 10), 10 * minuto);
+  bloqueo.acierto('acierto');
+  assert.equal(cerrar(bloqueo, 'acierto', hora), 5 * minuto);
+
+  // Quien administra da un PIN nuevo: bloqueo y racha fuera.
+  assert.equal(cerrar(bloqueo, 'pin', 0), 5 * minuto);
+  bloqueo.levantar('pin');
+  assert.equal(bloqueo.restante('pin', 20), 0);
+  assert.equal(cerrar(bloqueo, 'pin', 20), 5 * minuto);
+
+  // Un día entero sin bloqueo desde que terminó el último: se olvida. Uno
+  // menos, no: esperar a que se olvide cuesta lo mismo que el tope.
+  assert.equal(cerrar(bloqueo, 'quieta', 0), 5 * minuto);
+  assert.equal(cerrar(bloqueo, 'quieta', 5 * minuto + tope - 100), 10 * minuto);
+  const fin = 5 * minuto + tope - 100 + 9 + 10 * minuto;
+  assert.equal(cerrar(bloqueo, 'quieta', fin + tope), 5 * minuto);
+
+  // El barrido quita la racha olvidada: la memoria no guarda cada teléfono
+  // que alguien probó alguna vez.
+  const otro = new BloqueoPorCuenta(10, hora, 5 * minuto, tope);
+  cerrar(otro, 'x', 0);
+  otro.sweep(5 * minuto + tope - 1);
+  assert.equal(otro.size, 1, 'dentro del día sigue recordada');
+  otro.sweep(9 + 5 * minuto + tope);
+  assert.equal(otro.size, 0);
 });
 
 test('bloqueo por cuenta: los fallos viejos caducan y un acierto borra la cuenta', () => {
-  const bloqueo = new BloqueoPorCuenta(3, 1000, 5000);
+  const bloqueo = new BloqueoPorCuenta(3, 1000, 5000, 5000);
   bloqueo.fallo('a', 0);
   bloqueo.fallo('a', 1);
-  assert.equal(bloqueo.fallo('a', 1500), false, 'los de t=0 y t=1 ya salieron de la ventana');
+  assert.equal(bloqueo.fallo('a', 1500), 0, 'los de t=0 y t=1 ya salieron de la ventana');
   bloqueo.fallo('b', 0);
   bloqueo.fallo('b', 1);
   bloqueo.acierto('b');
-  assert.equal(bloqueo.fallo('b', 2), false, 'tras un acierto empieza de cero');
-  assert.equal(bloqueo.fallo('b', 3), false);
-  assert.equal(bloqueo.fallo('b', 4), true);
+  assert.equal(bloqueo.fallo('b', 2), 0, 'tras un acierto empieza de cero');
+  assert.equal(bloqueo.fallo('b', 3), 0);
+  assert.equal(bloqueo.fallo('b', 4), 5000);
   // El barrido quita lo que ya no cuenta: la memoria no crece con cada
   // teléfono que alguien prueba una vez.
-  bloqueo.sweep(10_000);
+  bloqueo.sweep(20_000);
   assert.equal(bloqueo.size, 0);
 });

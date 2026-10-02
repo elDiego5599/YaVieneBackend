@@ -375,9 +375,10 @@ addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
   // respuesta decía qué teléfonos están dados de alta.
   const pinBueno = verifySecretSinDelatar(pin, driver?.pinHash);
   if (!driver || !pinBueno || !driver.companyId || !driver.busId) {
-    if (pinPorCuentaBloqueo.fallo(phoneNumber)) {
+    const bloqueoMs = pinPorCuentaBloqueo.fallo(phoneNumber);
+    if (bloqueoMs > 0) {
       incrementMetric('login.cuenta_bloqueada');
-      console.warn(`[Auth] Cuenta …${phoneNumber.slice(-4)} bloqueada tras ${MAX_FALLOS_PIN_POR_CUENTA} PIN fallidos`);
+      console.warn(`[Auth] Cuenta …${phoneNumber.slice(-4)} bloqueada ${Math.round(bloqueoMs / 60_000)} min tras ${MAX_FALLOS_PIN_POR_CUENTA} PIN fallidos`);
     }
     writeError(res, 401, 'INVALID_CREDENTIALS', 'Invalid driver credentials');
     return;

@@ -62,11 +62,13 @@ La respuesta trae `token`, y dentro de él van la empresa, el bus, la ruta y
 un `sessionId` nuevo. El token dura **24 horas**; pasado ese tiempo la
 conexión se rechaza y hay que volver a pedirlo.
 
-**10 PIN fallidos en una hora bloquean la línea durante 1 hora**, vengan
-de la IP que vengan. Mientras dure, el login responde `429` con
-`Retry-After` (segundos que faltan), también con el PIN bueno. Un login
-correcto borra la cuenta de fallos, y volver a dar de alta la línea levanta
-el bloqueo. Un equipo que recibe `401` no debe reintentar en bucle con el
+**10 PIN fallidos en una hora bloquean la línea**, vengan de la IP que
+vengan: **5 minutos** la primera vez, y cada bloqueo que le sigue sin un
+login correcto en medio dura el doble (10, 20, 40… minutos), **hasta 24
+horas**. Mientras dure, el login responde `429` con `Retry-After`
+(segundos que faltan), también con el PIN bueno. Un login correcto borra la
+cuenta de fallos y la racha; volver a dar de alta la línea levanta el
+bloqueo; y un día sin bloqueos la olvida. Un equipo que recibe `401` no debe reintentar en bucle con el
 mismo PIN: el PIN no va a cambiar solo, y cada intento acerca el bloqueo.
 
 Un bus tiene **una sola sesión viva**. Si el mismo bus entra otra vez, la
