@@ -33,6 +33,7 @@ import { MAX_INTERNO, TIPOLOGIAS, MAX_CAPACIDAD, MIN_CAPACIDAD, getBusRouteId, n
 import { esRutaDeEmpresa, isRouteId, MAX_NOMBRE_RUTA } from '../data/routes_store';
 import {
   adminRateLimiter,
+  avisosRateLimiter,
   fleetWriteRateLimiter,
   loginIpRateLimiter,
   loginRateLimiter,
@@ -43,6 +44,11 @@ import {
   SlidingWindowRateLimiter,
 } from '../security/rate_limiter';
 import { getDb } from '../data/database';
+import { borrarAviso, crearAviso, renovarAviso, VIDA_MAXIMA_MS } from '../data/avisos_push';
+import { busInCatalog } from '../data/positions_store';
+import { getBusVisibility } from '../data/fleet_admin';
+import { dentroDeZona } from '../security/zona';
+import { emisorPush } from '../push/fcm';
 import { isBrokerReady } from '../mqtt/broker';
 import {
   getEmpresa,
@@ -888,6 +894,101 @@ export function metodosHttpRegistrados(): string[] {
   for (const h of handlers) if (!vistos.includes(h.method)) vistos.push(h.method);
   return vistos;
 }
+
+// ── Avisos por push (D13) ────────────────────────────────────────────
+// Públicos como el catálogo: el pasajero no tiene cuenta. El identificador
+// del aviso (un UUID aleatorio) es la llave para latir y desarmar; quien no
+// lo tiene no puede tocar el aviso de otro. Ver `data/avisos_push.ts`.
+
+/** Tokens de registro de FCM: base64 de URL con «:», unos 160 caracteres. */
+const TOKEN_FCM = /^[A-Za-z0-9_:.-]{20,1024}$/;
+const ID_AVISO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Token y punto de un cuerpo de aviso, o el mensaje de lo que falla. */
+function leerPuntoYToken(body: Record<string, unknown> | undefined): { token: string; lat: number; lon: number } | string {
+  const { token, lat, lon } = body ?? {};
+  if (typeof token !== 'string' || !TOKEN_FCM.test(token)) return 'token inválido';
+  if (typeof lat !== 'number' || typeof lon !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return 'lat y lon tienen que ser números';
+  }
+  // Fuera del área metropolitana no hay buses que esperar: el mapa de la
+  // app no llega allá (`security/zona.ts`).
+  if (!dentroDeZona(lat, lon)) return 'el punto está fuera de la zona de servicio';
+  return { token, lat, lon };
+}
+
+addRoute('POST', '/api/avisos', (req, res, _params, body) => {
+  if (!guardRate(avisosRateLimiter, req, res, 'avisos')) return;
+  if (!emisorPush()) {
+    writeError(res, 503, 'PUSH_NO_DISPONIBLE', 'Los avisos con la app cerrada no están activos en este servidor');
+    return;
+  }
+  const punto = leerPuntoYToken(body);
+  if (typeof punto === 'string') {
+    writeError(res, 400, 'INVALID_INPUT', punto);
+    return;
+  }
+  const { busId, routeId, vidaMs } = body ?? {};
+  if (typeof routeId !== 'string' || !isRouteId(routeId)) {
+    writeError(res, 400, 'INVALID_INPUT', 'routeId inválido');
+    return;
+  }
+  if (vidaMs !== undefined && (typeof vidaMs !== 'number' || !Number.isInteger(vidaMs) || vidaMs <= 0)) {
+    writeError(res, 400, 'INVALID_INPUT', 'vidaMs tiene que ser un entero positivo');
+    return;
+  }
+  // Un bus oculto por su empresa responde igual que uno que no existe: el
+  // pasajero no lo ve en el mapa y no tiene por qué saber que está.
+  if (typeof busId !== 'string' || !busInCatalog(busId) || !getBusVisibility(busId)) {
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus no encontrado');
+    return;
+  }
+  const creado = crearAviso({ ...punto, busId, routeId, vidaMs: vidaMs ?? VIDA_MAXIMA_MS });
+  if (creado === 'tope_token') {
+    writeError(res, 429, 'DEMASIADOS_AVISOS', 'Este teléfono ya tiene el máximo de avisos armados');
+    return;
+  }
+  if (creado === 'lleno') {
+    incrementMetric('push.tabla_llena');
+    writeError(res, 503, 'AVISOS_LLENOS', 'No se pueden armar más avisos por ahora');
+    return;
+  }
+  writeJson(res, 201, creado);
+});
+
+addRoute('PUT', '/api/avisos/:id', (req, res, params, body) => {
+  if (!guardRate(avisosRateLimiter, req, res, 'avisos')) return;
+  const punto = leerPuntoYToken(body);
+  if (!ID_AVISO.test(params.id) || typeof punto === 'string') {
+    writeError(res, 400, 'INVALID_INPUT', typeof punto === 'string' ? punto : 'id inválido');
+    return;
+  }
+  const resultado = renovarAviso(params.id, punto);
+  if (resultado === 'no_existe') {
+    writeError(res, 404, 'AVISO_NOT_FOUND', 'El aviso no existe o ya venció');
+    return;
+  }
+  if (resultado === 'enviado') {
+    // 410 y no 200: la app que vuelve se entera de que el servidor ya avisó
+    // y no vuelve a avisar ella.
+    writeError(res, 410, 'AVISO_ENVIADO', 'El aviso ya se envió');
+    return;
+  }
+  res.writeHead(204);
+  res.end();
+});
+
+addRoute('DELETE', '/api/avisos/:id', (req, res, params) => {
+  if (!guardRate(avisosRateLimiter, req, res, 'avisos')) return;
+  if (!ID_AVISO.test(params.id)) {
+    writeError(res, 400, 'INVALID_INPUT', 'id inválido');
+    return;
+  }
+  // Idempotente: desarmar dos veces, o desarmar uno que ya venció, es lo mismo.
+  borrarAviso(params.id);
+  res.writeHead(204);
+  res.end();
+});
 
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
   setSecurityHeaders(res);

@@ -172,11 +172,23 @@ cola cuando el bus ya volvió a publicar, **se descarta**. Sin él, el aviso
 viejo llegaba detrás de la posición viva y el pasajero veía en gris un bus
 que acababa de reportar.
 
+## 6. Los avisos con la app cerrada
+
+`avisos_push` (`src/data/avisos_push.ts`, `src/push/fcm.ts`) guarda los
+avisos de «tu bus está cerca» que el pasajero arma en Android
+([D13](decisiones/D13-avisos-push.md)). La app viva late cada 20 s y avisa
+ella; cuando deja de latir, cada 5 s el servidor cruza los avisos sin
+vigilar con `positions` y `buses` y, si el bus con señal y visible está a
+1 km o menos del punto, manda un mensaje de datos por FCM. La fila se marca
+enviada antes de mandar, así que dos vueltas no avisan dos veces; si FCM
+falla se desmarca y se reintenta, y si dice que el token ya no existe se
+borran sus avisos. Sin `YA_VIENE_FCM_CREDENCIALES` nada de esto corre.
+
 ## Los otros dos clientes
 
 | Cliente | Qué es | Cómo habla |
 |---------|--------|------------|
-| `app_pasajero` | Flutter, Android e iOS | REST para el catálogo, socket para las posiciones. Sin cuenta. |
+| `app_pasajero` | Flutter, Android e iOS | REST para el catálogo, socket para las posiciones, `/api/avisos` y FCM para avisar con la app cerrada (Android). Sin cuenta. |
 | `app_control` | Flutter, macOS y Windows | `POST /api/admin/login`, después REST y socket con el token. |
 | `YaVieneWeb` | la landing | no habla con el backend: su mapa es una simulación, rotulada. |
 

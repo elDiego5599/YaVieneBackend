@@ -89,6 +89,15 @@ export const readRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
 export const fleetWriteRateLimiter = new SlidingWindowRateLimiter(60, 60_000);
 
 /**
+ * Avisos de «bus cerca» por push (`/api/avisos`). Una app con un aviso armado
+ * late cada 20 s —3 por minuto— y arma o desarma de vez en cuando: 120 por
+ * minuto y por IP alcanza para unas cuantas decenas de pasajeros detrás de la
+ * misma IP del operador, como el tope de lecturas, y frena a quien quiera
+ * llenar la tabla.
+ */
+export const avisosRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
+
+/**
  * Bloqueo temporal de una cuenta tras muchos fallos seguidos (auditoría
  * 2026-09, P2-3). Los topes de login cuentan por IP y por (IP, cuenta): quien
  * reparte los intentos contra un mismo teléfono entre muchas IP no tropieza
@@ -208,6 +217,7 @@ const LIMITADORES: Record<string, { readonly size: number }> = {
   read: readRateLimiter,
   fleetWrite: fleetWriteRateLimiter,
   pinCuenta: pinPorCuentaBloqueo,
+  avisos: avisosRateLimiter,
 };
 
 // La memoria de cada limitador está acotada por el barrido, pero nadie la

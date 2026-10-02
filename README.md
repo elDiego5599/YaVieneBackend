@@ -99,6 +99,16 @@ hasta 32 KB.
 
 Las lecturas públicas admiten 120 por minuto e IP (`429 TOO_MANY_REQUESTS`).
 
+### Avisos con la app cerrada (Android, [D13](docs/decisiones/D13-avisos-push.md))
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/avisos` | Arma `{ token, busId, routeId, lat, lon, vidaMs? }` → `201 { id }`. Sin `YA_VIENE_FCM_CREDENCIALES`: `503 PUSH_NO_DISPONIBLE`. Bus oculto o inexistente: `404 BUS_NOT_FOUND`. Más de dos por teléfono: `429 DEMASIADOS_AVISOS` |
+| PUT | `/api/avisos/:id` | Latido de la app viva `{ token, lat, lon }` → `204`. Ya enviado: `410 AVISO_ENVIADO`. Vencido o borrado: `404 AVISO_NOT_FOUND` |
+| DELETE | `/api/avisos/:id` | Desarma (`204`, idempotente) |
+
+El punto tiene que caer en la zona de servicio. 120 por minuto e IP.
+
 ### Equipo del bus (credencial de conductor)
 
 | Método | Ruta | Descripción |

@@ -14,11 +14,13 @@
 // `npm run contrato:actualizar` y se copian a las apps.
 //
 // Puertos propios, HTTP 3230 y MQTT 9010: node --test corre los archivos en
-// paralelo.
+// paralelo. El FCM falso (D13) toma el que le dé el sistema.
 import assert from 'node:assert/strict';
 import { ChildProcess, spawn } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -265,6 +267,36 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
   closeDb();
   const [uno, dos] = equipos;
 
+  // Un FCM falso en este proceso: da un token de acceso a quien lo pida y
+  // guarda los mensajes que el backend manda, que son lo que la app recibe
+  // con la app cerrada (D13). La cuenta de servicio es de usar y tirar.
+  const mensajesPush: unknown[] = [];
+  let alPush: (() => void) | null = null;
+  const fcm = createServer((req, res) => {
+    let cuerpo = '';
+    req.on('data', (parte) => { cuerpo += parte; });
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/token') {
+        res.end(JSON.stringify({ access_token: 'acceso-falso', expires_in: 3600 }));
+        return;
+      }
+      mensajesPush.push((JSON.parse(cuerpo) as { message: unknown }).message);
+      alPush?.();
+      res.end('{}');
+    });
+  });
+  await new Promise<void>((resolve) => fcm.listen(0, '127.0.0.1', resolve));
+  const FCM = `http://127.0.0.1:${(fcm.address() as AddressInfo).port}`;
+  const CREDENCIALES = join(dir, 'fcm-credenciales.json');
+  writeFileSync(CREDENCIALES, JSON.stringify({
+    project_id: 'contrato',
+    client_email: 'contrato@contrato.iam.gserviceaccount.com',
+    private_key: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey
+      .export({ type: 'pkcs8', format: 'pem' }),
+    token_uri: `${FCM}/token`,
+  }));
+
   const backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     env: {
       ...process.env,
@@ -275,6 +307,11 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
       MQTT_DEBUG_LOGS: 'false',
       YA_VIENE_FLOTA_DEMO: '0',
       YA_VIENE_DB_PATH: DB_PATH,
+      YA_VIENE_FCM_CREDENCIALES: CREDENCIALES,
+      YA_VIENE_FCM_API: FCM,
+      // Sin arriendo: el aviso queda sin vigilar desde que se arma, como si
+      // la app se hubiera cerrado enseguida.
+      YA_VIENE_ARRIENDO_AVISO_MS: '0',
     },
     stdio: 'ignore',
   });
@@ -360,6 +397,39 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
     guardar('rest-route-positions', await pedir('GET', `/api/routes/${RUTA}/positions`));
     guardar('rest-fleet-positions', await pedir('GET', '/api/fleet/positions', undefined, admin));
     guardar('rest-fleet-routes', await pedir('GET', '/api/fleet/routes', undefined, admin));
+
+    // ── Aviso con la app cerrada (D13) ────────────────────────────────
+    // El pasajero espera a unos 300 m del bus. El servidor lo revisa cada
+    // 5 s; el mensaje llega al FCM falso en la vuelta siguiente.
+    const llegoPush = new Promise<void>((resolve, reject) => {
+      const reloj = setTimeout(() => reject(new Error('el push no llegó en 12 s')), 12_000);
+      alPush = () => {
+        clearTimeout(reloj);
+        resolve();
+      };
+    });
+    const aviso = await pedir('POST', '/api/avisos', {
+      token: 'fcm-token-del-contrato-0123456789',
+      busId: uno.busId,
+      routeId: RUTA,
+      lat: 10.9907,
+      lon: -74.7887,
+    }) as { id: string };
+    guardar('rest-aviso-creado', { ...aviso, id: '<avisoId>' });
+    await llegoPush;
+    const mensaje = mensajesPush[0] as { data: Record<string, string> };
+    assert.equal(mensaje.data.avisoId, aviso.id);
+    guardar('push-bus-cerca', { ...mensaje, data: { ...mensaje.data, avisoId: '<avisoId>' } });
+    // El latido que llega después del push: la app se entera de que el
+    // servidor ya avisó y no avisa otra vez.
+    const tarde410 = await fetch(`${BASE}/api/avisos/${aviso.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 'fcm-token-del-contrato-0123456789', lat: 10.9907, lon: -74.7887 }),
+    });
+    assert.equal(tarde410.status, 410);
+    guardar('rest-aviso-enviado', await tarde410.json());
+    assert.equal(mensajesPush.length, 1, 'el aviso se mandó más de una vez');
 
     // ── Ocultar y volver a mostrar un bus ─────────────────────────────
     guardar('rest-fleet-visibility',
@@ -449,6 +519,7 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
     for (const o of sockets) o.socket.close();
     for (const e of equipos) e.cliente?.end(true);
     await stopProcess(backend);
+    await new Promise((resolve) => fcm.close(resolve));
     rmSync(dir, { recursive: true, force: true });
   }
 });

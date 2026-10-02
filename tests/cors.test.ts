@@ -87,11 +87,12 @@ test('el preflight nombra todos los métodos que la API atiende', { timeout: 60_
 
   assert.equal(r.status, 204);
   assert.equal(r.headers.get('access-control-allow-origin'), ORIGEN);
-  // Los cuatro que registra `routes.ts` —el panel usa PATCH para apagar un
-  // bus y DELETE para sacarlo— más el del propio preflight.
+  // Los cinco que registra `routes.ts` —el panel usa PATCH para apagar un
+  // bus y DELETE para sacarlo; PUT es el latido de un aviso (D13)— más el
+  // del propio preflight.
   assert.equal(
     r.headers.get('access-control-allow-methods'),
-    'GET, POST, PATCH, DELETE, OPTIONS',
+    'GET, POST, PATCH, DELETE, PUT, OPTIONS',
   );
   assert.equal(r.headers.get('access-control-allow-headers'), 'Authorization, Content-Type');
 });

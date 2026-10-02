@@ -9,6 +9,7 @@ import { hashPin, verifyPin } from '../src/auth/passwords';
 import { signToken, verifyToken } from '../src/auth/tokens';
 import {
   adminRateLimiter,
+  avisosRateLimiter,
   BloqueoPorCuenta,
   fleetWriteRateLimiter,
   loginIpRateLimiter,
@@ -224,6 +225,7 @@ const TOPES: Array<[string, SlidingWindowRateLimiter, number]> = [
   ['admin', adminRateLimiter, 20],
   ['read', readRateLimiter, 120],
   ['fleetWrite', fleetWriteRateLimiter, 60],
+  ['avisos', avisosRateLimiter, 120],
 ];
 
 for (const [nombre, limitador, tope] of TOPES) {

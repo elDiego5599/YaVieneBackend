@@ -335,3 +335,11 @@ test('headers de seguridad presentes y param malformado da 400 sin tumbar', asyn
   assert.equal(mala2.status, 400);
   await mala2.text();
 });
+
+test('POST /api/avisos sin cuenta de FCM: 503, el push está apagado', async () => {
+  const r = await llamar('POST', '/api/avisos', {
+    token: 'tok-' + 'a'.repeat(40), busId: 'BUS-API001', routeId: 'R-900', lat: 10.98, lon: -74.79,
+  });
+  assert.equal(r.estado, 503);
+  assert.equal((r.cuerpo.error as { code: string }).code, 'PUSH_NO_DISPONIBLE');
+});

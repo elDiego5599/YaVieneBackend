@@ -15,3 +15,8 @@ prototipo-aforo/dataset/
 
 # Grafo local de graphify: caché de búsqueda que se regenera, no es del repo.
 graphify-out/
+
+# Cuenta de servicio de Firebase para los avisos por push (D13): es una clave
+# privada. Va fuera del repo y llega por YA_VIENE_FCM_CREDENCIALES.
+fcm-credenciales*.json
+*-firebase-adminsdk-*.json

@@ -29,3 +29,11 @@ process.env.HTTP_HOST = HOST_PRUEBAS;
 // o al hijo que arrancan, no lo leen de aquí.
 delete process.env.YA_VIENE_EXPUESTO;
 delete process.env.NODE_ENV;
+
+// La cuenta de servicio de FCM (D13) puede vivir en local.env. Un backend de
+// la suite que la herede mandaría pushes de verdad a los teléfonos de quien
+// tenga un aviso armado contra el servidor vivo. Las pruebas del push le
+// pasan su propia cuenta falsa y su servidor falso.
+delete process.env.YA_VIENE_FCM_CREDENCIALES;
+delete process.env.YA_VIENE_FCM_API;
+delete process.env.YA_VIENE_ARRIENDO_AVISO_MS;

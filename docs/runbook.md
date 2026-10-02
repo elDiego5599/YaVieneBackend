@@ -352,6 +352,42 @@ bus. El equipo del bus puede cerrar su turno con
 Dar de alta y revocar dispositivos con credencial propia —un secreto por
 equipo, revocable sin tocar el resto— todavía no existe; es la tarea T4.3.
 
+## Avisos con la app cerrada (push, Android)
+
+El servidor avisa por Firebase Cloud Messaging cuando la app del pasajero
+está cerrada ([D13](decisiones/D13-avisos-push.md)). Necesita la clave de la
+cuenta de servicio de Firebase; sin ella el arranque dice
+`[Push] Sin YA_VIENE_FCM_CREDENCIALES` y la app sigue avisando solo abierta.
+
+Encenderlo, una vez:
+
+1. Consola de Firebase → Configuración del proyecto → Cuentas de servicio →
+   **Generar nueva clave privada**. Baja un JSON.
+2. Guardarlo **fuera del repo**, por ejemplo en
+   `~/.config/yaviene/fcm-credenciales.json`, con `chmod 600`. Es una clave
+   privada: no se manda por chat ni se pega en ningún lado. El `.gitignore`
+   del backend tapa `fcm-credenciales*.json` y `*-firebase-adminsdk-*.json`
+   por si acaso.
+3. En `local.env`: `YA_VIENE_FCM_CREDENCIALES=/ruta/al/archivo.json`.
+4. `npm run build` y reiniciar
+   (`launchctl kickstart -k gui/$UID/com.yaviene.backend`). Si el archivo no
+   se puede leer o no es la cuenta de servicio, el arranque se detiene con
+   `[Config] YA_VIENE_FCM_CREDENCIALES: …` y dice qué falta, nunca lo que trae.
+
+Saber si funciona: `/api/metrics` cuenta `push.enviados`, `push.fallidos`
+(FCM caído o lento; se reintenta en la vuelta siguiente),
+`push.token_invalido` (la app se desinstaló; sus avisos se borran) y
+`push.tabla_llena` (10.000 avisos armados a la vez: no debería pasar nunca).
+Si `push.fallidos` sube y `push.enviados` no, revisar en el log
+`[Push] No hay token de acceso`: la clave se revocó en la consola y hay que
+generar otra.
+
+Un pasajero que dice que no le llegó: en Android, «Forzar detención» desde
+los ajustes del teléfono bloquea todo push hasta que se vuelva a abrir la
+app, y algunos fabricantes (Xiaomi, Huawei) duermen las apps en segundo
+plano si no se les quita el ahorro de batería. En iPhone no llega nunca:
+falta la cuenta de Apple.
+
 ## Qué ve la gente en cada caso
 
 | Situación | Pasajero | Panel |
@@ -361,6 +397,7 @@ equipo, revocable sin tocar el resto— todavía no existe; es la tarea T4.3.
 | Túnel y respaldo caídos | Sigue reintentando, sin buses nuevos; el mapa y el último estado se quedan | Sin flota; «Recargar» no arregla nada hasta que vuelva |
 | Backend reiniciado | Se resuscribe solo y vuelven los buses | Vuelve a pedir la flota solo |
 | Bus sin señal (5 min sin publicar) | «Bus sin señal» en la hoja, y el aviso de cercanía queda bloqueado | El bus deja de actualizarse |
+| Aviso armado y app cerrada (Android) | La notificación llega por push al kilómetro, si el servidor tiene la clave de Firebase | — |
 | Panel revocado | — | «Tu sesión expiró» en menos de 60 s |
 
 ## Fly, el respaldo

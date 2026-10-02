@@ -33,6 +33,8 @@ import { DriverTokenPayload } from './auth/tokens';
 import { validarPayloadPosicion } from './security/payload';
 import { cerrarRedLocal } from './security/red_local';
 import { registrarTamanosLimitadores } from './security/rate_limiter';
+import { emisorPush } from './push/fcm';
+import { revisarAvisos } from './data/avisos_push';
 import {
   setupSocketServer,
   closeSocketServer,
@@ -196,6 +198,16 @@ const sessionCleanupTimer = setInterval(vueltaProtegida('Sesiones', 'sessions.cl
   cleanupRevokedSessions();
 }), 60 * 60 * 1000);
 sessionCleanupTimer.unref();
+// Avisos con la app cerrada (D13): cada 5 s, el mismo paso con el que la
+// app viva mira la distancia. Sin cuenta de servicio de FCM no arranca.
+const emisor = emisorPush();
+const avisosTimer = emisor
+  ? setInterval(vueltaProtegida('Avisos', 'avisos.error', () => {
+    void revisarAvisos(emisor);
+  }), 5_000)
+  : null;
+avisosTimer?.unref();
+if (!emisor) console.log('[Push] Sin YA_VIENE_FCM_CREDENCIALES: los avisos con la app cerrada están apagados');
 
 startBroker(
   (_clientId: string, auth: DriverTokenPayload, topic, payload): PositionHandlingResult | void => {
@@ -399,6 +411,7 @@ const shutdown = async (signal: string): Promise<void> => {
     clearInterval(sweepTimer);
     clearInterval(sessionCleanupTimer);
     clearInterval(lifecycleDispatchTimer);
+    if (avisosTimer) clearInterval(avisosTimer);
     clearInterval(metricsFlushTimer);
     closeSocketServer();
     await closeBroker();

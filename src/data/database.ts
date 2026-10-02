@@ -753,6 +753,36 @@ function initSchema(): void {
         ensureColumn(d, 'buses', 'capacity', 'INTEGER NOT NULL DEFAULT 40');
       },
     },
+    {
+      version: 24,
+      apply: () => {
+        // Avisos de «tu bus está cerca» que el servidor manda por FCM cuando
+        // la app del pasajero ya no puede (cerrada o dormida). Ver
+        // `avisos_push.ts` y docs/decisiones/D13. Cada fila vive como mucho
+        // tres horas (`vence`) y guarda un token de FCM y el punto donde el
+        // pasajero armó el aviso: lo justo para avisar y nada más.
+        // `vigilado_hasta` es el arriendo que renueva la app viva; mientras
+        // no venza, la app avisa por su cuenta y el servidor no se mete.
+        // `enviado_en` queda escrito hasta `vence` para responder 410 al
+        // latido de una app que vuelve y no sabe que ya se avisó.
+        d.exec(`
+          CREATE TABLE IF NOT EXISTS avisos_push (
+            id TEXT PRIMARY KEY,
+            token TEXT NOT NULL,
+            bus_id TEXT NOT NULL,
+            route_id TEXT NOT NULL,
+            lat REAL NOT NULL,
+            lon REAL NOT NULL,
+            creado INTEGER NOT NULL,
+            vence INTEGER NOT NULL,
+            vigilado_hasta INTEGER NOT NULL,
+            enviado_en INTEGER
+          );
+          CREATE INDEX IF NOT EXISTS idx_avisos_push_bus ON avisos_push(bus_id);
+          CREATE INDEX IF NOT EXISTS idx_avisos_push_token ON avisos_push(token);
+        `);
+      },
+    },
   ];
 
   for (const migration of migrations) {

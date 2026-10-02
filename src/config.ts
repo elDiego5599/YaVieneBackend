@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { leerCredencialesFcm } from './push/fcm';
 
 export const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3000', 10);
 /**
@@ -182,6 +183,24 @@ export function validateConfig(
 
   if (produccion && flotaDemoHabilitada(env)) {
     avisos.push('flota demo ENCENDIDA en producción (YA_VIENE_FLOTA_DEMO=1): los buses simulados publican en el mismo canal que los reales');
+  }
+
+  // Avisos con la app cerrada (D13). Una ruta mal escrita o un archivo que
+  // no es la cuenta de servicio dejarían el push apagado sin decir nada
+  // hasta el primer aviso: mejor no arrancar. El mensaje dice qué falta,
+  // nunca lo que trae el archivo. Sin la variable el push está apagado a
+  // propósito (Fly de respaldo, iOS sin cuenta de Apple) y lo dice el log
+  // de arranque de index.ts, no un aviso.
+  const credencialesFcm = env.YA_VIENE_FCM_CREDENCIALES;
+  if (credencialesFcm) {
+    try {
+      leerCredencialesFcm(credencialesFcm);
+    } catch (error) {
+      errores.push(`YA_VIENE_FCM_CREDENCIALES: ${(error as Error).message}`);
+    }
+  }
+  if (produccion && env.YA_VIENE_FCM_API) {
+    avisos.push('YA_VIENE_FCM_API se ignora en producción: el push va siempre a fcm.googleapis.com');
   }
 
   return { errores, avisos };
