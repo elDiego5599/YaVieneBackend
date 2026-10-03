@@ -399,13 +399,24 @@ Encenderlo, una vez:
 
 1. En la cuenta de Google que manda (con la verificación en dos pasos
    activa): Seguridad → **Contraseñas de aplicaciones** → crear una para
-   «Ya Viene». Google la muestra en cuatro grupos de letras; se puede pegar
-   con o sin espacios. No se manda por chat ni se pega en ningún otro lado.
-2. En `local.env`:
+   «Ya Viene». Google la muestra en cuatro grupos de letras. No se manda
+   por chat ni se pega en ningún otro lado.
+2. En `local.env`, cada valor entre comillas simples: el arranque lo lee
+   con `source` (`scripts/servicio/arrancar-backend.sh`), y una clave con
+   espacios y sin comillas corta la línea en el primer espacio. El backend
+   le quita los espacios a la clave, así que da igual pegarla con ellos o
+   sin ellos, pero siempre entre comillas:
    - `YA_VIENE_CORREO_USUARIO=` la dirección de esa cuenta.
    - `YA_VIENE_CORREO_CLAVE=` la contraseña de aplicación.
    - `YA_VIENE_CORREO_DESTINO=` solo si los reportes van a otra dirección;
      sin ella llegan a la misma cuenta.
+
+   Para escribirlas sin que la clave quede en pantalla ni en el historial
+   de la terminal (zsh, desde la carpeta del backend):
+
+   ```sh
+   read "u?Gmail: " && read -s "c?Contraseña de aplicación: " && printf "\nYA_VIENE_CORREO_USUARIO='%s'\nYA_VIENE_CORREO_CLAVE='%s'\n" "$u" "${c// /}" >> local.env && unset c
+   ```
 3. `npm run build` y reiniciar
    (`launchctl kickstart -k gui/$UID/com.yaviene.backend`). Con una sola de
    las dos variables, o una dirección mal escrita, el arranque se detiene
