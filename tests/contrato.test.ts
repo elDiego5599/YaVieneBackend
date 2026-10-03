@@ -309,9 +309,6 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
       YA_VIENE_DB_PATH: DB_PATH,
       YA_VIENE_FCM_CREDENCIALES: CREDENCIALES,
       YA_VIENE_FCM_API: FCM,
-      // Sin arriendo: el aviso queda sin vigilar desde que se arma, como si
-      // la app se hubiera cerrado enseguida.
-      YA_VIENE_ARRIENDO_AVISO_MS: '0',
     },
     stdio: 'ignore',
   });

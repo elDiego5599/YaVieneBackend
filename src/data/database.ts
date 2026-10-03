@@ -761,8 +761,8 @@ function initSchema(): void {
         // `avisos_push.ts` y docs/decisiones/D13. Cada fila vive como mucho
         // tres horas (`vence`) y guarda un token de FCM y el punto donde el
         // pasajero armó el aviso: lo justo para avisar y nada más.
-        // `vigilado_hasta` es el arriendo que renueva la app viva; mientras
-        // no venza, la app avisa por su cuenta y el servidor no se mete.
+        // `vigilado_hasta` era el arriendo que renovaba la app viva; la
+        // migración 25 lo quita.
         // `enviado_en` queda escrito hasta `vence` para responder 410 al
         // latido de una app que vuelve y no sabe que ya se avisó.
         d.exec(`
@@ -781,6 +781,15 @@ function initSchema(): void {
           CREATE INDEX IF NOT EXISTS idx_avisos_push_bus ON avisos_push(bus_id);
           CREATE INDEX IF NOT EXISTS idx_avisos_push_token ON avisos_push(token);
         `);
+      },
+    },
+    {
+      version: 25,
+      apply: () => {
+        // El servidor vigila los avisos desde que se arman, sin esperar a que
+        // venza el arriendo de la app: con la app recién cerrada el aviso
+        // llegaba un minuto tarde (dueño, 2026-10-02). Ver D13.
+        d.exec('ALTER TABLE avisos_push DROP COLUMN vigilado_hasta');
       },
     },
   ];

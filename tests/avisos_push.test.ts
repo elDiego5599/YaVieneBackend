@@ -310,8 +310,8 @@ test('crearAviso: el mismo teléfono y bus reemplaza; dos por teléfono; tope de
 
   limpiar();
   const insertar = getDb().prepare(`
-    INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence, vigilado_hasta)
-    VALUES (?, ?, 'B', 'R', 0, 0, 0, 9e15, 0)
+    INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence)
+    VALUES (?, ?, 'B', 'R', 0, 0, 0, 9e15)
   `);
   getDb().transaction(() => {
     for (let i = 0; i < avisos.MAX_AVISOS; i += 1) insertar.run(`relleno-${i}`, `tok-${i}`);
@@ -320,15 +320,15 @@ test('crearAviso: el mismo teléfono y bus reemplaza; dos por teléfono; tope de
   limpiar();
 });
 
-test('renovarAviso: renueva arriendo, punto y token; dice si ya se envió o venció', () => {
+test('renovarAviso: pone al día punto y token; dice si ya se envió o venció', () => {
   limpiar();
   const ahora = 1_000_000;
   const id = armar(TOKEN, PASAJERO, ahora);
   const nuevo = 'tok-nuevo-' + 'd'.repeat(30);
   assert.equal(avisos.renovarAviso(id, { token: nuevo, ...CERCA }, ahora + 30_000), 'renovado');
-  const fila = getDb().prepare('SELECT token, lat, vigilado_hasta FROM avisos_push WHERE id = ?')
-    .get(id) as { token: string; lat: number; vigilado_hasta: number };
-  assert.deepEqual(fila, { token: nuevo, lat: CERCA.lat, vigilado_hasta: ahora + 30_000 + avisos.ARRIENDO_MS });
+  const fila = getDb().prepare('SELECT token, lat FROM avisos_push WHERE id = ?')
+    .get(id) as { token: string; lat: number };
+  assert.deepEqual(fila, { token: nuevo, lat: CERCA.lat });
   assert.equal(avisos.marcarEnviado(id, ahora + 31_000), true);
   assert.equal(avisos.marcarEnviado(id, ahora + 31_000), false);
   assert.equal(avisos.renovarAviso(id, { token: nuevo, ...CERCA }, ahora + 32_000), 'enviado');
@@ -338,22 +338,23 @@ test('renovarAviso: renueva arriendo, punto y token; dice si ya se envió o venc
 });
 
 // ── La vuelta del servidor ───────────────────────────────────────────
-test('revisarAvisos: solo avisa con el arriendo vencido y el bus a 1 km, y una sola vez', async () => {
+test('revisarAvisos: avisa en cuanto el bus entra al kilómetro, y una sola vez', async () => {
   limpiar();
   const emisor = new fcm.EmisorFcm(fcm.leerCredencialesFcm(RUTA_CREDENCIALES), baseFcm);
   const ahora = Date.now();
   const id = armar(TOKEN, PASAJERO, ahora);
 
   ponerBus(LEJOS);
-  await avisos.revisarAvisos(emisor, ahora + avisos.ARRIENDO_MS + 1);
+  await avisos.revisarAvisos(emisor, ahora + 1_000);
   assert.equal(falso.enviados.length, 0, 'bus lejos: nada');
 
+  // La app acaba de latir y el servidor avisa igual. Antes esperaba a que
+  // los latidos llevaran un minuto sin llegar, y con la app recién cerrada
+  // el aviso salía con el bus ya a 700 m (dueño, 2026-10-02).
+  assert.equal(avisos.renovarAviso(id, { token: TOKEN, ...PASAJERO }, ahora + 2_000), 'renovado');
   ponerBus(CERCA);
-  await avisos.revisarAvisos(emisor, ahora + 1_000);
-  assert.equal(falso.enviados.length, 0, 'la app sigue viva (arriendo vigente): avisa ella');
-
   const enviadosAntes = contador('push.enviados');
-  await avisos.revisarAvisos(emisor, ahora + avisos.ARRIENDO_MS + 1);
+  await avisos.revisarAvisos(emisor, ahora + 2_500);
   assert.equal(falso.enviados.length, 1);
   const { data } = falso.enviados[0].message as { data: Record<string, string> };
   assert.equal(data.tipo, 'bus_cerca');
@@ -364,9 +365,9 @@ test('revisarAvisos: solo avisa con el arriendo vencido y el bus a 1 km, y una s
   assert.match(data.distancia, /^5[45]\d$/);
   assert.equal(contador('push.enviados') - enviadosAntes, 1);
 
-  await avisos.revisarAvisos(emisor, ahora + avisos.ARRIENDO_MS + 5_000);
+  await avisos.revisarAvisos(emisor, ahora + 7_500);
   assert.equal(falso.enviados.length, 1, 'no se repite');
-  assert.equal(avisos.renovarAviso(id, { token: TOKEN, ...PASAJERO }, ahora + avisos.ARRIENDO_MS + 6_000), 'enviado');
+  assert.equal(avisos.renovarAviso(id, { token: TOKEN, ...PASAJERO }, ahora + 8_000), 'enviado');
   ponerBus(LEJOS);
 });
 
@@ -375,7 +376,7 @@ test('revisarAvisos: bus oculto, sin señal o en otra ruta no avisa', async () =
   const emisor = new fcm.EmisorFcm(fcm.leerCredencialesFcm(RUTA_CREDENCIALES), baseFcm);
   const ahora = Date.now();
   armar(TOKEN, PASAJERO, ahora);
-  const despues = ahora + avisos.ARRIENDO_MS + 1;
+  const despues = ahora + 1_000;
 
   // La ruta de la posición la pone el catálogo; el panel la cambia así.
   ponerBus(CERCA);
@@ -400,7 +401,7 @@ test('revisarAvisos: FCM caído se reintenta; token muerto borra todos sus aviso
   limpiar();
   const emisor = new fcm.EmisorFcm(fcm.leerCredencialesFcm(RUTA_CREDENCIALES), baseFcm);
   const ahora = Date.now();
-  const despues = ahora + avisos.ARRIENDO_MS + 1;
+  const despues = ahora + 1_000;
   ponerBus(CERCA);
 
   const caido = 'tok-caido-' + 'e'.repeat(30);
@@ -417,8 +418,8 @@ test('revisarAvisos: FCM caído se reintenta; token muerto borra todos sus aviso
   const muerto = 'tok-desinstalado-' + 'f'.repeat(30);
   armar(muerto, PASAJERO, ahora);
   getDb().prepare(`
-    INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence, vigilado_hasta)
-    VALUES ('otro-del-mismo', ?, 'BUS-X', ?, 0, 0, 0, 9e15, 9e15)
+    INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence)
+    VALUES ('otro-del-mismo', ?, 'BUS-X', ?, 0, 0, 0, 9e15)
   `).run(muerto, RUTA);
   const invalidos = contador('push.token_invalido');
   await avisos.revisarAvisos(emisor, despues);
@@ -435,7 +436,7 @@ test('revisarAvisos: un envío que revienta se cuenta como fallido y se reintent
   ponerBus(CERCA);
   const revienta = { enviar: () => Promise.reject(new Error('boom')) } as unknown as import('../src/push/fcm').EmisorFcm;
   const fallidos = contador('push.fallidos');
-  await avisos.revisarAvisos(revienta, ahora + avisos.ARRIENDO_MS + 1);
+  await avisos.revisarAvisos(revienta, ahora + 1_000);
   assert.equal(contador('push.fallidos') - fallidos, 1);
   const fila = getDb().prepare('SELECT enviado_en FROM avisos_push WHERE id = ?').get(id) as { enviado_en: number | null };
   assert.equal(fila.enviado_en, null);
@@ -482,8 +483,8 @@ test('POST /api/avisos valida todo y arma', async () => {
   assert.equal(vence - en, avisos.VIDA_MAXIMA_MS, 'sin vidaMs vive lo máximo');
 
   getDb().prepare(`
-    INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence, vigilado_hasta)
-    VALUES ('tercero', ?, 'BUS-Y', ?, 0, 0, 0, 9e15, 0), ('cuarto', ?, 'BUS-Z', ?, 0, 0, 0, 9e15, 0)
+    INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence)
+    VALUES ('tercero', ?, 'BUS-Y', ?, 0, 0, 0, 9e15), ('cuarto', ?, 'BUS-Z', ?, 0, 0, 0, 9e15)
   `).run(TOKEN, RUTA, TOKEN, RUTA);
   const tope = await llamar('POST', '/api/avisos', { ...bueno, busId: busId, token: TOKEN });
   assert.equal(tope.estado, 429);
@@ -494,8 +495,8 @@ test('POST /api/avisos valida todo y arma', async () => {
 test('POST /api/avisos con la tabla llena responde 503', async () => {
   limpiar();
   const insertar = getDb().prepare(`
-    INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence, vigilado_hasta)
-    VALUES (?, ?, 'B', 'R', 0, 0, 0, 9e15, 9e15)
+    INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence)
+    VALUES (?, ?, 'B', 'R', 0, 0, 0, 9e15)
   `);
   getDb().transaction(() => {
     for (let i = 0; i < avisos.MAX_AVISOS; i += 1) insertar.run(`relleno-${i}`, `tok-${i}`);

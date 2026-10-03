@@ -36,4 +36,3 @@ delete process.env.NODE_ENV;
 // pasan su propia cuenta falsa y su servidor falso.
 delete process.env.YA_VIENE_FCM_CREDENCIALES;
 delete process.env.YA_VIENE_FCM_API;
-delete process.env.YA_VIENE_ARRIENDO_AVISO_MS;

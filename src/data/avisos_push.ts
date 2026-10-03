@@ -2,15 +2,16 @@
 //
 // La app del pasajero avisa sola mientras está viva: mira la posición del bus
 // cada 5 s y lanza la notificación local a 1 km. Con la app cerrada eso no
-// corre, y para eso está esta tabla. El reparto es por arriendo: la app viva
-// late cada 20 s y cada latido le da ARRIENDO_MS más de vigilancia propia. Si
-// los latidos paran (cerraron la app, el sistema la durmió), el arriendo vence
-// y desde la siguiente vuelta el servidor vigila por ella y avisa por FCM.
+// corre, y para eso está esta tabla. El servidor vigila todos los avisos desde
+// que se arman, viva o no la app: no sabe cuándo la cierran, y esperar a que
+// los latidos faltaran un minuto hacía que el aviso saliera con el bus ya a
+// 700 m (dueño, 2026-10-02). La app late cada 20 s para mover el punto y el
+// token, y para enterarse (410) de que el servidor ya avisó.
 //
-// Las dos partes nunca avisan dos veces: la app borra la fila cuando avisa
-// sola; si el servidor avisó primero, el latido siguiente recibe 410 y la app
-// lo marca como enviado; y si las dos llegan a la vez, la notificación sale
-// con el mismo identificador y la segunda reemplaza a la primera.
+// Las dos partes no suenan dos veces: la app borra la fila cuando avisa sola;
+// el push de un aviso que la app ya dio por sonado se descarta allá; y si las
+// dos llegan a la vez, la notificación sale con el mismo identificador y
+// Android no la hace sonar otra vez (`onlyAlertOnce`).
 import { randomUUID } from 'node:crypto';
 import { getDb } from './database';
 import { haversineDistanceKm } from '../security/physics';
@@ -21,12 +22,6 @@ import type { EmisorFcm } from '../push/fcm';
 export const RADIO_AVISO_M = 1000;
 /** Tres horas, como `vidaDeUnAviso` en la app: un aviso olvidado no queda armado. */
 export const VIDA_MAXIMA_MS = 3 * 60 * 60 * 1000;
-/**
- * Lo que dura un latido. La app late cada 20 s, así que caben dos latidos
- * perdidos (un túnel, un cambio de antena) antes de que el servidor se meta.
- * Sobrescribible con YA_VIENE_ARRIENDO_AVISO_MS (pruebas).
- */
-export const ARRIENDO_MS = Number(process.env.YA_VIENE_ARRIENDO_AVISO_MS ?? 60_000);
 /** Un pasajero sigue como mucho dos buses a la vez. */
 export const MAX_AVISOS_POR_TOKEN = 2;
 /** Tope de la tabla entera: una avalancha llena esto y no el disco. */
@@ -60,11 +55,11 @@ export function crearAviso(
     if (total.n >= MAX_AVISOS) return 'lleno' as const;
     const id = randomUUID();
     db.prepare(`
-      INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence, vigilado_hasta)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, aviso.token, aviso.busId, aviso.routeId, aviso.lat, aviso.lon,
-      ahora, ahora + Math.min(aviso.vidaMs, VIDA_MAXIMA_MS), ahora + ARRIENDO_MS,
+      ahora, ahora + Math.min(aviso.vidaMs, VIDA_MAXIMA_MS),
     );
     return { id };
   });
@@ -72,8 +67,8 @@ export function crearAviso(
 }
 
 /**
- * Un latido de la app viva: renueva el arriendo y de paso el punto (el
- * pasajero puede moverse) y el token (FCM a veces lo cambia).
+ * Un latido de la app viva: pone al día el punto (el pasajero puede
+ * moverse) y el token (FCM a veces lo cambia), y le dice si ya se avisó.
  */
 export function renovarAviso(
   id: string,
@@ -86,9 +81,9 @@ export function renovarAviso(
   if (!fila || fila.vence <= ahora) return 'no_existe';
   if (fila.enviado_en !== null) return 'enviado';
   db.prepare(`
-    UPDATE avisos_push SET token = ?, lat = ?, lon = ?, vigilado_hasta = ?
+    UPDATE avisos_push SET token = ?, lat = ?, lon = ?
     WHERE id = ? AND enviado_en IS NULL
-  `).run(latido.token, latido.lat, latido.lon, ahora + ARRIENDO_MS, id);
+  `).run(latido.token, latido.lat, latido.lon, id);
   return 'renovado';
 }
 
@@ -118,7 +113,7 @@ export function barrerVencidos(ahora: number = Date.now()): number {
 
 /**
  * Una vuelta del servidor: barre lo vencido y avisa de los buses que entraron
- * al radio de un aviso sin vigilancia de su app. Solo cuentan los buses con
+ * al radio de un aviso. Solo cuentan los buses con
  * señal (`is_ghost = 0`), visibles y en la ruta del aviso, igual que en la
  * app. Devuelve una promesa que se cumple cuando terminan los envíos de esta
  * vuelta y nunca se rechaza (el reloj de index.ts no la espera).
@@ -130,8 +125,8 @@ export function revisarAvisos(emisor: EmisorFcm, ahora: number = Date.now()): Pr
     FROM avisos_push a
     JOIN positions p ON p.bus_id = a.bus_id AND p.route_id = a.route_id AND p.is_ghost = 0
     JOIN buses b ON b.bus_id = a.bus_id AND b.visible = 1
-    WHERE a.enviado_en IS NULL AND a.vigilado_hasta < ?
-  `).all(ahora) as Array<{
+    WHERE a.enviado_en IS NULL
+  `).all() as Array<{
     id: string; token: string; bus_id: string; route_id: string;
     lat: number; lon: number; bus_lat: number; bus_lon: number;
   }>;

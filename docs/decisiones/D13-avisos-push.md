@@ -23,15 +23,15 @@ iPhone sigue como dice [D4](D4-ios-segundo-plano.md).
   donde espera y el token de notificaciones del teléfono
   (`POST /api/avisos`). No manda nada que diga quién es la persona: el
   pasajero sigue sin cuenta ([D3](D3-sin-cuenta.md)).
-- Mientras la app está viva late cada 20 s (`PUT /api/avisos/:id`) y sigue
-  avisando ella. Cada latido le da 60 s de vigilancia propia.
-- Si los latidos paran, el servidor vigila: cada 5 s mira si el bus, con
-  señal, visible y en esa ruta, entró al kilómetro del punto, y manda un
-  mensaje solo de datos con prioridad alta y diez minutos de vida. La app
-  arma con él la misma notificación que arma sola, con el mismo
-  identificador: si las dos llegan, la segunda reemplaza a la primera.
-- Si el servidor avisó primero, el siguiente latido recibe `410` y la app no
-  vuelve a avisar. Si avisó la app, borra el aviso del servidor.
+- El servidor vigila desde ese momento, esté la app viva o no: cada 5 s
+  mira si el bus, con señal, visible y en esa ruta, entró al kilómetro del
+  punto, y manda un mensaje solo de datos con prioridad alta y diez minutos
+  de vida. La app arma con él la misma notificación que arma sola, con el
+  mismo identificador.
+- Mientras la app está viva también avisa ella, y late cada 20 s
+  (`PUT /api/avisos/:id`) para mover el punto y el token. Si el servidor
+  avisó primero, el siguiente latido recibe `410` y la app no vuelve a
+  avisar. Si avisó la app, borra el aviso del servidor.
 - El aviso se borra al desarmarlo, al cumplirse o a las 3 horas, lo que
   pase antes. Un token que FCM da por muerto se borra con todos sus avisos.
 
@@ -40,9 +40,16 @@ iPhone sigue como dice [D4](D4-ios-segundo-plano.md).
 - **Un mensaje solo de datos** y no una notificación ya armada: así el texto,
   el canal y el identificador son los mismos que los de la app, y nunca
   salen dos avisos del mismo bus.
-- **El arriendo** evita que el servidor y la app avisen a la vez en el caso
-  normal (app abierta) sin que la app tenga que decirle al servidor cuándo
-  la cierran, cosa que Android no le deja hacer de forma fiable.
+- **Sin arriendo.** La primera versión dejaba vigilar al servidor solo
+  cuando los latidos llevaban 60 s sin llegar, para que la app abierta
+  avisara sola. Con la app recién cerrada eso es un minuto de espera, y el
+  aviso salía con el bus ya a 700 m y no a los ~950 del radio (dueño,
+  2026-10-02). La app no puede decirle al servidor cuándo la cierran (Android
+  no deja hacerlo de forma fiable), así que el servidor vigila siempre y lo
+  doble se resuelve en el teléfono: la app descarta el push de un aviso que
+  ya sonó, y si los dos llegan a la vez la notificación es la misma y
+  Android no la hace sonar otra vez (`onlyAlertOnce`). La migración 25 quitó
+  la columna del arriendo.
 - **Sin el SDK de Admin de Firebase**: lo único que hace falta es firmar un
   JWT, cambiarlo por un token de acceso y un POST. `jsonwebtoken` ya estaba;
   el SDK eran decenas de paquetes más para `npm audit`.
