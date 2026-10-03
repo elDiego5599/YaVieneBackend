@@ -40,11 +40,13 @@ import {
   MAX_FALLOS_PIN_POR_CUENTA,
   pinPorCuentaBloqueo,
   readRateLimiter,
+  reportesRateLimiter,
   requestKey,
   SlidingWindowRateLimiter,
 } from '../security/rate_limiter';
 import { getDb } from '../data/database';
 import { borrarAviso, crearAviso, renovarAviso, VIDA_MAXIMA_MS } from '../data/avisos_push';
+import { crearReporte, leerReporte } from '../data/reportes';
 import { busInCatalog } from '../data/positions_store';
 import { getBusVisibility } from '../data/fleet_admin';
 import { dentroDeZona } from '../security/zona';
@@ -988,6 +990,24 @@ addRoute('DELETE', '/api/avisos/:id', (req, res, params) => {
   borrarAviso(params.id);
   res.writeHead(204);
   res.end();
+});
+
+// ─── Buzón de problemas y sugerencias (D14) ─────────────────────────────
+
+addRoute('POST', '/api/reportes', (req, res, _params, body) => {
+  if (!guardRate(reportesRateLimiter, req, res, 'reportes')) return;
+  const reporte = leerReporte(body);
+  if ('error' in reporte) {
+    writeError(res, 400, 'INVALID_INPUT', reporte.error);
+    return;
+  }
+  // 201 aunque el correo aún no esté configurado: el reporte queda en la
+  // cola y sale cuando lo esté. Al pasajero le basta con saber que llegó.
+  if (crearReporte(reporte) === 'lleno') {
+    writeError(res, 503, 'BUZON_LLENO', 'El buzón está lleno, intenta más tarde');
+    return;
+  }
+  writeJson(res, 201, { recibido: true });
 });
 
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {

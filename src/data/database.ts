@@ -792,6 +792,27 @@ function initSchema(): void {
         d.exec('ALTER TABLE avisos_push DROP COLUMN vigilado_hasta');
       },
     },
+    {
+      version: 26,
+      apply: () => {
+        // El buzón de problemas y sugerencias del pasajero (D14). Cada fila
+        // espera aquí hasta que el correo sale y entonces se borra: la base
+        // no guarda los reportes, solo los que aún no llegan al equipo.
+        d.exec(`
+          CREATE TABLE IF NOT EXISTS reportes (
+            id TEXT PRIMARY KEY,
+            tipo TEXT NOT NULL CHECK (tipo IN ('problema', 'sugerencia')),
+            texto TEXT NOT NULL,
+            plataforma TEXT,
+            version TEXT,
+            creado INTEGER NOT NULL,
+            intentos INTEGER NOT NULL DEFAULT 0,
+            proximo_intento INTEGER NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_reportes_proximo ON reportes(proximo_intento);
+        `);
+      },
+    },
   ];
 
   for (const migration of migrations) {

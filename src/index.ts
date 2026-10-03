@@ -35,6 +35,8 @@ import { cerrarRedLocal } from './security/red_local';
 import { registrarTamanosLimitadores } from './security/rate_limiter';
 import { emisorPush } from './push/fcm';
 import { revisarAvisos } from './data/avisos_push';
+import { configCorreoDesdeEntorno } from './buzon/correo';
+import { enviarReportes } from './data/reportes';
 import {
   setupSocketServer,
   closeSocketServer,
@@ -208,6 +210,17 @@ const avisosTimer = emisor
   : null;
 avisosTimer?.unref();
 if (!emisor) console.log('[Push] Sin YA_VIENE_FCM_CREDENCIALES: los avisos con la app cerrada están apagados');
+
+// El buzón (D14): cada 30 s salen al correo del equipo los reportes en cola.
+// Sin la cuenta de correo los reportes se siguen recibiendo y esperan.
+const correo = configCorreoDesdeEntorno();
+const buzonTimer = correo
+  ? setInterval(vueltaProtegida('Buzón', 'buzon.error', () => {
+    void enviarReportes(correo);
+  }), 30_000)
+  : null;
+buzonTimer?.unref();
+if (!correo) console.log('[Buzón] Sin YA_VIENE_CORREO_USUARIO/CLAVE: los reportes esperan en la cola');
 
 startBroker(
   (_clientId: string, auth: DriverTokenPayload, topic, payload): PositionHandlingResult | void => {
@@ -412,6 +425,7 @@ const shutdown = async (signal: string): Promise<void> => {
     clearInterval(sessionCleanupTimer);
     clearInterval(lifecycleDispatchTimer);
     if (avisosTimer) clearInterval(avisosTimer);
+    if (buzonTimer) clearInterval(buzonTimer);
     clearInterval(metricsFlushTimer);
     closeSocketServer();
     await closeBroker();

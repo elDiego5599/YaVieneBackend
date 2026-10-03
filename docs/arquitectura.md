@@ -184,11 +184,20 @@ enviada antes de mandar, así que dos vueltas no avisan dos veces; si FCM
 falla se desmarca y se reintenta, y si dice que el token ya no existe se
 borran sus avisos. Sin `YA_VIENE_FCM_CREDENCIALES` nada de esto corre.
 
+## 7. El buzón del pasajero
+
+`reportes` (`src/data/reportes.ts`, `src/buzon/correo.ts`) es una cola: el
+pasajero manda un problema o una sugerencia con `POST /api/reportes`, la
+fila espera y cada 30 s salen hasta cinco al Gmail del equipo por SMTP
+([D14](decisiones/D14-buzon.md)). La que sale se borra; la que falla espera
+cada vez más. Sin `YA_VIENE_CORREO_USUARIO` y `YA_VIENE_CORREO_CLAVE` los
+reportes esperan en la tabla.
+
 ## Los otros dos clientes
 
 | Cliente | Qué es | Cómo habla |
 |---------|--------|------------|
-| `app_pasajero` | Flutter, Android e iOS | REST para el catálogo, socket para las posiciones, `/api/avisos` y FCM para avisar con la app cerrada (Android). Sin cuenta. |
+| `app_pasajero` | Flutter, Android e iOS | REST para el catálogo, socket para las posiciones, `/api/avisos` y FCM para avisar con la app cerrada (Android), `/api/reportes` para el buzón. Sin cuenta. |
 | `app_control` | Flutter, macOS y Windows | `POST /api/admin/login`, después REST y socket con el token. |
 | `YaVieneWeb` | la landing | no habla con el backend: su mapa es una simulación, rotulada. |
 

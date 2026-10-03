@@ -28,3 +28,4 @@ cuándo.
 | [D11](D11-dependencias.md) | Las librerías se revisan cada mes | los tres | decidida |
 | [D12](D12-artemis.md) | No se instala `google/artemis` antes del pitch | herramienta | decidida |
 | [D13](D13-avisos-push.md) | En Android el aviso llega con la app cerrada, por push del servidor | backend, apps, web | decidida, falta la clave del dueño |
+| [D14](D14-buzon.md) | El buzón del pasajero llega al correo del equipo, por el backend | backend, apps | decidida, falta la contraseña del dueño |

@@ -98,6 +98,14 @@ export const fleetWriteRateLimiter = new SlidingWindowRateLimiter(60, 60_000);
 export const avisosRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
 
 /**
+ * El buzón de problemas y sugerencias (`POST /api/reportes`, D14). Un
+ * pasajero escribe uno de vez en cuando: cinco cada diez minutos por IP deja
+ * reportar a varios pasajeros detrás de la misma IP del operador y no deja
+ * llenar el correo del equipo.
+ */
+export const reportesRateLimiter = new SlidingWindowRateLimiter(5, 10 * 60_000);
+
+/**
  * Bloqueo temporal de una cuenta tras muchos fallos seguidos (auditoría
  * 2026-09, P2-3). Los topes de login cuentan por IP y por (IP, cuenta): quien
  * reparte los intentos contra un mismo teléfono entre muchas IP no tropieza
@@ -218,6 +226,7 @@ const LIMITADORES: Record<string, { readonly size: number }> = {
   fleetWrite: fleetWriteRateLimiter,
   pinCuenta: pinPorCuentaBloqueo,
   avisos: avisosRateLimiter,
+  reportes: reportesRateLimiter,
 };
 
 // La memoria de cada limitador está acotada por el barrido, pero nadie la

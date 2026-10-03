@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { leerCredencialesFcm } from './push/fcm';
+import { erroresDeCorreo } from './buzon/correo';
 
 export const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3000', 10);
 /**
@@ -201,6 +202,14 @@ export function validateConfig(
   }
   if (produccion && env.YA_VIENE_FCM_API) {
     avisos.push('YA_VIENE_FCM_API se ignora en producción: el push va siempre a fcm.googleapis.com');
+  }
+
+  // El buzón (D14). Sin la cuenta de correo los reportes esperan en la cola
+  // y lo dice el log de arranque; con media cuenta, o una dirección mal
+  // escrita, el buzón fallaría en cada vuelta: mejor no arrancar.
+  errores.push(...erroresDeCorreo(env).map((e) => `Buzón: ${e}`));
+  if (produccion && env.YA_VIENE_SMTP) {
+    avisos.push('YA_VIENE_SMTP se ignora en producción: el buzón va siempre a smtp.gmail.com');
   }
 
   return { errores, avisos };

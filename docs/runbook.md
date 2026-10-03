@@ -388,6 +388,37 @@ app, y algunos fabricantes (Xiaomi, Huawei) duermen las apps en segundo
 plano si no se les quita el ahorro de batería. En iPhone no llega nunca:
 falta la cuenta de Apple.
 
+## Buzón de problemas y sugerencias
+
+Los reportes que el pasajero manda desde el menú de la app llegan al Gmail
+del equipo ([D14](decisiones/D14-buzon.md)). Sin la cuenta de correo el
+arranque dice `[Buzón] Sin YA_VIENE_CORREO_USUARIO/CLAVE` y los reportes se
+siguen recibiendo: esperan en la tabla `reportes` hasta que se configure.
+
+Encenderlo, una vez:
+
+1. En la cuenta de Google que manda (con la verificación en dos pasos
+   activa): Seguridad → **Contraseñas de aplicaciones** → crear una para
+   «Ya Viene». Google la muestra en cuatro grupos de letras; se puede pegar
+   con o sin espacios. No se manda por chat ni se pega en ningún otro lado.
+2. En `local.env`:
+   - `YA_VIENE_CORREO_USUARIO=` la dirección de esa cuenta.
+   - `YA_VIENE_CORREO_CLAVE=` la contraseña de aplicación.
+   - `YA_VIENE_CORREO_DESTINO=` solo si los reportes van a otra dirección;
+     sin ella llegan a la misma cuenta.
+3. `npm run build` y reiniciar
+   (`launchctl kickstart -k gui/$UID/com.yaviene.backend`). Con una sola de
+   las dos variables, o una dirección mal escrita, el arranque se detiene
+   con `[Config] Buzón: …` y dice qué falta, nunca la clave.
+
+Saber si funciona: `/api/metrics` cuenta `buzon.recibidos`,
+`buzon.enviados`, `buzon.fallidos` y `buzon.lleno` (1.000 reportes sin
+salir: Gmail lleva días rechazando). Si `buzon.fallidos` sube y
+`buzon.enviados` no, el log dice el paso y el código:
+`AUTH: el servidor de correo respondió 535` es la contraseña de aplicación
+mal puesta o revocada; hay que crear otra. Un reporte que falla espera 1
+minuto, luego 2, 4… hasta 6 horas, y sale solo cuando Gmail vuelve.
+
 ## Qué ve la gente en cada caso
 
 | Situación | Pasajero | Panel |

@@ -36,3 +36,11 @@ delete process.env.NODE_ENV;
 // pasan su propia cuenta falsa y su servidor falso.
 delete process.env.YA_VIENE_FCM_CREDENCIALES;
 delete process.env.YA_VIENE_FCM_API;
+
+// Lo mismo con la cuenta de correo del buzón (D14): un backend de la suite
+// que la herede mandaría reportes de prueba al Gmail del equipo. Las pruebas
+// del buzón le pasan su cuenta falsa y su servidor SMTP falso.
+delete process.env.YA_VIENE_CORREO_USUARIO;
+delete process.env.YA_VIENE_CORREO_CLAVE;
+delete process.env.YA_VIENE_CORREO_DESTINO;
+delete process.env.YA_VIENE_SMTP;
