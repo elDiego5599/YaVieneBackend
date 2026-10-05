@@ -73,18 +73,28 @@ const ROUTE_MAP = [
 ];
 
 // Coolitoral (EMP-03), sembrada por la migración 27 con estos mismos
-// nombres. Los terminales salen del nombre de cada archivo.
+// nombres. Los terminales salen del nombre de cada archivo. A2 (R-108) se
+// quitó el 2026-10-05 (dueño, migración 28): era el mismo recorrido que A1.
 //
-// A1 ya no sale de mapstogpx (traía el mismo trazado que A2): sale de los
-// ocho hitos del mapa de Google que mandó Coolitoral, en su orden (los
-// `<wpt>` del archivo), con la geometría de calle a calle que devuelve OSRM
-// en modo `driving` (router.project-osrm.org, 2026-10-05). Para que siga
-// las mismas calles que la línea de Google, la consulta lleva puntos de
-// paso tomados de esa línea; donde OSM marca una calle en contravía (el
-// enlace de la Vía 40 al río y la Calle 8), OSRM toma la paralela. Es un
-// circuito de 41 km (Google: 40,5) que sale de la Calle 17 en Sur Oriente,
-// va al oeste hasta Sabanilla Montecarmelo, vuelve por Uninorte y la
-// Vía 40 y baja por la orilla del río.
+// A1 ya no sale de mapstogpx: sale de los ocho hitos del mapa de Google que
+// mandó Coolitoral, en su orden (los `<wpt>` del archivo), con la geometría
+// de calle a calle que devuelve OSRM en modo `driving`
+// (router.project-osrm.org, 2026-10-05). Para que siga las mismas calles
+// que la línea de Google, la consulta lleva puntos de paso tomados de esa
+// línea; donde OSM marca una calle en contravía (el enlace de la Vía 40 al
+// río y la Calle 8), OSRM toma la paralela. Es un circuito de 41 km
+// (Google: 40,5) que sale de la Calle 17 en Sur Oriente, va al oeste hasta
+// Sabanilla Montecarmelo, vuelve por Uninorte y la Vía 40 y baja por la
+// orilla del río.
+//
+// A3 tampoco sale de mapstogpx: sale de los diez hitos de su mapa de Google
+// (los `<wpt>`), con la línea azul de Google calzada calle a calle sobre
+// OpenStreetMap (2026-10-05). OSRM no servía aquí: donde OSM marca en
+// contravía calles que Google sí recorre, daba vueltas que el bus no da.
+// El calce sigue la línea de Google y no los sentidos de OSM. Son 21,1 km
+// (Google: 21,8): de la Calle 17 en Sur Oriente sube por la Carrera 43
+// hasta Ciudad Jardín y Riomar, vuelve por la Calle 75, El Prado y la
+// Carrera 44, y baja por el oriente hasta Coolitoral.
 const GPX_MAP = [
   {
     file: 'rutaA1-GOOGLE-OSRM',
@@ -94,14 +104,7 @@ const GPX_MAP = [
     terminalB: 'Universidades, Vía 40',
   },
   {
-    file: 'rutaA2VIA40UNIVERSIDADES-NOGALESSILENCIO',
-    routeId: 'R-108',
-    name: 'A2 Universidades Silencio',
-    terminalA: 'Vía 40, Universidades',
-    terminalB: 'Nogales, Silencio',
-  },
-  {
-    file: 'rutaA3CRA43-PEÑITA',
+    file: 'rutaA3-GOOGLE-OSM',
     routeId: 'R-109',
     name: 'A3 Carrera 43 Peñita',
     terminalA: 'Carrera 43',
@@ -145,6 +148,12 @@ function parseKml(kml) {
   return coords;
 }
 
+function parseHitos(gpx) {
+  return [...gpx.matchAll(/<wpt\s+lat="([-\d.]+)"\s+lon="([-\d.]+)"/g)]
+    .map((m) => ({ lat: parseFloat(m[1]), lon: parseFloat(m[2]) }))
+    .filter((p) => !Number.isNaN(p.lat) && !Number.isNaN(p.lon));
+}
+
 function parseGpx(gpx) {
   const coords = [...gpx.matchAll(/<trkpt\s+lat="([-\d.]+)"\s+lon="([-\d.]+)"/g)]
     .map((m) => ({ lat: parseFloat(m[1]), lon: parseFloat(m[2]) }))
@@ -153,17 +162,29 @@ function parseGpx(gpx) {
   return coords;
 }
 
-function decimate(points, minSpacingM, maxPoints) {
+// Los hitos de un GPX (`<wpt>`) no se pierden al diezmar: se queda el punto
+// del trazado más cercano a cada uno. Sin esto, con un punto cada 80 m, A3
+// pasaba a 59 m del hito de la Carrera 38 y el más cercano que quedaba
+// estaba a 117 (2026-10-05).
+function puntosAncla(points, hitos) {
+  return new Set(hitos.map((h) => {
+    let mejor = points[0];
+    for (const p of points) if (haversineMeters(h, p) < haversineMeters(h, mejor)) mejor = p;
+    return mejor;
+  }));
+}
+
+function decimate(points, minSpacingM, maxPoints, anclas = new Set()) {
   if (points.length <= maxPoints && points.length <= 1) return points;
   const out = [points[0]];
   for (let i = 1; i < points.length; i++) {
     const last = out[out.length - 1];
-    if (haversineMeters(last, points[i]) >= minSpacingM) out.push(points[i]);
+    if (anclas.has(points[i]) || haversineMeters(last, points[i]) >= minSpacingM) out.push(points[i]);
   }
   if (out.length < 2) out.push(points[points.length - 1]);
   if (out.length > maxPoints) {
     const stride = Math.ceil(out.length / maxPoints);
-    return out.filter((_, i) => i % stride === 0);
+    return out.filter((p, i) => i % stride === 0 || anclas.has(p));
   }
   return out;
 }
@@ -177,18 +198,24 @@ function routeLengthKm(points) {
 const fuentes = [
   ...ROUTE_MAP.map((entry) => ({
     entry,
-    leer: () => parseKml(execFileSync('unzip', ['-p', join(kmzDir, `${entry.file}.kmz`), 'doc.kml'], { encoding: 'utf8' })),
+    leer: () => ({
+      raw: parseKml(execFileSync('unzip', ['-p', join(kmzDir, `${entry.file}.kmz`), 'doc.kml'], { encoding: 'utf8' })),
+      hitos: [],
+    }),
   })),
   ...GPX_MAP.map((entry) => ({
     entry,
-    leer: () => parseGpx(readFileSync(join(gpxDir, `${entry.file}.gpx`), 'utf8')),
+    leer: () => {
+      const gpx = readFileSync(join(gpxDir, `${entry.file}.gpx`), 'utf8');
+      return { raw: parseGpx(gpx), hitos: parseHitos(gpx) };
+    },
   })),
 ];
 
 const results = [];
 for (const { entry, leer } of fuentes) {
-  const raw = leer();
-  const waypoints = decimate(raw, MIN_SPACING_M, MAX_POINTS);
+  const { raw, hitos } = leer();
+  const waypoints = decimate(raw, MIN_SPACING_M, MAX_POINTS, puntosAncla(raw, hitos));
   const lengthKm = routeLengthKm(raw);
   results.push({
     routeId: entry.routeId,

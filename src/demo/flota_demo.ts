@@ -14,7 +14,7 @@
 // proceso que tiene que estar vivo para que haya demo.
 //
 // Ruedan Sobusa (EMP-01) y Coolitoral (EMP-03), cada bus a nombre de su
-// empresa. Se apaga con YA_VIENE_FLOTA_DEMO=0 —los tests lo hacen: veinte simuladores
+// empresa. Se apaga con YA_VIENE_FLOTA_DEMO=0 —los tests lo hacen: dieciocho simuladores
 // publicando encima de un test de flota lo vuelven ruido— y no arranca sin
 // ADMIN_API_KEY, que es lo que necesita el simulador para provisionarse.
 import { ChildProcess, spawn } from 'child_process';
@@ -42,7 +42,7 @@ export interface BusDemo {
 // despliegue escriba YA_VIENE_FLOTA_DEMO=1.
 const HABILITADA = flotaDemoHabilitada();
 // Las empresas cuya flota rueda, separadas por comas. Coolitoral entró el
-// 2026-10-05 (dueño): sin buses, sus cuatro rutas se abrían vacías.
+// 2026-10-05 (dueño): sin buses, sus rutas se abrían vacías.
 const EMPRESAS = (process.env.YA_VIENE_FLOTA_EMPRESA || 'EMP-01,EMP-03')
   .split(',')
   .map((e) => e.trim())
@@ -50,7 +50,7 @@ const EMPRESAS = (process.env.YA_VIENE_FLOTA_EMPRESA || 'EMP-01,EMP-03')
 
 // La ruta que se mira de cerca en la presentación publica cada 400 ms, que
 // en pantalla se lee como movimiento continuo. Las demás a 1,5 s: se ve
-// igual de fluido con la interpolación de la app y deja veinte simuladores
+// igual de fluido con la interpolación de la app y deja dieciocho simuladores
 // cabiendo en un portátil.
 const RUTA_DESTACADA = process.env.YA_VIENE_FLOTA_RUTA || 'R-106';
 const INTERVALO_RAPIDO = process.env.CAPTURE_INTERVAL_MS || '400';
@@ -257,7 +257,7 @@ function arrancarBus(bus: BusDemo): void {
 
 // El alta del conductor y su login admiten 20 por minuto desde una misma IP
 // (`adminRateLimiter` y `loginIpRateLimiter`), y todos los simuladores salen
-// de 127.0.0.1. Con Coolitoral la flota es de 20: de un tirón llenaba el cupo
+// de 127.0.0.1. Con Coolitoral la flota llegó a 20 (hoy 18): de un tirón llenaba el cupo
 // y un bus que se cayera en ese minuto no podía volver a entrar hasta el
 // siguiente. Van 18 por minuto: los dos que sobran son para un reintento.
 const ARRANQUES_POR_MINUTO = 18;
@@ -291,7 +291,7 @@ export function arrancarFlotaDemo(): void {
   console.log(
     `[FLOTA] ${flota.length} buses simulados en ${new Set(flota.map((b) => b.routeId)).size} rutas.`,
   );
-  // Escalonados: veinte simuladores registrando conductor a la vez son veinte
+  // Escalonados: dieciocho simuladores registrando conductor a la vez son dieciocho
   // peticiones simultáneas contra un backend que acaba de abrir el puerto.
   flota.forEach((bus, i) => {
     const t = setTimeout(() => arrancarBus(bus), retrasoArranque(i));

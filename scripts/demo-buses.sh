@@ -29,7 +29,7 @@
 #    bash scripts/demo-buses.sh --detener   para los que quedaron en fondo
 #
 #  RUTAS_DEMO="R-106 R-101" limita a esas rutas, por si la máquina se ahoga
-#  con veinte simuladores.
+#  con dieciocho simuladores.
 # ═══════════════════════════════════════════════════════════════
 set -uo pipefail
 
@@ -127,7 +127,7 @@ fi
 
 # La ruta de la demo va a 400 ms: es la que se mira de cerca y donde el
 # movimiento tiene que verse fluido. Las demás a 1,5 s, que en pantalla se
-# ve igual de continuo y deja veinte simuladores cabiendo en un portátil.
+# ve igual de continuo y deja dieciocho simuladores cabiendo en un portátil.
 RAPIDO="${CAPTURE_INTERVAL_MS:-400}"
 LENTO="${CAPTURE_INTERVAL_MS_RESTO:-1500}"
 
@@ -154,8 +154,6 @@ FLOTA=(
   "BUS-SDC209 R-105 0.55 3000000209 $LENTO EMP-01"
   "BUS-YVA107 R-107 0.25 300110701 $LENTO EMP-03"
   "BUS-YVB107 R-107 0.70 300110702 $LENTO EMP-03"
-  "BUS-YVA108 R-108 0.25 300110801 $LENTO EMP-03"
-  "BUS-YVB108 R-108 0.70 300110802 $LENTO EMP-03"
   "BUS-YVA109 R-109 0.25 300110901 $LENTO EMP-03"
   "BUS-YVB109 R-109 0.70 300110902 $LENTO EMP-03"
   "BUS-YVA110 R-110 0.25 300111001 $LENTO EMP-03"
@@ -199,7 +197,7 @@ for i in "${!FLOTA[@]}"; do
   set -- ${FLOTA[$i]}
   echo "▶ $1 · $2 · arranca en $(awk -v f="$3" 'BEGIN{printf "%d", f*100}')% del recorrido"
   arrancar "$i"
-  # Escalonados: veinte simuladores registrando conductor a la vez son veinte
+  # Escalonados: dieciocho simuladores registrando conductor a la vez son dieciocho
   # peticiones simultáneas al backend en el primer segundo. Y 18 por minuto,
   # como retrasoArranque() en flota_demo.ts: el alta y el login admiten 20
   # por minuto desde una IP y los dos que sobran son para un reintento.

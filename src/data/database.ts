@@ -857,6 +857,46 @@ function initSchema(): void {
         }
       },
     },
+    {
+      version: 28,
+      siembra: true,
+      apply: () => {
+        // Coolitoral sin A2 (R-108; dueño, 2026-10-05): era el mismo
+        // recorrido que A1. Sale de su catálogo con los dos buses de la
+        // demo y todo lo suyo. Un bus del panel que estuviera en A2 no se
+        // borra: se muda a la primera ruta que le quede a la empresa, como
+        // al quitar una ruta desde el panel (`removeCompanyRoute`). El
+        // número no se reusa: las apps instaladas aún dibujan A2 con él.
+        const demo = ['BUS-YVA108', 'BUS-YVB108'];
+        const porBus = [
+          'DELETE FROM avisos_push WHERE bus_id = ?',
+          'DELETE FROM turn_assignments WHERE bus_id = ?',
+          'DELETE FROM driver_sessions WHERE bus_id = ?',
+          'DELETE FROM positions WHERE bus_id = ?',
+          'DELETE FROM drivers WHERE bus_id = ?',
+          'DELETE FROM buses WHERE bus_id = ?',
+        ].map((sql) => d.prepare(sql));
+        for (const busId of demo) {
+          for (const stmt of porBus) stmt.run(busId);
+        }
+
+        d.prepare("DELETE FROM company_routes WHERE company_id = 'EMP-03' AND route_id = 'R-108'").run();
+        const destino = (d.prepare(`
+          SELECT route_id FROM company_routes WHERE company_id = 'EMP-03' ORDER BY route_id ASC LIMIT 1
+        `).get() as { route_id: string } | undefined)?.route_id ?? null;
+        const ajenos = `SELECT bus_id FROM buses WHERE company_id = 'EMP-03'`;
+        if (destino) {
+          for (const tabla of ['turn_assignments', 'driver_sessions', 'positions', 'avisos_push']) {
+            d.prepare(`UPDATE ${tabla} SET route_id = ? WHERE route_id = 'R-108' AND bus_id IN (${ajenos})`)
+              .run(destino);
+          }
+          d.prepare(`UPDATE drivers SET route_id = ? WHERE route_id = 'R-108' AND company_id = 'EMP-03'`)
+            .run(destino);
+        }
+        d.prepare(`UPDATE buses SET route_id = ?, updated_at = ? WHERE company_id = 'EMP-03' AND route_id = 'R-108'`)
+          .run(destino, Date.now());
+      },
+    },
   ];
 
   for (const migration of migrations) {

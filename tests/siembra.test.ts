@@ -11,6 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import Database from 'better-sqlite3';
+
 import { siembraDemoHabilitada, validateConfig } from '../src/config';
 
 const tmp = mkdtempSync(join(tmpdir(), 'yaviene-siembra-'));
@@ -51,10 +53,10 @@ const SOBUSA = [
 }));
 
 // Coolitoral entra con la migración 27 (dueño, 2026-10-05), con los mismos
-// identificadores que sus trazados en `rutas.json`.
+// identificadores que sus trazados en `rutas.json`. La 28 le quita A2
+// (R-108): era el mismo recorrido que A1 (dueño, el mismo día).
 const COOLITORAL = [
   ['R-107', 'A1 Silencio Universidades', 'Silencio, Nogales', 'Universidades, Vía 40'],
-  ['R-108', 'A2 Universidades Silencio', 'Vía 40, Universidades', 'Nogales, Silencio'],
   ['R-109', 'A3 Carrera 43 Peñita', 'Carrera 43', 'La Peñita'],
   ['R-110', 'A4 Carrera 50', 'Calle 17', 'Carrera 50'],
 ].map(([route_id, name, terminal_a, terminal_b]) => ({
@@ -67,7 +69,7 @@ const EMPRESAS = [
 ];
 const CATALOGO = [...SOBUSA, ...COOLITORAL];
 
-const SIEMBRA = [9, 12, 16, 27];
+const SIEMBRA = [9, 12, 16, 27, 28];
 
 test('la regla: sembrada en desarrollo, vacía en producción, y la variable manda', () => {
   assert.equal(siembraDemoHabilitada({}), true);
@@ -103,6 +105,58 @@ test('apagar la siembra no borra una base ya sembrada', () => {
   abrir('ya-sembrada.db', {});
   const despues = abrir('ya-sembrada.db', { NODE_ENV: 'production' });
   assert.deepEqual(despues.rutas, CATALOGO);
+});
+
+// La base viva ya tenía A2 cuando el dueño la quitó: sus dos buses de la
+// demo rodaban y un bus dado de alta en el panel podía estar en ella. La
+// migración 28 se lleva la ruta y la flota demo entera (conductor, sesión,
+// turno, posición y aviso armado); el bus del panel no se borra, se muda a
+// la primera ruta que le quede a la empresa, como al quitar una ruta desde
+// el panel (`removeCompanyRoute`).
+test('una base que ya tenía A2 la pierde, con sus buses de la demo', () => {
+  abrir('con-a2.db', {});
+  const db = new Database(join(tmp, 'con-a2.db'));
+  const ahora = Date.now();
+  db.prepare(`INSERT INTO company_routes (company_id, route_id, name, terminal_a, terminal_b, created_at)
+              VALUES ('EMP-03', 'R-108', 'A2 Universidades Silencio', 'Vía 40, Universidades', 'Nogales, Silencio', ?)`)
+    .run(ahora);
+  for (const [busId, telefono] of [['BUS-YVA108', '300110801'], ['BUS-PNL001', '300110899']]) {
+    db.prepare(`INSERT INTO buses (bus_id, company_id, route_id, created_at, updated_at)
+                VALUES (?, 'EMP-03', 'R-108', ?, ?)`).run(busId, ahora, ahora);
+    db.prepare(`INSERT INTO drivers (phone_number, driver_id, name, route_id, company_id, bus_id, registered_at)
+                VALUES (?, ?, 'Conductor', 'R-108', 'EMP-03', ?, ?)`).run(telefono, `drv-${telefono}`, busId, ahora);
+    db.prepare(`INSERT INTO driver_sessions (session_id, driver_id, phone_number, company_id, bus_id, route_id, created_at, last_seen_at)
+                VALUES (?, ?, ?, 'EMP-03', ?, 'R-108', ?, ?)`).run(`s-${telefono}`, `drv-${telefono}`, telefono, busId, ahora, ahora);
+    db.prepare(`INSERT INTO turn_assignments (assignment_id, driver_id, bus_id, company_id, route_id, started_at)
+                VALUES (?, ?, ?, 'EMP-03', 'R-108', ?)`).run(`t-${telefono}`, `drv-${telefono}`, busId, ahora);
+    db.prepare(`INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, driver_phone)
+                VALUES (?, 'R-108', 10.99, -74.79, 20, ?, ?)`).run(busId, ahora, telefono);
+  }
+  db.prepare(`INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence)
+              VALUES ('aviso-a2', 'token', 'BUS-YVA108', 'R-108', 10.99, -74.79, ?, ?)`).run(ahora, ahora + 60_000);
+  db.prepare('DELETE FROM schema_migrations WHERE version = 28').run();
+  db.close();
+
+  const base = abrir('con-a2.db', {});
+  assert.deepEqual(base.rutas, CATALOGO);
+  assert.ok(base.migraciones.includes(28));
+
+  const despues = new Database(join(tmp, 'con-a2.db'), { readonly: true });
+  try {
+    const cuenta = (sql: string) => (despues.prepare(sql).get() as { n: number }).n;
+    for (const tabla of ['buses', 'drivers', 'driver_sessions', 'turn_assignments', 'positions', 'avisos_push']) {
+      assert.equal(cuenta(`SELECT COUNT(*) AS n FROM ${tabla} WHERE bus_id = 'BUS-YVA108'`), 0, tabla);
+    }
+    for (const tabla of ['buses', 'drivers', 'driver_sessions', 'turn_assignments', 'positions', 'avisos_push']) {
+      assert.equal(cuenta(`SELECT COUNT(*) AS n FROM ${tabla} WHERE route_id = 'R-108'`), 0, tabla);
+    }
+    assert.deepEqual(
+      despues.prepare("SELECT route_id FROM buses WHERE bus_id = 'BUS-PNL001'").get(),
+      { route_id: 'R-107' },
+    );
+  } finally {
+    despues.close();
+  }
 });
 
 test('flota demo sin siembra: el arranque lo avisa', () => {

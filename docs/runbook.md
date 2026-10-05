@@ -66,7 +66,7 @@ arranque. Tiene que ser una IP, y en producción no una de loopback: el
 arranque se detiene con `[Config]` si no. La suite ya la fija sola en
 `127.0.0.1` (`tests/entorno.ts`).
 
-Los buses de la demo no se arrancan a mano: el propio backend levanta veinte
+Los buses de la demo no se arrancan a mano: el propio backend levanta dieciocho
 simuladores al iniciar, dos por ruta de Sobusa y de Coolitoral
 (`src/demo/flota_demo.ts`; `YA_VIENE_FLOTA_EMPRESA=EMP-01` deja solo la
 primera). Arrancan 18 por minuto: el alta y el login del conductor admiten

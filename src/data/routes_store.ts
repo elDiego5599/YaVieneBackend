@@ -8,7 +8,9 @@ import { getDb } from './database';
  * (`app_pasajero/assets/data/rutas.json`). No son datos de la demo sino un
  * contrato con la app: una ruta de otra empresa con uno de estos códigos
  * heredaría el trazado de Sobusa (R-101…R-106) o de Coolitoral
- * (R-107…R-110) en el mapa, así que el alta los rechaza.
+ * (R-107, R-109 y R-110) en el mapa, así que el alta los rechaza. R-108 era
+ * A2 de Coolitoral, que se quitó (migración 28): sigue reservado porque las
+ * apps instaladas antes la dibujan con ese número.
  */
 const RUTAS_CON_TRAZADO_EN_LA_APP = new Set([
   'R-101', 'R-102', 'R-103', 'R-104', 'R-105', 'R-106',

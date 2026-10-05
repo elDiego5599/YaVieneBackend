@@ -100,7 +100,8 @@ test('al arrancar, los B-0xx viejos se van y los nuevos salen con su placa en el
 });
 
 // Coolitoral (EMP-03, migración 27) también rueda (dueño, 2026-10-05): sin
-// buses, el pasajero elegía A1–A4 y el mapa se quedaba vacío. Cada bus va con
+// buses, el pasajero elegía A1, A3 o A4 y el mapa se quedaba vacío. A2
+// (R-108) ya no está (migración 28): no lleva buses. Cada bus va con
 // su empresa: el simulador se registra con ella y el panel de Coolitoral lo
 // ve como suyo, no como uno de Sobusa.
 test('Coolitoral sale con dos buses por ruta, a su nombre', () => {
@@ -109,7 +110,7 @@ test('Coolitoral sale con dos buses por ruta, a su nombre', () => {
   assert.deepEqual(
     coolitoral.map((b) => `${b.routeId} ${b.placa}`),
     [
-      'R-107 YVA107', 'R-107 YVB107', 'R-108 YVA108', 'R-108 YVB108',
+      'R-107 YVA107', 'R-107 YVB107',
       'R-109 YVA109', 'R-109 YVB109', 'R-110 YVA110', 'R-110 YVB110',
     ],
   );
@@ -126,8 +127,9 @@ test('Coolitoral sale con dos buses por ruta, a su nombre', () => {
 
 // El alta y el login del conductor admiten 20 por minuto desde una misma IP
 // (`adminRateLimiter`, `loginIpRateLimiter`), y todos los simuladores salen
-// de 127.0.0.1. Con Coolitoral la flota es de 20: de un tirón llenaba el cupo
-// y un bus que se cayera en ese minuto no podía volver a entrar.
+// de 127.0.0.1. Con Coolitoral la flota llegó a 20 (hoy 18): de un tirón
+// llenaba el cupo y un bus que se cayera en ese minuto no podía volver a
+// entrar. El tope se queda aunque la flota quepa: la próxima ruta lo pasaría.
 test('la flota arranca a 18 buses por minuto como mucho', () => {
   const arranques = Array.from({ length: 40 }, (_, i) => retrasoArranque(i));
   for (const desde of arranques) {
