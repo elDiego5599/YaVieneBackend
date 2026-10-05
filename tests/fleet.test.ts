@@ -840,9 +840,10 @@ test('fleet: el código de ruta es único entre empresas', { timeout: 60_000 }, 
     assert.equal(primeraA.status, 201);
     assert.equal(primeraB.status, 201);
     assert.notEqual(primeraA.body.routeId, primeraB.body.routeId);
-    // La cuenta sigue desde las de la demo (R-101 a R-106 de EMP-01).
-    assert.equal(primeraA.body.routeId, 'R-107');
-    assert.equal(primeraB.body.routeId, 'R-108');
+    // La cuenta sigue desde las que tienen trazado en la app (R-101 a R-106
+    // de Sobusa, R-107 a R-110 de Coolitoral).
+    assert.equal(primeraA.body.routeId, 'R-111');
+    assert.equal(primeraB.body.routeId, 'R-112');
 
     // Una empresa no puede crear un id que ya usa otra, ni uno de la demo.
     const copia = await alta(b, primeraA.body.routeId, 'Copia de A');
@@ -850,8 +851,9 @@ test('fleet: el código de ruta es único entre empresas', { timeout: 60_000 }, 
     assert.equal(copia.body.error.code, 'ROUTE_EXISTS');
     assert.equal(JSON.stringify(copia.body).includes(`EMP-UA-${suffix}`), false, 'el 409 no dice de quién es');
     assert.equal((await alta(b, 'r-101', 'Tcherassi de B')).status, 409);
+    assert.equal((await alta(b, 'R-110', 'Carrera 50 de B')).status, 409);
     const rutasB = (await (await fetch(`${base}/api/fleet/routes`, { headers: b })).json()) as any;
-    assert.deepEqual(rutasB.routes.map((r: any) => r.routeId), ['R-108']);
+    assert.deepEqual(rutasB.routes.map((r: any) => r.routeId), ['R-112']);
 
     // Después de R-999 viene R-1000 y luego R-1001. Antes el máximo salía de
     // ordenar texto: 'R-999' > 'R-1000', así que la tercera volvía a pedir

@@ -92,9 +92,9 @@ test('rutas: existe por nombre, auto-id, renombre y choques', () => {
   assert.equal(rutas.routeNameExists('COB-R', '   '), false);
   assert.equal(rutas.routeNameExists('COB-R', 'Mi Ruta'), false);
 
-  // La cuenta global sigue desde R-106 (la mayor de la demo).
+  // La cuenta global sigue desde R-110 (la mayor con trazado en la app).
   const auto = rutas.addCompanyRoute('COB-R', '', 'Auto');
-  assert.equal(auto?.routeId, 'R-107');
+  assert.equal(auto?.routeId, 'R-111');
 
   const alta = rutas.addCompanyRoute('COB-R', 'R-900', 'Mi Ruta');
   assert.equal(alta?.routeId, 'R-900');

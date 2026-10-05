@@ -813,6 +813,50 @@ function initSchema(): void {
         `);
       },
     },
+    {
+      version: 27,
+      siembra: true,
+      apply: () => {
+        // Coolitoral y sus cuatro rutas (dueño, 2026-10-05). Los trazados
+        // están en `rutas.json` con estos mismos identificadores
+        // (`scripts/convert-rutas.mjs`, desde los GPX de la empresa). Si
+        // otra empresa ya usa uno de ellos, heredaría en el mapa el trazado
+        // de Coolitoral: mejor no arrancar y decirlo que mezclar recorridos.
+        const coolitoral: Record<string, [string, string, string]> = {
+          'R-107': ['A1 Silencio Universidades', 'Silencio, Nogales', 'Universidades, Vía 40'],
+          'R-108': ['A2 Universidades Silencio', 'Vía 40, Universidades', 'Nogales, Silencio'],
+          'R-109': ['A3 Carrera 43 Peñita', 'Carrera 43', 'La Peñita'],
+          'R-110': ['A4 Carrera 50', 'Calle 17', 'Carrera 50'],
+        };
+        const ocupadas = d.prepare(`
+          SELECT route_id FROM company_routes
+          WHERE route_id IN ('R-107', 'R-108', 'R-109', 'R-110') AND company_id <> 'EMP-03'
+        `).all() as { route_id: string }[];
+        if (ocupadas.length > 0) {
+          throw new Error(
+            `Las rutas ${ocupadas.map((r) => r.route_id).join(', ')} ya son de otra empresa: `
+            + 'cámbiales el identificador antes de sembrar Coolitoral (migración 27).',
+          );
+        }
+        const now = Date.now();
+        d.prepare(`
+          INSERT INTO empresas (company_id, name, created_at)
+          VALUES ('EMP-03', 'Coolitoral', ?)
+          ON CONFLICT(company_id) DO UPDATE SET name = 'Coolitoral'
+        `).run(now);
+        const upsert = d.prepare(`
+          INSERT INTO company_routes (company_id, route_id, name, terminal_a, terminal_b, created_at)
+          VALUES ('EMP-03', ?, ?, ?, ?, ?)
+          ON CONFLICT (company_id, route_id) DO UPDATE SET
+            name = excluded.name,
+            terminal_a = excluded.terminal_a,
+            terminal_b = excluded.terminal_b
+        `);
+        for (const [routeId, [name, terminalA, terminalB]] of Object.entries(coolitoral)) {
+          upsert.run(routeId, name, terminalA, terminalB, now);
+        }
+      },
+    },
   ];
 
   for (const migration of migrations) {

@@ -50,7 +50,24 @@ const SOBUSA = [
   company_id: 'EMP-01', route_id, name, terminal_a, terminal_b,
 }));
 
-const SIEMBRA = [9, 12, 16];
+// Coolitoral entra con la migración 27 (dueño, 2026-10-05), con los mismos
+// identificadores que sus trazados en `rutas.json`.
+const COOLITORAL = [
+  ['R-107', 'A1 Silencio Universidades', 'Silencio, Nogales', 'Universidades, Vía 40'],
+  ['R-108', 'A2 Universidades Silencio', 'Vía 40, Universidades', 'Nogales, Silencio'],
+  ['R-109', 'A3 Carrera 43 Peñita', 'Carrera 43', 'La Peñita'],
+  ['R-110', 'A4 Carrera 50', 'Calle 17', 'Carrera 50'],
+].map(([route_id, name, terminal_a, terminal_b]) => ({
+  company_id: 'EMP-03', route_id, name, terminal_a, terminal_b,
+}));
+
+const EMPRESAS = [
+  { company_id: 'EMP-01', name: 'Sobusa' },
+  { company_id: 'EMP-03', name: 'Coolitoral' },
+];
+const CATALOGO = [...SOBUSA, ...COOLITORAL];
+
+const SIEMBRA = [9, 12, 16, 27];
 
 test('la regla: sembrada en desarrollo, vacía en producción, y la variable manda', () => {
   assert.equal(siembraDemoHabilitada({}), true);
@@ -59,7 +76,7 @@ test('la regla: sembrada en desarrollo, vacía en producción, y la variable man
   assert.equal(siembraDemoHabilitada({ YA_VIENE_SEED_DEMO: '0' }), false);
 });
 
-test('una base nueva de producción nace sin Sobusa ni sus rutas', () => {
+test('una base nueva de producción nace sin Sobusa ni Coolitoral', () => {
   const base = abrir('produccion.db', { NODE_ENV: 'production' });
   assert.deepEqual(base.empresas, []);
   assert.deepEqual(base.rutas, []);
@@ -69,8 +86,8 @@ test('una base nueva de producción nace sin Sobusa ni sus rutas', () => {
 
 test('con la siembra encendida la base nueva queda como antes de T9.3', () => {
   const base = abrir('desarrollo.db', {});
-  assert.deepEqual(base.empresas, [{ company_id: 'EMP-01', name: 'Sobusa' }]);
-  assert.deepEqual(base.rutas, SOBUSA);
+  assert.deepEqual(base.empresas, EMPRESAS);
+  assert.deepEqual(base.rutas, CATALOGO);
   for (const version of SIEMBRA) assert.ok(base.migraciones.includes(version), `migración ${version}`);
 });
 
@@ -78,14 +95,14 @@ test('encender la siembra después llena una base que nació vacía', () => {
   const vacia = abrir('tarde.db', { YA_VIENE_SEED_DEMO: '0' });
   assert.deepEqual(vacia.rutas, []);
   const sembrada = abrir('tarde.db', { YA_VIENE_SEED_DEMO: '1' });
-  assert.deepEqual(sembrada.empresas, [{ company_id: 'EMP-01', name: 'Sobusa' }]);
-  assert.deepEqual(sembrada.rutas, SOBUSA);
+  assert.deepEqual(sembrada.empresas, EMPRESAS);
+  assert.deepEqual(sembrada.rutas, CATALOGO);
 });
 
 test('apagar la siembra no borra una base ya sembrada', () => {
   abrir('ya-sembrada.db', {});
   const despues = abrir('ya-sembrada.db', { NODE_ENV: 'production' });
-  assert.deepEqual(despues.rutas, SOBUSA);
+  assert.deepEqual(despues.rutas, CATALOGO);
 });
 
 test('flota demo sin siembra: el arranque lo avisa', () => {
