@@ -29,7 +29,7 @@
 #    bash scripts/demo-buses.sh --detener   para los que quedaron en fondo
 #
 #  RUTAS_DEMO="R-106 R-101" limita a esas rutas, por si la máquina se ahoga
-#  con doce simuladores.
+#  con veinte simuladores.
 # ═══════════════════════════════════════════════════════════════
 set -uo pipefail
 
@@ -127,11 +127,12 @@ fi
 
 # La ruta de la demo va a 400 ms: es la que se mira de cerca y donde el
 # movimiento tiene que verse fluido. Las demás a 1,5 s, que en pantalla se
-# ve igual de continuo y deja doce simuladores cabiendo en un portátil.
+# ve igual de continuo y deja veinte simuladores cabiendo en un portátil.
 RAPIDO="${CAPTURE_INTERVAL_MS:-400}"
 LENTO="${CAPTURE_INTERVAL_MS_RESTO:-1500}"
 
-# bus · ruta · fracción del recorrido donde arranca · teléfono · intervalo.
+# bus · ruta · fracción del recorrido donde arranca · teléfono · intervalo ·
+# empresa (Sobusa EMP-01, Coolitoral EMP-03: el simulador se registra con ella).
 # Dos por ruta y en extremos opuestos, para que en cualquier ruta que se abra
 # haya uno acercándose y otro alejándose. Placas de tres letras y tres
 # números, como las de verdad, y el id `BUS-<placa>` de un bus dado de alta
@@ -139,18 +140,26 @@ LENTO="${CAPTURE_INTERVAL_MS_RESTO:-1500}"
 # Este script no guarda la placa en la base: arranca el backend una vez con
 # la flota encendida para que el panel no enseñe el id entero.
 FLOTA=(
-  "BUS-WFK042 R-106 0.80 3000000000 $RAPIDO"
-  "BUS-WGV705 R-106 0.15 3000000001 $RAPIDO"
-  "BUS-TNM901 R-101 0.35 3000000999 $LENTO"
-  "BUS-SKR201 R-101 0.70 3000000201 $LENTO"
-  "BUS-UBL202 R-102 0.20 3000000202 $LENTO"
-  "BUS-VJD203 R-102 0.65 3000000203 $LENTO"
-  "BUS-SNZ204 R-103 0.25 3000000204 $LENTO"
-  "BUS-TPH205 R-103 0.75 3000000205 $LENTO"
-  "BUS-WGA206 R-104 0.30 3000000206 $LENTO"
-  "BUS-UHE207 R-104 0.60 3000000207 $LENTO"
-  "BUS-VXR208 R-105 0.10 3000000208 $LENTO"
-  "BUS-SDC209 R-105 0.55 3000000209 $LENTO"
+  "BUS-WFK042 R-106 0.80 3000000000 $RAPIDO EMP-01"
+  "BUS-WGV705 R-106 0.15 3000000001 $RAPIDO EMP-01"
+  "BUS-TNM901 R-101 0.35 3000000999 $LENTO EMP-01"
+  "BUS-SKR201 R-101 0.70 3000000201 $LENTO EMP-01"
+  "BUS-UBL202 R-102 0.20 3000000202 $LENTO EMP-01"
+  "BUS-VJD203 R-102 0.65 3000000203 $LENTO EMP-01"
+  "BUS-SNZ204 R-103 0.25 3000000204 $LENTO EMP-01"
+  "BUS-TPH205 R-103 0.75 3000000205 $LENTO EMP-01"
+  "BUS-WGA206 R-104 0.30 3000000206 $LENTO EMP-01"
+  "BUS-UHE207 R-104 0.60 3000000207 $LENTO EMP-01"
+  "BUS-VXR208 R-105 0.10 3000000208 $LENTO EMP-01"
+  "BUS-SDC209 R-105 0.55 3000000209 $LENTO EMP-01"
+  "BUS-YVA107 R-107 0.25 300110701 $LENTO EMP-03"
+  "BUS-YVB107 R-107 0.70 300110702 $LENTO EMP-03"
+  "BUS-YVA108 R-108 0.25 300110801 $LENTO EMP-03"
+  "BUS-YVB108 R-108 0.70 300110802 $LENTO EMP-03"
+  "BUS-YVA109 R-109 0.25 300110901 $LENTO EMP-03"
+  "BUS-YVB109 R-109 0.70 300110902 $LENTO EMP-03"
+  "BUS-YVA110 R-110 0.25 300111001 $LENTO EMP-03"
+  "BUS-YVB110 R-110 0.70 300111002 $LENTO EMP-03"
 )
 
 # RUTAS_DEMO recorta la lista sin tocar el archivo, por si la máquina no da.
@@ -173,7 +182,7 @@ arrancar() {
   local i="$1"
   set -- ${FLOTA[$i]}
   BUS_ID="$1" ROUTE_ID="$2" START_FRACTION="$3" PHONE="$4" SENTIDO=ida \
-    CAPTURE_INTERVAL_MS="$5" node scripts/simulate-bus.mjs &
+    CAPTURE_INTERVAL_MS="$5" EMPRESA_ID="$6" node scripts/simulate-bus.mjs &
   PIDS[$i]=$!
 }
 
@@ -190,9 +199,11 @@ for i in "${!FLOTA[@]}"; do
   set -- ${FLOTA[$i]}
   echo "▶ $1 · $2 · arranca en $(awk -v f="$3" 'BEGIN{printf "%d", f*100}')% del recorrido"
   arrancar "$i"
-  # Escalonados: doce simuladores registrando conductor a la vez son doce
-  # peticiones simultáneas al backend en el primer segundo.
-  sleep 0.4
+  # Escalonados: veinte simuladores registrando conductor a la vez son veinte
+  # peticiones simultáneas al backend en el primer segundo. Y 18 por minuto,
+  # como retrasoArranque() en flota_demo.ts: el alta y el login admiten 20
+  # por minuto desde una IP y los dos que sobran son para un reintento.
+  if [ $(( (i + 1) % 18 )) -eq 0 ]; then sleep 61; else sleep 0.4; fi
 done
 
 echo ""

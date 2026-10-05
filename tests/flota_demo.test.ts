@@ -19,7 +19,7 @@ process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
 // require y no import: estos módulos abren la base al evaluarse.
 const { getDb } = require('../src/data/database') as typeof import('../src/data/database');
 const { getCompanyBuses } = require('../src/data/fleet_admin') as typeof import('../src/data/fleet_admin');
-const { construirFlota, prepararFlota } =
+const { construirFlota, prepararFlota, retrasoArranque } =
   require('../src/demo/flota_demo') as typeof import('../src/demo/flota_demo');
 
 test.after(() => {
@@ -97,6 +97,45 @@ test('al arrancar, los B-0xx viejos se van y los nuevos salen con su placa en el
   for (const bus of panel.filter((b) => b.busId.startsWith('BUS-'))) {
     assert.match(bus.placa, PLACA, bus.busId);
   }
+});
+
+// Coolitoral (EMP-03, migración 27) también rueda (dueño, 2026-10-05): sin
+// buses, el pasajero elegía A1–A4 y el mapa se quedaba vacío. Cada bus va con
+// su empresa: el simulador se registra con ella y el panel de Coolitoral lo
+// ve como suyo, no como uno de Sobusa.
+test('Coolitoral sale con dos buses por ruta, a su nombre', () => {
+  const flota = construirFlota();
+  const coolitoral = flota.filter((b) => b.companyId === 'EMP-03');
+  assert.deepEqual(
+    coolitoral.map((b) => `${b.routeId} ${b.placa}`),
+    [
+      'R-107 YVA107', 'R-107 YVB107', 'R-108 YVA108', 'R-108 YVB108',
+      'R-109 YVA109', 'R-109 YVB109', 'R-110 YVA110', 'R-110 YVB110',
+    ],
+  );
+  assert.ok(flota.filter((b) => b.routeId === 'R-106').every((b) => b.companyId === 'EMP-01'));
+
+  prepararFlota(flota);
+  const panel = getCompanyBuses('EMP-03');
+  assert.deepEqual(
+    panel.filter((b) => b.busId.startsWith('BUS-YV')).map((b) => b.placa).sort(),
+    coolitoral.map((b) => b.placa).sort(),
+  );
+  assert.equal(getCompanyBuses('EMP-01').some((b) => b.placa.startsWith('YVA10')), false);
+});
+
+// El alta y el login del conductor admiten 20 por minuto desde una misma IP
+// (`adminRateLimiter`, `loginIpRateLimiter`), y todos los simuladores salen
+// de 127.0.0.1. Con Coolitoral la flota es de 20: de un tirón llenaba el cupo
+// y un bus que se cayera en ese minuto no podía volver a entrar.
+test('la flota arranca a 18 buses por minuto como mucho', () => {
+  const arranques = Array.from({ length: 40 }, (_, i) => retrasoArranque(i));
+  for (const desde of arranques) {
+    const enUnMinuto = arranques.filter((t) => t >= desde && t < desde + 60_000).length;
+    assert.ok(enUnMinuto <= 18, `${enUnMinuto} arranques en el minuto que empieza en ${desde} ms`);
+  }
+  // Los primeros 18 salen seguidos, como antes: la demo no espera.
+  assert.equal(retrasoArranque(17), 17 * 400);
 });
 
 test('preparar dos veces no cambia nada, y una placa editada en el panel se respeta', () => {

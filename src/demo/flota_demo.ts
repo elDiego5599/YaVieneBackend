@@ -8,12 +8,13 @@
 // funcionaba perfectamente y parecía rota.
 //
 // Los simuladores son los mismos de siempre (`scripts/simulate-bus.mjs`,
-// geometría real de los KMZ de Sobusa) con los mismos identificadores de bus
+// geometría real de `rutas.json`) con los mismos identificadores de bus
 // que usa el script, para que correr los dos a la vez no duplique la flota.
 // La diferencia es quién los vigila: ahora el backend, que es justo el
 // proceso que tiene que estar vivo para que haya demo.
 //
-// Se apaga con YA_VIENE_FLOTA_DEMO=0 —los tests lo hacen: doce simuladores
+// Ruedan Sobusa (EMP-01) y Coolitoral (EMP-03), cada bus a nombre de su
+// empresa. Se apaga con YA_VIENE_FLOTA_DEMO=0 —los tests lo hacen: veinte simuladores
 // publicando encima de un test de flota lo vuelven ruido— y no arranca sin
 // ADMIN_API_KEY, que es lo que necesita el simulador para provisionarse.
 import { ChildProcess, spawn } from 'child_process';
@@ -29,6 +30,8 @@ export interface BusDemo {
   /** Tres letras y tres números, como las placas de verdad (WGV705). */
   placa: string;
   routeId: string;
+  /** La empresa dueña de la ruta: con ella se registra el simulador. */
+  companyId: string;
   /** Punto del recorrido donde nace, de 0 (terminal A) a 1 (terminal B). */
   fraccion: number;
   telefono: string;
@@ -38,11 +41,16 @@ export interface BusDemo {
 // Misma regla que decide index.ts: apagada en producción salvo que el
 // despliegue escriba YA_VIENE_FLOTA_DEMO=1.
 const HABILITADA = flotaDemoHabilitada();
-const EMPRESA_ID = process.env.YA_VIENE_FLOTA_EMPRESA || 'EMP-01';
+// Las empresas cuya flota rueda, separadas por comas. Coolitoral entró el
+// 2026-10-05 (dueño): sin buses, sus cuatro rutas se abrían vacías.
+const EMPRESAS = (process.env.YA_VIENE_FLOTA_EMPRESA || 'EMP-01,EMP-03')
+  .split(',')
+  .map((e) => e.trim())
+  .filter(Boolean);
 
 // La ruta que se mira de cerca en la presentación publica cada 400 ms, que
 // en pantalla se lee como movimiento continuo. Las demás a 1,5 s: se ve
-// igual de fluido con la interpolación de la app y deja doce simuladores
+// igual de fluido con la interpolación de la app y deja veinte simuladores
 // cabiendo en un portátil.
 const RUTA_DESTACADA = process.env.YA_VIENE_FLOTA_RUTA || 'R-106';
 const INTERVALO_RAPIDO = process.env.CAPTURE_INTERVAL_MS || '400';
@@ -77,18 +85,19 @@ const IDS_VIEJOS = [
 const ID_VIEJO_DERIVADO = /^B-[0-9]{3}[AB]$/;
 
 /**
- * Las rutas del catálogo, tal cual las ve el pasajero en el selector.
+ * Las rutas del catálogo de una empresa, tal cual las ve el pasajero en el
+ * selector.
  *
  * Se leen de la base y no de una lista escrita aquí: una ruta nueva creada
  * desde el panel nace con buses la próxima vez que arranque el backend, en
  * vez de aparecer vacía y parecer una ruta muerta.
  */
-function rutasDelCatalogo(): string[] {
+function rutasDelCatalogo(companyId: string): string[] {
   const filas = getDb()
     .prepare(
       'SELECT route_id FROM company_routes WHERE company_id = ? ORDER BY route_id ASC',
     )
-    .all(EMPRESA_ID) as { route_id: string }[];
+    .all(companyId) as { route_id: string }[];
   return filas.map((f) => f.route_id);
 }
 
@@ -107,18 +116,21 @@ function busesDerivados(routeId: string): Array<[string, number, string]> {
 
 export function construirFlota(): BusDemo[] {
   const flota: BusDemo[] = [];
-  for (const routeId of rutasDelCatalogo()) {
-    const buses = FLOTA_CONOCIDA[routeId] ?? busesDerivados(routeId);
-    for (const [placa, fraccion, telefono] of buses) {
-      flota.push({
-        busId: busIdFromPlaca(placa),
-        placa,
-        routeId,
-        fraccion,
-        telefono,
-        intervaloMs:
-          routeId === RUTA_DESTACADA ? INTERVALO_RAPIDO : INTERVALO_LENTO,
-      });
+  for (const companyId of EMPRESAS) {
+    for (const routeId of rutasDelCatalogo(companyId)) {
+      const buses = FLOTA_CONOCIDA[routeId] ?? busesDerivados(routeId);
+      for (const [placa, fraccion, telefono] of buses) {
+        flota.push({
+          busId: busIdFromPlaca(placa),
+          placa,
+          routeId,
+          companyId,
+          fraccion,
+          telefono,
+          intervaloMs:
+            routeId === RUTA_DESTACADA ? INTERVALO_RAPIDO : INTERVALO_LENTO,
+        });
+      }
     }
   }
   return flota;
@@ -127,7 +139,7 @@ export function construirFlota(): BusDemo[] {
 /**
  * Deja la base lista para la flota y devuelve los buses que pueden rodar.
  *
- * Retira los ids viejos de la empresa demo con `deleteBus`, que también
+ * Retira los ids viejos de las empresas demo con `deleteBus`, que también
  * avisa a los pasajeros y a los paneles que los tenían en pantalla. Y da de
  * alta cada bus con su placa antes de que el simulador se registre: el
  * registro del conductor solo crea el bus por su id, y sin `plate_number` el
@@ -138,9 +150,9 @@ export function construirFlota(): BusDemo[] {
  */
 export function prepararFlota(flota: BusDemo[]): BusDemo[] {
   const db = getDb();
-  const viejos = (db.prepare('SELECT bus_id FROM buses WHERE company_id = ?')
-    .all(EMPRESA_ID) as { bus_id: string }[])
-    .map((r) => r.bus_id)
+  const deEmpresa = db.prepare('SELECT bus_id FROM buses WHERE company_id = ?');
+  const viejos = EMPRESAS
+    .flatMap((e) => (deEmpresa.all(e) as { bus_id: string }[]).map((r) => r.bus_id))
     .filter((id) => IDS_VIEJOS.includes(id) || ID_VIEJO_DERIVADO.test(id));
   for (const id of viejos) deleteBus(id);
   if (viejos.length > 0) {
@@ -160,14 +172,14 @@ export function prepararFlota(flota: BusDemo[]): BusDemo[] {
   db.transaction(() => {
     for (const bus of flota) {
       const fila = dueno.get(bus.busId) as { company_id: string } | undefined;
-      if (fila && fila.company_id !== EMPRESA_ID) continue;
+      if (fila && fila.company_id !== bus.companyId) continue;
       if (placaAjena.get(bus.placa, bus.busId)) continue;
       const ahora = Date.now();
-      alta.run(bus.busId, EMPRESA_ID, bus.placa, bus.routeId, ahora, ahora);
+      alta.run(bus.busId, bus.companyId, bus.placa, bus.routeId, ahora, ahora);
       listos.push(bus);
     }
   })();
-  for (const bus of listos) busCompanyCache.set(bus.busId, EMPRESA_ID);
+  for (const bus of listos) busCompanyCache.set(bus.busId, bus.companyId);
   const fuera = flota.filter((b) => !listos.includes(b));
   if (fuera.length > 0) {
     console.warn(
@@ -195,7 +207,7 @@ function arrancarBus(bus: BusDemo): void {
       ...process.env,
       BUS_ID: bus.busId,
       ROUTE_ID: bus.routeId,
-      EMPRESA_ID,
+      EMPRESA_ID: bus.companyId,
       PHONE: bus.telefono,
       // PIN con el que el simulador registra e inicia sesión: validateConfig
       // no deja encender la flota sin él (lo hereda de process.env igual,
@@ -243,6 +255,22 @@ function arrancarBus(bus: BusDemo): void {
   perdon.unref();
 }
 
+// El alta del conductor y su login admiten 20 por minuto desde una misma IP
+// (`adminRateLimiter` y `loginIpRateLimiter`), y todos los simuladores salen
+// de 127.0.0.1. Con Coolitoral la flota es de 20: de un tirón llenaba el cupo
+// y un bus que se cayera en ese minuto no podía volver a entrar hasta el
+// siguiente. Van 18 por minuto: los dos que sobran son para un reintento.
+const ARRANQUES_POR_MINUTO = 18;
+const ENTRE_ARRANQUES_MS = 400;
+
+/** Cuándo arranca el bus número `i`, en ms desde que se enciende la flota. */
+export function retrasoArranque(i: number): number {
+  return (
+    Math.floor(i / ARRANQUES_POR_MINUTO) * 61_000
+    + (i % ARRANQUES_POR_MINUTO) * ENTRE_ARRANQUES_MS
+  );
+}
+
 /** Pone la flota a rodar. Sin ADMIN_API_KEY no hay nada que hacer. */
 export function arrancarFlotaDemo(): void {
   if (!HABILITADA) return;
@@ -255,7 +283,7 @@ export function arrancarFlotaDemo(): void {
 
   const catalogo = construirFlota();
   if (catalogo.length === 0) {
-    console.warn(`[FLOTA] ${EMPRESA_ID} no tiene rutas en catálogo.`);
+    console.warn(`[FLOTA] ${EMPRESAS.join(', ')} no tienen rutas en catálogo.`);
     return;
   }
   const flota = prepararFlota(catalogo);
@@ -263,10 +291,10 @@ export function arrancarFlotaDemo(): void {
   console.log(
     `[FLOTA] ${flota.length} buses simulados en ${new Set(flota.map((b) => b.routeId)).size} rutas.`,
   );
-  // Escalonados: doce simuladores registrando conductor a la vez son doce
+  // Escalonados: veinte simuladores registrando conductor a la vez son veinte
   // peticiones simultáneas contra un backend que acaba de abrir el puerto.
   flota.forEach((bus, i) => {
-    const t = setTimeout(() => arrancarBus(bus), i * 400);
+    const t = setTimeout(() => arrancarBus(bus), retrasoArranque(i));
     t.unref();
   });
 }

@@ -176,10 +176,10 @@ export function validateConfig(
     );
   }
 
-  // La flota demo recorre el catálogo de EMP-01 (`flota_demo.ts`): sin la
+  // La flota demo recorre el catálogo de EMP-01 y EMP-03 (`flota_demo.ts`): sin la
   // siembra, en una base nueva no hay rutas y arranca sin un solo bus.
   if (flotaDemoHabilitada(env) && !siembraDemoHabilitada(env)) {
-    avisos.push('flota demo encendida sin siembra (YA_VIENE_SEED_DEMO=0): en una base nueva no hay rutas de EMP-01 que recorrer');
+    avisos.push('flota demo encendida sin siembra (YA_VIENE_SEED_DEMO=0): en una base nueva no hay rutas de EMP-01 ni de EMP-03 que recorrer');
   }
 
   if (produccion && flotaDemoHabilitada(env)) {

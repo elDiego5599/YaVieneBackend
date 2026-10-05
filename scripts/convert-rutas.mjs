@@ -76,11 +76,15 @@ const ROUTE_MAP = [
 // nombres. Los terminales salen del nombre de cada archivo.
 //
 // A1 ya no sale de mapstogpx (traía el mismo trazado que A2): sale de los
-// diez hitos del mapa de Google que mandó Coolitoral, en su orden (los
+// ocho hitos del mapa de Google que mandó Coolitoral, en su orden (los
 // `<wpt>` del archivo), con la geometría de calle a calle que devuelve OSRM
-// en modo `driving` (router.project-osrm.org, 2026-10-05). Es un circuito
-// de 27 km que sale de la Calle 17 en Sur Oriente, sube hasta la Calle 90
-// en Riomar y vuelve.
+// en modo `driving` (router.project-osrm.org, 2026-10-05). Para que siga
+// las mismas calles que la línea de Google, la consulta lleva puntos de
+// paso tomados de esa línea; donde OSM marca una calle en contravía (el
+// enlace de la Vía 40 al río y la Calle 8), OSRM toma la paralela. Es un
+// circuito de 41 km (Google: 40,5) que sale de la Calle 17 en Sur Oriente,
+// va al oeste hasta Sabanilla Montecarmelo, vuelve por Uninorte y la
+// Vía 40 y baja por la orilla del río.
 const GPX_MAP = [
   {
     file: 'rutaA1-GOOGLE-OSRM',
