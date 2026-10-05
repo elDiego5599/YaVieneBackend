@@ -73,12 +73,17 @@ const ROUTE_MAP = [
 ];
 
 // Coolitoral (EMP-03), sembrada por la migración 27 con estos mismos
-// nombres. Los terminales salen del nombre de cada archivo; A1 y A2 traen el
-// mismo trazado (mapstogpx solo cambia la cabecera), cada una con su sentido
-// en el nombre.
+// nombres. Los terminales salen del nombre de cada archivo.
+//
+// A1 ya no sale de mapstogpx (traía el mismo trazado que A2): sale de los
+// diez hitos del mapa de Google que mandó Coolitoral, en su orden (los
+// `<wpt>` del archivo), con la geometría de calle a calle que devuelve OSRM
+// en modo `driving` (router.project-osrm.org, 2026-10-05). Es un circuito
+// de 27 km que sale de la Calle 17 en Sur Oriente, sube hasta la Calle 90
+// en Riomar y vuelve.
 const GPX_MAP = [
   {
-    file: 'rutaA1SILENCIO NOGALES-UNIVERSIDADESVIA40',
+    file: 'rutaA1-GOOGLE-OSRM',
     routeId: 'R-107',
     name: 'A1 Silencio Universidades',
     terminalA: 'Silencio, Nogales',
