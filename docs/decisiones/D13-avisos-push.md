@@ -20,11 +20,12 @@ iPhone sigue como dice [D4](D4-ios-segundo-plano.md).
 ## Cómo funciona
 
 - Al armar el aviso, la app manda al servidor el bus, la ruta, el punto
-  donde espera y el token de notificaciones del teléfono
-  (`POST /api/avisos`). No manda nada que diga quién es la persona: el
+  donde espera, la distancia a la que quiere el aviso (`radioM`, de 500 m a
+  3 km; la elige el pasajero, dueño 2026-10-06; sin ella, 1 km) y el token
+  de notificaciones del teléfono (`POST /api/avisos`). No manda nada que diga quién es la persona: el
   pasajero sigue sin cuenta ([D3](D3-sin-cuenta.md)).
 - El servidor vigila desde ese momento, esté la app viva o no: cada 5 s
-  mira si el bus, con señal, visible y en esa ruta, entró al kilómetro del
+  mira si el bus, con señal, visible y en esa ruta, entró en esa distancia del
   punto, y manda un mensaje solo de datos con prioridad alta y diez minutos
   de vida. La app arma con él la misma notificación que arma sola, con el
   mismo identificador.

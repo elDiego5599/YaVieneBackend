@@ -442,7 +442,7 @@ minuto, luego 2, 4… hasta 6 horas, y sale solo cuando Gmail vuelve.
 | Túnel y respaldo caídos | Sigue reintentando, sin buses nuevos; el mapa y el último estado se quedan | Sin flota; «Recargar» no arregla nada hasta que vuelva |
 | Backend reiniciado | Se resuscribe solo y vuelven los buses | Vuelve a pedir la flota solo |
 | Bus sin señal (5 min sin publicar) | «Bus sin señal» en la hoja, y el aviso de cercanía queda bloqueado | El bus deja de actualizarse |
-| Aviso armado y app cerrada (Android) | La notificación llega por push al kilómetro, si el servidor tiene la clave de Firebase | — |
+| Aviso armado y app cerrada (Android) | La notificación llega por push a la distancia que eligió el pasajero, si el servidor tiene la clave de Firebase | — |
 | Panel revocado | — | «Tu sesión expiró» en menos de 60 s |
 
 ## Fly, el respaldo

@@ -103,7 +103,7 @@ Las lecturas públicas admiten 120 por minuto e IP (`429 TOO_MANY_REQUESTS`).
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/avisos` | Arma `{ token, busId, routeId, lat, lon, vidaMs? }` → `201 { id }`. Sin `YA_VIENE_FCM_CREDENCIALES`: `503 PUSH_NO_DISPONIBLE`. Bus oculto o inexistente: `404 BUS_NOT_FOUND`. Más de dos por teléfono: `429 DEMASIADOS_AVISOS` |
+| POST | `/api/avisos` | Arma `{ token, busId, routeId, lat, lon, vidaMs?, radioM? }` → `201 { id }`. `radioM`: metros a los que suena, entero de 500 a 3000 (sin él, 1000). Sin `YA_VIENE_FCM_CREDENCIALES`: `503 PUSH_NO_DISPONIBLE`. Bus oculto o inexistente: `404 BUS_NOT_FOUND`. Más de dos por teléfono: `429 DEMASIADOS_AVISOS` |
 | PUT | `/api/avisos/:id` | Latido de la app viva `{ token, lat, lon }` → `204`. Ya enviado: `410 AVISO_ENVIADO`. Vencido o borrado: `404 AVISO_NOT_FOUND` |
 | DELETE | `/api/avisos/:id` | Desarma (`204`, idempotente) |
 

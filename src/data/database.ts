@@ -897,6 +897,14 @@ function initSchema(): void {
           .run(destino, Date.now());
       },
     },
+    {
+      version: 29,
+      apply: () => {
+        // La distancia del aviso la elige el pasajero (500 m a 3 km; dueño,
+        // 2026-10-06). Los avisos que ya estaban armados se armaron a 1 km.
+        ensureColumn(d, 'avisos_push', 'radio_m', 'INTEGER NOT NULL DEFAULT 1000');
+      },
+    },
   ];
 
   for (const migration of migrations) {

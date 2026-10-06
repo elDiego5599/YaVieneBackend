@@ -396,7 +396,8 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
     guardar('rest-fleet-routes', await pedir('GET', '/api/fleet/routes', undefined, admin));
 
     // ── Aviso con la app cerrada (D13) ────────────────────────────────
-    // El pasajero espera a unos 300 m del bus. El servidor lo revisa cada
+    // El pasajero espera a unos 300 m del bus y pidió el aviso a 500 m, la
+    // distancia más corta que deja elegir la app. El servidor lo revisa cada
     // 5 s; el mensaje llega al FCM falso en la vuelta siguiente.
     const llegoPush = new Promise<void>((resolve, reject) => {
       const reloj = setTimeout(() => reject(new Error('el push no llegó en 12 s')), 12_000);
@@ -411,6 +412,7 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
       routeId: RUTA,
       lat: 10.9907,
       lon: -74.7887,
+      radioM: 500,
     }) as { id: string };
     guardar('rest-aviso-creado', { ...aviso, id: '<avisoId>' });
     await llegoPush;

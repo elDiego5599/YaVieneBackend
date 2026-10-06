@@ -56,7 +56,9 @@ export const MUTACIONES = [
   { archivo: 'src/data/avisos_push.ts', de: 'if (total.n >= MAX_AVISOS)', a: 'if (total.n > MAX_AVISOS)', que: 'tope total de avisos' },
   { archivo: 'src/data/avisos_push.ts', de: 'Math.min(aviso.vidaMs, VIDA_MAXIMA_MS)', a: 'aviso.vidaMs', que: 'vida máxima de un aviso' },
   { archivo: 'src/data/avisos_push.ts', de: "if (fila.enviado_en !== null) return 'enviado';", a: "if (false) return 'enviado';", que: 'aviso ya enviado' },
-  { archivo: 'src/data/avisos_push.ts', de: 'if (metros > RADIO_AVISO_M ||', a: 'if (metros > RADIO_AVISO_M * 2 ||', que: 'radio del aviso' },
+  { archivo: 'src/data/avisos_push.ts', de: 'if (metros > c.radio_m ||', a: 'if (metros > RADIO_AVISO_M ||', que: 'radio del aviso el que eligió el pasajero' },
+  { archivo: 'src/api/routes.ts', de: 'radioM < RADIO_MINIMO_M || radioM > RADIO_MAXIMO_M', a: 'radioM < 0 || radioM > RADIO_MAXIMO_M', que: 'distancia mínima del aviso' },
+  { archivo: 'src/api/routes.ts', de: 'radioM: radioM ?? RADIO_AVISO_M,', a: 'radioM: radioM ?? RADIO_MAXIMO_M,', que: 'el kilómetro de las apps de antes' },
   // Límites contra abuso.
   { archivo: 'src/security/rate_limiter.ts', de: 'if (vivas.length >= this.maxRequests) {', a: 'if (vivas.length > this.maxRequests) {', que: 'tope de peticiones' },
   { archivo: 'src/security/rate_limiter.ts', de: 'if (vivos.length < this.maxFallos) {', a: 'if (vivos.length <= this.maxFallos) {', que: 'fallos antes del bloqueo' },

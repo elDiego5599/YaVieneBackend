@@ -45,7 +45,9 @@ import {
   SlidingWindowRateLimiter,
 } from '../security/rate_limiter';
 import { getDb } from '../data/database';
-import { borrarAviso, crearAviso, renovarAviso, VIDA_MAXIMA_MS } from '../data/avisos_push';
+import {
+  borrarAviso, crearAviso, RADIO_AVISO_M, RADIO_MAXIMO_M, RADIO_MINIMO_M, renovarAviso, VIDA_MAXIMA_MS,
+} from '../data/avisos_push';
 import { crearReporte, leerReporte } from '../data/reportes';
 import { busInCatalog } from '../data/positions_store';
 import { getBusVisibility } from '../data/fleet_admin';
@@ -915,7 +917,7 @@ addRoute('POST', '/api/avisos', (req, res, _params, body) => {
     writeError(res, 400, 'INVALID_INPUT', punto);
     return;
   }
-  const { busId, routeId, vidaMs } = body ?? {};
+  const { busId, routeId, vidaMs, radioM } = body ?? {};
   if (typeof routeId !== 'string' || !isRouteId(routeId)) {
     writeError(res, 400, 'INVALID_INPUT', 'routeId inválido');
     return;
@@ -924,13 +926,23 @@ addRoute('POST', '/api/avisos', (req, res, _params, body) => {
     writeError(res, 400, 'INVALID_INPUT', 'vidaMs tiene que ser un entero positivo');
     return;
   }
+  // La distancia que eligió el pasajero. Sin ella (una app de antes) suena
+  // al kilómetro de siempre.
+  if (radioM !== undefined && (
+    typeof radioM !== 'number' || !Number.isInteger(radioM) || radioM < RADIO_MINIMO_M || radioM > RADIO_MAXIMO_M
+  )) {
+    writeError(res, 400, 'INVALID_INPUT', `radioM tiene que ser un entero entre ${RADIO_MINIMO_M} y ${RADIO_MAXIMO_M}`);
+    return;
+  }
   // Un bus oculto por su empresa responde igual que uno que no existe: el
   // pasajero no lo ve en el mapa y no tiene por qué saber que está.
   if (typeof busId !== 'string' || !busInCatalog(busId) || !getBusVisibility(busId)) {
     writeError(res, 404, 'BUS_NOT_FOUND', 'Bus no encontrado');
     return;
   }
-  const creado = crearAviso({ ...punto, busId, routeId, vidaMs: vidaMs ?? VIDA_MAXIMA_MS });
+  const creado = crearAviso({
+    ...punto, busId, routeId, vidaMs: vidaMs ?? VIDA_MAXIMA_MS, radioM: radioM ?? RADIO_AVISO_M,
+  });
   if (creado === 'tope_token') {
     writeError(res, 429, 'DEMASIADOS_AVISOS', 'Este teléfono ya tiene el máximo de avisos armados');
     return;

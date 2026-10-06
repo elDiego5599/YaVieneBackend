@@ -37,9 +37,11 @@ El orden, que es el mismo de la demo en vivo:
 5. **La tarjeta del bus**: el número grande con la distancia («850», «m de ti»)
    bajando sola mientras el bus se acerca. Distancia, no tiempo estimado: eso es
    deliberado y vale la pena decirlo en voz alta mientras se graba.
-6. **Armar el aviso** con «Avisarme cuando esté cerca». Si el bus ya está a menos
-   de un kilómetro el botón sale bloqueado y dice «El bus ya está cerca»: por eso
-   se toca `WGV705` cuando todavía viene lejos.
+6. **Armar el aviso** con «Avisarme cuando esté cerca». La primera vez sale la
+   rueda de la distancia (de 500 m a 3 km, como la alarma del iPhone): se gira a
+   la que se quiera y «Guardar». Después la hoja dice «Te avisamos a … · Cambiar».
+   Si el bus ya está más cerca que esa distancia el botón sale bloqueado y dice
+   «El bus ya está cerca»: por eso se toca `WGV705` cuando todavía viene lejos.
 7. **Volver al panel** y mostrar el mismo bus ahí, con su placa. Es la frase que
    cierra: las dos pantallas están viendo lo mismo, al mismo tiempo.
 

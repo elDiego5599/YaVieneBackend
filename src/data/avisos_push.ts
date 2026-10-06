@@ -1,7 +1,8 @@
 // Avisos de «tu bus está cerca» que el servidor manda por push (D13).
 //
 // La app del pasajero avisa sola mientras está viva: mira la posición del bus
-// cada 5 s y lanza la notificación local a 1 km. Con la app cerrada eso no
+// cada 5 s y lanza la notificación local a la distancia que el pasajero
+// eligió (de 500 m a 3 km). Con la app cerrada eso no
 // corre, y para eso está esta tabla. El servidor vigila todos los avisos desde
 // que se arman, viva o no la app: no sabe cuándo la cierran, y esperar a que
 // los latidos faltaran un minuto hacía que el aviso saliera con el bus ya a
@@ -18,7 +19,15 @@ import { haversineDistanceKm } from '../security/physics';
 import { incrementMetric } from '../observability/metrics';
 import type { EmisorFcm } from '../push/fcm';
 
-/** El mismo radio con el que avisa la app (`alertRadiusMeters`). */
+/**
+ * La distancia del aviso la elige el pasajero en la app, entre estos dos
+ * topes (`distanciaAvisoMinima` / `Maxima` en la app). Por debajo de 500 m
+ * el aviso llega con el bus encima; por encima de 3 km avisa demasiado
+ * pronto y la ruta deja de servir de filtro.
+ */
+export const RADIO_MINIMO_M = 500;
+export const RADIO_MAXIMO_M = 3000;
+/** El de una app de antes, que no manda distancia: el kilómetro fijo de entonces. */
 export const RADIO_AVISO_M = 1000;
 /** Tres horas, como `vidaDeUnAviso` en la app: un aviso olvidado no queda armado. */
 export const VIDA_MAXIMA_MS = 3 * 60 * 60 * 1000;
@@ -34,6 +43,8 @@ export interface NuevoAviso {
   lat: number;
   lon: number;
   vidaMs: number;
+  /** Metros a los que suena, ya validados entre los dos topes. */
+  radioM: number;
 }
 
 /**
@@ -55,11 +66,11 @@ export function crearAviso(
     if (total.n >= MAX_AVISOS) return 'lleno' as const;
     const id = randomUUID();
     db.prepare(`
-      INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence, radio_m)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, aviso.token, aviso.busId, aviso.routeId, aviso.lat, aviso.lon,
-      ahora, ahora + Math.min(aviso.vidaMs, VIDA_MAXIMA_MS),
+      ahora, ahora + Math.min(aviso.vidaMs, VIDA_MAXIMA_MS), aviso.radioM,
     );
     return { id };
   });
@@ -113,7 +124,7 @@ export function barrerVencidos(ahora: number = Date.now()): number {
 
 /**
  * Una vuelta del servidor: barre lo vencido y avisa de los buses que entraron
- * al radio de un aviso. Solo cuentan los buses con
+ * al radio que eligió el pasajero. Solo cuentan los buses con
  * señal (`is_ghost = 0`), visibles y en la ruta del aviso, igual que en la
  * app. Devuelve una promesa que se cumple cuando terminan los envíos de esta
  * vuelta y nunca se rechaza (el reloj de index.ts no la espera).
@@ -121,20 +132,20 @@ export function barrerVencidos(ahora: number = Date.now()): number {
 export function revisarAvisos(emisor: EmisorFcm, ahora: number = Date.now()): Promise<void> {
   barrerVencidos(ahora);
   const candidatos = getDb().prepare(`
-    SELECT a.id, a.token, a.bus_id, a.route_id, a.lat, a.lon, p.lat AS bus_lat, p.lon AS bus_lon
+    SELECT a.id, a.token, a.bus_id, a.route_id, a.lat, a.lon, a.radio_m, p.lat AS bus_lat, p.lon AS bus_lon
     FROM avisos_push a
     JOIN positions p ON p.bus_id = a.bus_id AND p.route_id = a.route_id AND p.is_ghost = 0
     JOIN buses b ON b.bus_id = a.bus_id AND b.visible = 1
     WHERE a.enviado_en IS NULL
   `).all() as Array<{
     id: string; token: string; bus_id: string; route_id: string;
-    lat: number; lon: number; bus_lat: number; bus_lon: number;
+    lat: number; lon: number; radio_m: number; bus_lat: number; bus_lon: number;
   }>;
 
   const envios: Promise<void>[] = [];
   for (const c of candidatos) {
     const metros = haversineDistanceKm(c.lat, c.lon, c.bus_lat, c.bus_lon) * 1000;
-    if (metros > RADIO_AVISO_M || !marcarEnviado(c.id, ahora)) continue;
+    if (metros > c.radio_m || !marcarEnviado(c.id, ahora)) continue;
     const datos = {
       tipo: 'bus_cerca',
       avisoId: c.id,

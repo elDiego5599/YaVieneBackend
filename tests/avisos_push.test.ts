@@ -157,7 +157,7 @@ function limpiar(): void {
 }
 
 function armar(token = TOKEN, punto = PASAJERO, ahora = Date.now()): string {
-  const creado = avisos.crearAviso({ token, busId, routeId: RUTA, ...punto, vidaMs: avisos.VIDA_MAXIMA_MS }, ahora);
+  const creado = avisos.crearAviso({ token, busId, routeId: RUTA, ...punto, vidaMs: avisos.VIDA_MAXIMA_MS, radioM: avisos.RADIO_AVISO_M }, ahora);
   assert.equal(typeof creado, 'object');
   return (creado as { id: string }).id;
 }
@@ -298,7 +298,7 @@ test('crearAviso: el mismo teléfono y bus reemplaza; dos por teléfono; tope de
   const filas = getDb().prepare('SELECT id FROM avisos_push').all() as { id: string }[];
   assert.deepEqual(filas.map((f) => f.id), [segundo]);
 
-  const comun = { token: TOKEN, routeId: RUTA, ...PASAJERO, vidaMs: 1000 };
+  const comun = { token: TOKEN, routeId: RUTA, ...PASAJERO, vidaMs: 1000, radioM: avisos.RADIO_AVISO_M };
   assert.equal(typeof avisos.crearAviso({ ...comun, busId: busOculto }), 'object');
   assert.equal(avisos.crearAviso({ ...comun, busId: 'BUS-OTRO' }), 'tope_token');
 
@@ -368,6 +368,28 @@ test('revisarAvisos: avisa en cuanto el bus entra al kilómetro, y una sola vez'
   await avisos.revisarAvisos(emisor, ahora + 7_500);
   assert.equal(falso.enviados.length, 1, 'no se repite');
   assert.equal(avisos.renovarAviso(id, { token: TOKEN, ...PASAJERO }, ahora + 8_000), 'enviado');
+  ponerBus(LEJOS);
+});
+
+test('revisarAvisos: avisa a la distancia que eligió el pasajero, no a un kilómetro fijo', async () => {
+  limpiar();
+  const emisor = new fcm.EmisorFcm(fcm.leerCredencialesFcm(RUTA_CREDENCIALES), baseFcm);
+  const ahora = Date.now();
+  const corto = 'tok-corto-' + 'g'.repeat(30);
+  const largo = 'tok-largo-' + 'h'.repeat(30);
+  avisos.crearAviso({ token: corto, busId, routeId: RUTA, ...PASAJERO, vidaMs: 60_000, radioM: 500 }, ahora);
+  avisos.crearAviso({ token: largo, busId, routeId: RUTA, ...PASAJERO, vidaMs: 60_000, radioM: 3000 }, ahora);
+
+  // ~2,2 km: fuera de 500 m, dentro de 3 km.
+  ponerBus(LEJOS);
+  await avisos.revisarAvisos(emisor, ahora + 1_000);
+  assert.deepEqual(falso.enviados.map((e) => e.message.token), [largo]);
+  assert.match((falso.enviados[0].message.data as Record<string, string>).distancia, /^22\d\d$/);
+
+  // ~556 m: todavía fuera de 500 m.
+  ponerBus(CERCA);
+  await avisos.revisarAvisos(emisor, ahora + 2_000);
+  assert.equal(falso.enviados.length, 1, 'a 556 m el de 500 m no suena');
   ponerBus(LEJOS);
 });
 
@@ -465,6 +487,10 @@ test('POST /api/avisos valida todo y arma', async () => {
     [{ ...bueno, routeId: 'ruta con espacios' }, 'routeId inválido'],
     [{ ...bueno, vidaMs: -1 }, 'vidaMs tiene que ser un entero positivo'],
     [{ ...bueno, vidaMs: 1.5 }, 'vidaMs tiene que ser un entero positivo'],
+    [{ ...bueno, radioM: 499 }, 'radioM tiene que ser un entero entre 500 y 3000'],
+    [{ ...bueno, radioM: 3001 }, 'radioM tiene que ser un entero entre 500 y 3000'],
+    [{ ...bueno, radioM: 750.5 }, 'radioM tiene que ser un entero entre 500 y 3000'],
+    [{ ...bueno, radioM: '1000' }, 'radioM tiene que ser un entero entre 500 y 3000'],
   ] as const) {
     const r = await llamar('POST', '/api/avisos', malo);
     assert.equal(r.estado, 400, JSON.stringify(malo));
@@ -481,6 +507,15 @@ test('POST /api/avisos valida todo y arma', async () => {
   const { vence, creado: en } = getDb().prepare('SELECT vence, creado FROM avisos_push WHERE id = ?')
     .get(creado.cuerpo.id) as { vence: number; creado: number };
   assert.equal(vence - en, avisos.VIDA_MAXIMA_MS, 'sin vidaMs vive lo máximo');
+  const radio = (id: unknown): number =>
+    (getDb().prepare('SELECT radio_m FROM avisos_push WHERE id = ?').get(id) as { radio_m: number }).radio_m;
+  // Una app de antes no manda radioM: su aviso sigue sonando a 1 km.
+  assert.equal(radio(creado.cuerpo.id), 1000, 'sin radioM, el kilómetro de antes');
+  for (const radioM of [500, 3000]) {
+    const conRadio = await llamar('POST', '/api/avisos', { ...bueno, radioM });
+    assert.equal(conRadio.estado, 201);
+    assert.equal(radio(conRadio.cuerpo.id), radioM);
+  }
 
   getDb().prepare(`
     INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence)
