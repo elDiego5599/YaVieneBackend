@@ -249,21 +249,6 @@ addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
   writeJson(res, 200, { status: 'offline', busId: params.busId });
 });
 
-// Cada token lee solo su propia ficha, y todo lo demás —sin token, ficha
-// ajena o teléfono que no existe— recibe el mismo 403. Si la respuesta
-// cambiara según exista el teléfono, cualquiera podría barrer números y
-// saber cuáles están dados de alta. La administración no lee fichas por
-// aquí: lo hace el panel de flota con su propio token.
-addRoute('GET', '/api/drivers/:phone', (req, res, params) => {
-  const auth = authenticateRequest(req);
-  const driver = getDriver(params.phone);
-  if (auth?.role !== 'driver' || !driver || auth.driverId !== driver.driverId) {
-    writeError(res, 403, 'DRIVER_FORBIDDEN', 'The token cannot read this driver');
-    return;
-  }
-  writeJson(res, 200, publicDriver(driver));
-});
-
 addRoute('POST', '/api/gps', (_req, res) => {
   writeError(res, 410, 'HTTP_GPS_DISABLED', 'GPS ingestion is available through authenticated MQTT only');
 });

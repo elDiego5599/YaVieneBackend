@@ -204,7 +204,7 @@ test('DAST-lite: SQLi/XSS/JSON gigante/verbos raros nunca producen 5xx', async (
       ['POST', '/api/auth/login', '{'.repeat(500_000)],
       ['POST', '/api/fleet/buses', JSON.stringify({ companyId: '$ne', routeId: "''" })],
       ['GET', `/api/company/routes?companyId=${encodeURIComponent("EMP-01' OR 1=1")}`, null],
-      ['GET', `/api/drivers/${encodeURIComponent('../../etc/passwd')}`, null],
+      ['GET', `/api/buses/${encodeURIComponent('../../etc/passwd')}`, null],
       ['PATCH', '/api/health', JSON.stringify({ x: 1 })],
     ];
     for (const [method, path, body] of probes) {

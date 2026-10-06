@@ -750,8 +750,6 @@ test('fleet: una empresa no puede tocar ni ver buses, rutas ni flota de otra', {
     assert.equal(intacto.routeId, 'R-301');
     assert.equal(intacto.interno, '077');
 
-    // La ficha de un conductor no dice si un teléfono existe a quien no
-    // puede leerla: mismo 403 para uno dado de alta y uno inventado.
     const phone = `3009${suffix}`;
     const provision = await call(conClave, 'POST', '/api/admin/drivers', {
       phoneNumber: phone,
@@ -762,11 +760,6 @@ test('fleet: una empresa no puede tocar ni ver buses, rutas ni flota de otra', {
       routeId: 'R-101',
     });
     assert.equal(provision.status, 201);
-    const existente = await fetch(`${base}/api/drivers/${phone}`);
-    const inventado = await fetch(`${base}/api/drivers/3990000000`);
-    assert.equal(existente.status, 403);
-    assert.equal(inventado.status, 403);
-    assert.deepEqual(await existente.json(), await inventado.json());
 
     // Probar claves de administración también gasta cupo: antes solo
     // contaban los intentos con la clave buena. Con la provisión de arriba

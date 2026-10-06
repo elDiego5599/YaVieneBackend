@@ -114,7 +114,6 @@ El punto tiene que caer en la zona de servicio. 120 por minuto e IP.
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | POST | `/api/auth/login` | `{ phoneNumber, pin, busId?, routeId? }` → `{ driver, token }`. 10 PIN fallidos en una hora bloquean la línea: 5 min la primera vez, el doble cada bloqueo seguido, hasta 24 h. `429 RATE_LIMITED` con `Retry-After` |
-| GET | `/api/drivers/:phone` | Ficha propia con token de conductor. Sin permiso: siempre 403, exista o no |
 | POST | `/api/buses/:busId/offline` | Fin de turno: quita el bus del mapa y revoca la sesión |
 
 ### Superadministración (`x-admin-key`)

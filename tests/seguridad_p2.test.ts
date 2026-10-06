@@ -272,6 +272,66 @@ test('P1-2, segunda barrera: la lista de una ruta solo trae buses de su dueña',
   assert.deepEqual(vieja.json.buses.map((b: { busId: string }) => b.busId), ['BUS-VIEJO688']);
 });
 
+test('un bus oculto no sale en la lista de su empresa ni en su ruta, por REST ni por socket', { timeout: 20_000 }, async () => {
+  // Los dos de A y en una ruta del catálogo de A: así solo los separa la
+  // visibilidad. En `fleet.test.ts` el bus oculto iba en una ruta de otra
+  // empresa y la barrera de P1-2 lo sacaba igual: quitar el filtro de
+  // ocultos no rompía nada (R-35, revisión 2026-10-06).
+  assert.equal((await llamar(panelA, 'POST', '/api/fleet/routes', { routeId: 'R-502', name: 'Otra de A' })).status, 201);
+  for (const placa of ['AAA502', 'AAA503']) {
+    assert.equal((await llamar(panelA, 'POST', '/api/fleet/buses', { placa, routeId: 'R-502' })).status, 201);
+  }
+  assert.equal((await provisionar({ phoneNumber: '3005020001', companyId: EMPRESA_A, busId: 'BUS-AAA502', routeId: 'R-502' })).status, 201);
+  assert.equal((await provisionar({ phoneNumber: '3005030001', companyId: EMPRESA_A, busId: 'BUS-AAA503', routeId: 'R-502' })).status, 201);
+  assert.equal((await llamar(panelA, 'POST', '/api/fleet/buses/BUS-AAA502/visibility', { visible: true })).status, 200);
+  assert.equal((await llamar(panelA, 'POST', '/api/fleet/buses/BUS-AAA503/visibility', { visible: false })).status, 200);
+
+  const base = new Database(DB_PATH);
+  try {
+    const posicion = base.prepare(`
+      INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, driver_phone, captured_at)
+      VALUES (?, 'R-502', 10.98, -74.8, 20, ?, ?, ?)
+    `);
+    const ahora = Date.now();
+    posicion.run('BUS-AAA502', ahora, '3005020001', ahora);
+    posicion.run('BUS-AAA503', ahora, '3005030001', ahora);
+    // Precondición: el oculto es de A, va en R-502 y tiene posición ahí. Si
+    // no, otra cosa lo dejaría fuera y la prueba pasaría sin el filtro.
+    const oculto = base.prepare(`
+      SELECT b.visible, b.company_id, p.route_id AS pos_ruta
+      FROM buses b JOIN positions p ON p.bus_id = b.bus_id WHERE b.bus_id = 'BUS-AAA503'
+    `).get();
+    assert.deepEqual(oculto, { visible: 0, company_id: EMPRESA_A, pos_ruta: 'R-502' });
+  } finally {
+    base.close();
+  }
+
+  const flota = await llamar({}, 'GET', `/api/companies/${EMPRESA_A}/buses`);
+  assert.equal(flota.status, 200);
+  const ids = flota.json.map((b: { busId: string }) => b.busId);
+  assert.ok(ids.includes('BUS-AAA502'), flota.texto);
+  assert.ok(!ids.includes('BUS-AAA503'), flota.texto);
+
+  const lista = await llamar({}, 'GET', '/api/routes/R-502/positions');
+  assert.equal(lista.status, 200);
+  assert.deepEqual(lista.json.buses.map((b: { busId: string }) => b.busId), ['BUS-AAA502'], lista.texto);
+
+  const pasajero = io(BASE, { path: '/ws', transports: ['websocket'], reconnection: false });
+  try {
+    const foto = await new Promise<{ buses: { busId: string }[] }>((resolve, reject) => {
+      const reloj = setTimeout(() => reject(new Error('sin positions:batch')), 5000);
+      pasajero.once('positions:batch', (datos) => {
+        clearTimeout(reloj);
+        resolve(datos);
+      });
+      pasajero.on('connect', () => pasajero.emit('subscribe:route', 'R-502'));
+    });
+    assert.deepEqual(foto.buses.map((b) => b.busId), ['BUS-AAA502']);
+  } finally {
+    pasajero.disconnect();
+  }
+});
+
 test('P2-2: el tope de logins por IP cuenta una IPv6 por su /64', async () => {
   // Cuentas distintas y una dirección distinta cada vez, todas del mismo
   // /64: es una sola máquina y le tocan 20 intentos por minuto.

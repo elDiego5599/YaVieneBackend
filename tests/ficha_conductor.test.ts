@@ -1,10 +1,9 @@
-// Quién puede leer `GET /api/drivers/:phone`, rol por rol.
-//
-// La regla: cada token lee solo su propia ficha, y todo lo demás recibe el
-// mismo 403, exista el teléfono o no. Si la respuesta cambiara según exista,
-// cualquiera podría barrer números y saber cuáles están dados de alta. La
-// clave de administración tampoco abre fichas aquí, ni sola ni mezclada con
-// un token de conductor: la administración lee con el panel de flota.
+// `GET /api/drivers/:phone` ya no existe (T3.5, 2026-10-06). Leía la ficha
+// del conductor con su propio token, pero no hay app de conductor (el GPS
+// es un equipo en el bus) y ningún cliente la llamaba: era superficie de
+// ataque sin uso. Ahora contesta como cualquier ruta que no existe, para
+// todos y exista o no el teléfono, así que tampoco sirve para barrer
+// números.
 //
 // Igual que `api_rutas.test.ts`, no se levanta el backend entero: el mismo
 // manejador sobre un servidor de usar y tirar, con base temporal y el
@@ -83,46 +82,25 @@ test.after(async () => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-async function ficha(
-  phone: string,
+async function pedir(
+  ruta: string,
   headers: Record<string, string> = {},
 ): Promise<{ estado: number; cuerpo: unknown }> {
-  const r = await fetch(`${base}/api/drivers/${phone}`, { headers });
+  const r = await fetch(`${base}${ruta}`, { headers });
   return { estado: r.status, cuerpo: await r.json() };
 }
 
-test('conductor: lee su ficha y nada más', async () => {
+test('la ficha del conductor ya no se sirve, ni con su propio token', async () => {
+  const nada = await pedir('/api/no-existe');
+  assert.equal(nada.estado, 404);
   const conToken = { authorization: `Bearer ${tokenPropio}` };
-  const propia = await ficha(PROPIO, conToken);
-  assert.equal(propia.estado, 200);
-  assert.equal((propia.cuerpo as { phoneNumber: string }).phoneNumber, PROPIO);
-
-  // La ajena y la que no existe responden lo mismo, palabra por palabra.
-  const ajena = await ficha(AJENO, conToken);
-  const inventada = await ficha(INVENTADO, conToken);
-  assert.equal(ajena.estado, 403);
-  assert.equal(inventada.estado, 403);
-  assert.deepEqual(ajena.cuerpo, inventada.cuerpo);
-});
-
-test('admin: la clave no abre fichas, ni sola ni junto a un token', async () => {
-  const soloClave = { 'x-admin-key': CLAVE_ADMIN };
-  assert.equal((await ficha(AJENO, soloClave)).estado, 403);
-
-  // Token de conductor y clave juntos siguen siendo solo ese conductor: ni
-  // la ficha ajena ni un 404 que delate al teléfono inexistente.
-  const mezcla = { ...soloClave, authorization: `Bearer ${tokenPropio}` };
-  const ajena = await ficha(AJENO, mezcla);
-  const inventada = await ficha(INVENTADO, mezcla);
-  assert.equal(ajena.estado, 403);
-  assert.equal(inventada.estado, 403);
-  assert.deepEqual(ajena.cuerpo, inventada.cuerpo);
-});
-
-test('anónimo: el mismo 403 exista el teléfono o no', async () => {
-  const existente = await ficha(PROPIO);
-  const inventada = await ficha(INVENTADO);
-  assert.equal(existente.estado, 403);
-  assert.equal(inventada.estado, 403);
-  assert.deepEqual(existente.cuerpo, inventada.cuerpo);
+  for (const [telefono, headers] of [
+    [PROPIO, conToken],
+    [AJENO, conToken],
+    [INVENTADO, conToken],
+    [AJENO, { 'x-admin-key': CLAVE_ADMIN }],
+    [PROPIO, {}],
+  ] as const) {
+    assert.deepEqual(await pedir(`/api/drivers/${telefono}`, headers), nada, telefono);
+  }
 });

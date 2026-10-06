@@ -148,12 +148,7 @@ test('login de conductor: faltantes, malo y bueno', async () => {
   tokenConductor = bueno.cuerpo.token as string;
 });
 
-test('ficha y offline del conductor', async () => {
-  const ficha = await llamar('GET', `/api/drivers/${TELEFONO}`, undefined, comoAdmin(tokenConductor));
-  assert.equal(ficha.estado, 200);
-  assert.equal((await llamar('GET', '/api/drivers/+57000', undefined, comoAdmin(tokenConductor))).estado, 403);
-  assert.equal((await llamar('GET', `/api/drivers/${TELEFONO}`)).estado, 403);
-
+test('offline del conductor', async () => {
   const fuera = await llamar(
     'POST', '/api/buses/BUS-API001/offline', {}, comoAdmin(tokenConductor),
   );

@@ -63,6 +63,9 @@ export const MUTACIONES = [
   { archivo: 'src/security/rate_limiter.ts', de: 'this.bloqueoBaseMs * 2 ** (bloqueos - 1)', a: 'this.bloqueoBaseMs', que: 'bloqueo que crece' },
   { archivo: 'src/mqtt/guardia.ts', de: 'if (this.largo > this.tope) return false;', a: 'if (this.largo > this.tope * 2) return false;', que: 'tope de paquete MQTT' },
   { archivo: 'src/mqtt/guardia.ts', de: 'if (n >= this.tope) return false;', a: 'if (n > this.tope) return false;', que: 'conexiones MQTT por IP' },
+  // Visibilidad: el bus que la empresa oculta no lo ve el pasajero.
+  { archivo: 'src/api/routes.ts', de: 'getCompanyBuses(params.id).filter((b) => b.visible),', a: 'getCompanyBuses(params.id),', que: 'ocultos fuera de la lista pública' },
+  { archivo: 'src/data/positions_store.ts', de: 'WHERE p.route_id = ? AND (b.visible = 1 OR b.visible IS NULL)', a: 'WHERE p.route_id = ?', que: 'ocultos fuera de las posiciones por ruta' },
 ];
 
 function correrSuite() {
