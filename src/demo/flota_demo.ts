@@ -27,7 +27,7 @@ import { flotaDemoHabilitada } from '../config';
 export interface BusDemo {
   /** `BUS-<placa>`, como el id de un bus dado de alta en el panel. */
   busId: string;
-  /** Tres letras y tres números, como las placas de verdad (WGV705). */
+  /** Tres letras y tres números, como las placas de verdad (ABC123). */
   placa: string;
   routeId: string;
   /** La empresa dueña de la ruta: con ella se registra el simulador. */
@@ -62,7 +62,8 @@ const INTERVALO_LENTO = process.env.CAPTURE_INTERVAL_MS_RESTO || '1500';
 // 2026-09-30): con «B-042» la app decía «Ruta - B-042», una placa que no
 // existe. Los números siguen los de los ids viejos (B-042 → WFK042, B-201 →
 // SKR201) para que los registros de antes se lean contra los de ahora. En
-// R-106, la de la presentación, WGV705 es el que viene hacia el pasajero.
+// R-106, la de la presentación, ABC123 es el que viene hacia el pasajero:
+// una placa inventada (dueño, 2026-10-06).
 // `scripts/demo-buses.sh` usa las mismas: correr los dos no duplica buses.
 const FLOTA_CONOCIDA: Record<string, Array<[string, number, string]>> = {
   'R-101': [['TNM901', 0.35, '3000000999'], ['SKR201', 0.7, '3000000201']],
@@ -70,7 +71,7 @@ const FLOTA_CONOCIDA: Record<string, Array<[string, number, string]>> = {
   'R-103': [['SNZ204', 0.25, '3000000204'], ['TPH205', 0.75, '3000000205']],
   'R-104': [['WGA206', 0.3, '3000000206'], ['UHE207', 0.6, '3000000207']],
   'R-105': [['VXR208', 0.1, '3000000208'], ['SDC209', 0.55, '3000000209']],
-  'R-106': [['WFK042', 0.8, '3000000000'], ['WGV705', 0.15, '3000000001']],
+  'R-106': [['WFK042', 0.8, '3000000000'], ['ABC123', 0.15, '3000000001']],
 };
 
 /**
@@ -81,6 +82,8 @@ const FLOTA_CONOCIDA: Record<string, Array<[string, number, string]>> = {
 const IDS_VIEJOS = [
   'B-042', 'B-055', 'B-901', 'B-201', 'B-202', 'B-203',
   'B-204', 'B-205', 'B-206', 'B-207', 'B-208', 'B-209',
+  // El de la presentación hasta el 2026-10-06, hoy BUS-ABC123.
+  'BUS-WGV705',
 ];
 const ID_VIEJO_DERIVADO = /^B-[0-9]{3}[AB]$/;
 
@@ -143,7 +146,7 @@ export function construirFlota(): BusDemo[] {
  * avisa a los pasajeros y a los paneles que los tenían en pantalla. Y da de
  * alta cada bus con su placa antes de que el simulador se registre: el
  * registro del conductor solo crea el bus por su id, y sin `plate_number` el
- * panel enseñaba «BUS-WGV705». Una placa ya cambiada desde el panel se
+ * panel enseñaba «BUS-ABC123». Una placa ya cambiada desde el panel se
  * respeta. Un bus cuyo id o cuya placa ya son de otra empresa se queda
  * fuera: el registro lo rechazaría igual y el simulador se reiniciaría en
  * bucle.

@@ -3,7 +3,7 @@
 // Los buses simulados se llamaban B-042, B-201…: así salían en la app del
 // pasajero («Ruta - B-042») y en el panel, y ningún bus de Barranquilla tiene
 // esa placa. El dueño pidió que se vieran como las reales, tres letras y tres
-// números (WGV705), 2026-09-30. Ahora nacen como nace un bus dado de alta en
+// números (ABC123), 2026-09-30. Ahora nacen como nace un bus dado de alta en
 // el panel: id `BUS-<placa>` con su placa guardada, y los B-0xx que quedaron
 // en la base se retiran al arrancar para no quedarse en el panel como buses
 // sin señal.
@@ -54,7 +54,7 @@ test('cada bus de la flota lleva placa colombiana y su id sale de ella', () => {
   // Ni una placa repetida: el índice único de la base no dejaría guardarla.
   assert.equal(new Set(flota.map((b) => b.placa)).size, flota.length);
   // La que se toca en la presentación: viene hacia el pasajero en R-106.
-  const destacada = flota.find((b) => b.placa === 'WGV705');
+  const destacada = flota.find((b) => b.placa === 'ABC123');
   assert.equal(destacada?.routeId, 'R-106');
 });
 
@@ -75,23 +75,26 @@ test('al arrancar, los B-0xx viejos se van y los nuevos salen con su placa en el
   sembrarBusViejo('B-042', 'R-106', '3000000000');
   sembrarBusViejo('B-201', 'R-101', '3000000201');
   sembrarBusViejo('B-107A', 'R-107', '3001107001');
+  // La placa de la presentación hasta el 2026-10-06; ahora es ABC123, una
+  // inventada (dueño).
+  sembrarBusViejo('BUS-WGV705', 'R-106', '3000000001');
 
   prepararFlota(construirFlota());
 
   const ids = (d.prepare("SELECT bus_id FROM buses WHERE company_id = 'EMP-01'").all() as { bus_id: string }[])
     .map((r) => r.bus_id);
-  for (const viejo of ['B-042', 'B-201', 'B-107A']) {
+  for (const viejo of ['B-042', 'B-201', 'B-107A', 'BUS-WGV705']) {
     assert.equal(ids.includes(viejo), false, `${viejo} sigue en la base`);
   }
   assert.equal(
-    (d.prepare("SELECT COUNT(*) AS n FROM positions WHERE bus_id IN ('B-042', 'B-201', 'B-107A')").get() as { n: number }).n,
+    (d.prepare("SELECT COUNT(*) AS n FROM positions WHERE bus_id IN ('B-042', 'B-201', 'B-107A', 'BUS-WGV705')").get() as { n: number }).n,
     0,
   );
 
   // El panel lee `plate_number` y, sin ella, enseñaba el id entero.
   const panel = getCompanyBuses('EMP-01');
-  const six = panel.find((b) => b.busId === 'BUS-WGV705');
-  assert.equal(six?.placa, 'WGV705');
+  const six = panel.find((b) => b.busId === 'BUS-ABC123');
+  assert.equal(six?.placa, 'ABC123');
   assert.equal(six?.routeId, 'R-106');
   assert.equal(six?.visible, true);
   for (const bus of panel.filter((b) => b.busId.startsWith('BUS-'))) {
@@ -142,13 +145,13 @@ test('la flota arranca a 18 buses por minuto como mucho', () => {
 
 test('preparar dos veces no cambia nada, y una placa editada en el panel se respeta', () => {
   const d = getDb();
-  d.prepare("UPDATE buses SET plate_number = 'WGV706' WHERE bus_id = 'BUS-WGV705'").run();
+  d.prepare("UPDATE buses SET plate_number = 'ABC124' WHERE bus_id = 'BUS-ABC123'").run();
   prepararFlota(construirFlota());
   assert.equal(
-    (d.prepare("SELECT plate_number FROM buses WHERE bus_id = 'BUS-WGV705'").get() as { plate_number: string }).plate_number,
-    'WGV706',
+    (d.prepare("SELECT plate_number FROM buses WHERE bus_id = 'BUS-ABC123'").get() as { plate_number: string }).plate_number,
+    'ABC124',
   );
-  d.prepare("UPDATE buses SET plate_number = 'WGV705' WHERE bus_id = 'BUS-WGV705'").run();
+  d.prepare("UPDATE buses SET plate_number = 'ABC123' WHERE bus_id = 'BUS-ABC123'").run();
 });
 
 test('no le quita a otra empresa ni su bus ni su placa', () => {

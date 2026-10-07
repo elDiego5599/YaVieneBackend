@@ -176,7 +176,7 @@ test('P3-10: la provisión rechaza identificadores con los que el equipo nunca p
     assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'INVALID_DRIVER_PROVISION');
   }
   // Lo de siempre sigue entrando: ids cortos como los de la demo vieja, los
-  // de las pruebas y los que salen de una placa (la demo de hoy, BUS-WGV705).
+  // de las pruebas y los que salen de una placa (la demo de hoy, BUS-ABC123).
   for (const bueno of [
     { busId: 'B-901', routeId: 'R-101', companyId: 'EMP-01' },
     { busId: 'B-106A', routeId: 'R-106', companyId: 'EMP-01' },

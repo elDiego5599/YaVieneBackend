@@ -14,7 +14,7 @@
 #  buses moviéndose sin ir a arrancar nada. Dos por ruta, en puntos
 #  distintos del recorrido. En R-106, la de la demo, van más rápido:
 #   BUS-WFK042 → arranca al 80% del recorrido (YA PASÓ al pasajero del ~50%)
-#   BUS-WGV705 → arranca al 15% del recorrido (VIENE hacia el pasajero)
+#   BUS-ABC123 → arranca al 15% del recorrido (VIENE hacia el pasajero)
 #
 #  Y los mantiene vivos. Un simulador que se cae —se reinició el backend, se
 #  cortó el MQTT, se cerró la terminal— no hace ruido: el bus se queda
@@ -141,7 +141,7 @@ LENTO="${CAPTURE_INTERVAL_MS_RESTO:-1500}"
 # la flota encendida para que el panel no enseñe el id entero.
 FLOTA=(
   "BUS-WFK042 R-106 0.80 3000000000 $RAPIDO EMP-01"
-  "BUS-WGV705 R-106 0.15 3000000001 $RAPIDO EMP-01"
+  "BUS-ABC123 R-106 0.15 3000000001 $RAPIDO EMP-01"
   "BUS-TNM901 R-101 0.35 3000000999 $LENTO EMP-01"
   "BUS-SKR201 R-101 0.70 3000000201 $LENTO EMP-01"
   "BUS-UBL202 R-102 0.20 3000000202 $LENTO EMP-01"
