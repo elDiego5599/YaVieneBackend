@@ -183,7 +183,7 @@ if (dryRun) {
   process.exit(0);
 }
 
-const appTarget = join(ROOT, '..', 'YaViene', 'app_pasajero', 'assets', 'data', 'rutas.json');
+const appTarget = join(ROOT, '..', 'YaViene', 'ya_viene_core', 'assets', 'data', 'rutas.json');
 const simTarget = join(ROOT, 'scripts', 'data', 'rutas.json');
 for (const target of [appTarget, simTarget]) {
   mkdirSync(dirname(target), { recursive: true });

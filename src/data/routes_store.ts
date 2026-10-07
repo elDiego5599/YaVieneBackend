@@ -5,7 +5,7 @@ import { getDb } from './database';
 
 /**
  * Identificadores con recorrido dibujado en la app del pasajero
- * (`app_pasajero/assets/data/rutas.json`). No son datos de la demo sino un
+ * (`ya_viene_core/assets/data/rutas.json`). No son datos de la demo sino un
  * contrato con la app: una ruta de otra empresa con uno de estos códigos
  * heredaría el trazado de Sobusa (R-101…R-106) o de Coolitoral
  * (R-107, R-109 y R-110) en el mapa, así que el alta los rechaza. R-108 era

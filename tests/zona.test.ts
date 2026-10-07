@@ -10,7 +10,7 @@ import { haversineDistanceKm, sanityCheck } from '../src/security/physics';
 import { ZONA, dentroDeZona } from '../src/security/zona';
 
 // El mismo archivo que dibuja la app del pasajero:
-// app_pasajero/assets/data/rutas.json es una copia byte a byte.
+// ya_viene_core/assets/data/rutas.json es una copia byte a byte.
 const { rutas } = JSON.parse(
   readFileSync(join(__dirname, '..', 'scripts', 'data', 'rutas.json'), 'utf8'),
 ) as { rutas: { routeId: string; waypoints: { lat: number; lon: number }[] }[] };
