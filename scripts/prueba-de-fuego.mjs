@@ -68,6 +68,8 @@ export const MUTACIONES = [
   // Visibilidad: el bus que la empresa oculta no lo ve el pasajero.
   { archivo: 'src/api/routes.ts', de: 'getCompanyBuses(params.id).filter((b) => b.visible),', a: 'getCompanyBuses(params.id),', que: 'ocultos fuera de la lista pública' },
   { archivo: 'src/data/positions_store.ts', de: 'WHERE p.route_id = ? AND (b.visible = 1 OR b.visible IS NULL)', a: 'WHERE p.route_id = ?', que: 'ocultos fuera de las posiciones por ruta' },
+  // Flota demo: la placa vieja de la presentación no se queda en el panel.
+  { archivo: 'src/demo/flota_demo.ts', de: "  'BUS-WGV705',\n", a: '', que: 'retirar la placa vieja de la demo' },
 ];
 
 function correrSuite() {
