@@ -78,6 +78,9 @@ const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => 
   const origin = req.headers.origin;
   if (origin && CORS_ORIGINS.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
+    // El panel web se autentica con su cookie (`auth/cookie_panel.ts`), y el
+    // navegador solo la manda y deja leer la respuesta con esto.
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Vary', 'Origin');
   }
   // Los métodos salen de las rutas registradas, no de una lista escrita a

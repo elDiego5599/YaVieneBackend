@@ -46,13 +46,17 @@ export interface AdminTokenPayload {
 
 export type TokenPayload = DriverTokenPayload | AdminTokenPayload;
 
+/** Lo que dura el token del panel: 8 h, una jornada. La cookie del panel web
+ * (`cookie_panel.ts`) dura lo mismo. */
+export const ADMIN_TOKEN_TTL_S = 8 * 60 * 60;
+
 export function signToken(payload: TokenPayload): string {
   return jwt.sign(payload, jwtSecret(), {
     // El token del panel dura una jornada: es la llave de toda la flota y
     // suele quedarse abierto en un computador de oficina. El del conductor
     // sigue en 24h a propósito, porque es el que sostiene la conexión MQTT
     // del bus: expirarlo a las 8 horas dejaría al bus mudo a media jornada.
-    expiresIn: payload.role === 'admin' ? '8h' : '24h',
+    expiresIn: payload.role === 'admin' ? ADMIN_TOKEN_TTL_S : '24h',
     algorithm: JWT_ALGORITMO,
     issuer: JWT_ISSUER,
     audience: JWT_AUDIENCE,

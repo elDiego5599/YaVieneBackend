@@ -27,6 +27,7 @@ import { getEmpresas } from '../data/empresas';
 import { authenticateRequest, isAdminRequest, isDriverForBus, authenticateCompanyAdmin } from '../auth/http';
 import { hashPin, hashSecret, verifySecretSinDelatar } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
+import { cookieBorrada, cookieDeSesion, esOrigenDelPanel, leerCookiePanel } from '../auth/cookie_panel';
 import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
 import { getMetrics, incrementMetric } from '../observability/metrics';
 import { MAX_INTERNO, TIPOLOGIAS, MAX_CAPACIDAD, MIN_CAPACIDAD, getBusRouteId, normalizeCapacidad, normalizeTipologia } from '../data/fleet_admin';
@@ -424,6 +425,14 @@ addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
 // autentica como cualquier otro cliente.
 
 addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
+  // Una página que no es el panel no inicia sesiones: sin esto podía meter
+  // al navegador de alguien en una cuenta ajena (CSRF del login). Sin
+  // Origin es el escritorio, que nunca lo manda.
+  const web = req.headers.origin !== undefined;
+  if (web && !esOrigenDelPanel(req.headers)) {
+    writeError(res, 403, 'ORIGIN_NOT_ALLOWED', 'Origin not allowed');
+    return;
+  }
   const username = typeof body?.username === 'string'
     ? body.username.trim().toLowerCase() : '';
   const password = typeof body?.password === 'string' ? body.password : '';
@@ -456,11 +465,34 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
     tv: admin.tokenVersion,
   });
 
+  const company = {
+    companyId: admin.companyId,
+    name: getEmpresa(admin.companyId)?.name ?? admin.companyId,
+  };
+  // En el navegador el token va solo en la cookie HttpOnly: si además
+  // viajara en el cuerpo, un script inyectado lo leería al entrar.
+  if (web) {
+    res.setHeader('Set-Cookie', cookieDeSesion(token));
+    writeJson(res, 200, { company });
+    return;
+  }
+  writeJson(res, 200, { token, company });
+});
+
+// Con qué empresa está abierta la sesión del panel web. El panel no puede
+// leer su cookie (HttpOnly) y al arrancar le pregunta esto al servidor; el
+// escritorio sabe lo mismo por su llavero y no lo usa.
+addRoute('GET', '/api/admin/sesion', (req, res) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    return;
+  }
+  if (!guardRate(readRateLimiter, req, res, 'fleet:read')) return;
   writeJson(res, 200, {
-    token,
     company: {
-      companyId: admin.companyId,
-      name: getEmpresa(admin.companyId)?.name ?? admin.companyId,
+      companyId: auth.companyId,
+      name: getEmpresa(auth.companyId)?.name ?? auth.companyId,
     },
   });
 });
@@ -509,6 +541,9 @@ addRoute('POST', '/api/admin/empresas/:companyId/admin', (req, res, params, body
 // los tokens no llevan identificador propio y esto no guarda una lista de
 // revocados. Sin cuerpo en la respuesta: no hay nada que contar.
 addRoute('POST', '/api/fleet/logout', (req, res) => {
+  // La cookie del panel web se borra pase lo que pase: aunque su token ya
+  // no valga, no tiene por qué quedarse en el navegador.
+  if (leerCookiePanel(req.headers)) res.setHeader('Set-Cookie', cookieBorrada());
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
     writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
@@ -1007,9 +1042,25 @@ addRoute('POST', '/api/reportes', (req, res, _params, body) => {
   writeJson(res, 201, { recibido: true });
 });
 
+/**
+ * Una cookie viaja sola: lo que escribe con la del panel tiene que venir
+ * además de una página del panel. SameSite=Strict ya frena a otro sitio;
+ * esto es la segunda llave, y cierra también la petición sin Origin. Con
+ * `Authorization` la cookie no cuenta (`authenticateRequest`) y no se mira.
+ */
+function escrituraConCookieAjena(req: IncomingMessage): boolean {
+  if (req.method === 'GET' || req.method === 'HEAD') return false;
+  if (req.headers.authorization !== undefined) return false;
+  return leerCookiePanel(req.headers) !== null && !esOrigenDelPanel(req.headers);
+}
+
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
   setSecurityHeaders(res);
   const url = req.url?.split('?')[0] || '';
+  if (escrituraConCookieAjena(req)) {
+    writeError(res, 403, 'ORIGIN_NOT_ALLOWED', 'Origin not allowed');
+    return true;
+  }
 
   for (const h of handlers) {
     if (req.method !== h.method) continue;

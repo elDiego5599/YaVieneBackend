@@ -1,5 +1,7 @@
 import { Server as HTTPServer } from 'http';
-import { Server } from 'socket.io';
+import { Server, Socket } from 'socket.io';
+
+type Handshake = Socket['handshake'];
 import { WS_PATH, CORS_ORIGINS } from '../config';
 import {
   getPositionsByRoute,
@@ -11,6 +13,7 @@ import {
 import { isRouteId, routeExists } from '../data/routes_store';
 import { isAdminTokenCurrent } from '../data/empresas';
 import { verifyToken, AdminTokenPayload } from '../auth/tokens';
+import { esOrigenDelPanel, leerCookiePanel } from '../auth/cookie_panel';
 import { incrementMetric } from '../observability/metrics';
 import { requestKey } from '../security/rate_limiter';
 
@@ -196,8 +199,20 @@ function falloDeBase(metrica: string, destino: string, error: unknown): void {
   console.error(`[WS] ${destino}: la base no respondió (${String(error)})`);
 }
 
-function adminFromHandshake(auth: unknown): AdminTokenPayload | null {
-  const token = (auth as { token?: string } | undefined)?.token;
+/**
+ * El token del escritorio llega en `auth.token`; el del panel web, en su
+ * cookie (`auth/cookie_panel.ts`), y esa solo vale con el Origin del panel:
+ * el `cors` de Socket.IO no mira el Origin de un websocket, así que una
+ * página ajena podría abrir uno y el navegador le pondría la cookie.
+ */
+function tokenDelHandshake(handshake: Handshake): string | null {
+  const token = (handshake.auth as { token?: unknown } | undefined)?.token;
+  if (typeof token === 'string' && token) return token;
+  return esOrigenDelPanel(handshake.headers) ? leerCookiePanel(handshake.headers) : null;
+}
+
+function adminFromHandshake(handshake: Handshake): AdminTokenPayload | null {
+  const token = tokenDelHandshake(handshake);
   if (!token) return null;
   const verified = verifyToken(token);
   if (verified?.role !== 'admin') return null;
@@ -267,7 +282,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
 
     console.log(`[WS] Client connected: ${socket.id}`);
 
-    const admin = adminFromHandshake(socket.handshake.auth);
+    const admin = adminFromHandshake(socket.handshake);
     if (admin) {
       socket.data.admin = admin;
       socket.join(`admin:${admin.companyId}`);
@@ -322,7 +337,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
 
     socket.on('subscribe:fleet', () => {
       try {
-        const admin = adminFromHandshake(socket.handshake.auth);
+        const admin = adminFromHandshake(socket.handshake);
         if (!admin) {
           console.warn(`[WS] KICKED client ${socket.id} — subscribe:fleet sin token de admin`);
           socket.disconnect(true);

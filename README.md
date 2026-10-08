@@ -129,10 +129,19 @@ clave mal** (`429 RATE_LIMITED`).
 
 ### Panel de empresa (`Authorization: Bearer <token>` de `/api/admin/login`)
 
+En macOS y Windows el panel manda el token como `Bearer`. En el navegador
+(una petición con `Origin`) el login no lo devuelve: lo pone en la cookie
+`yv_panel` (HttpOnly, Secure, SameSite=Strict, 8 h), que vale para lo mismo
+que el `Bearer`. Solo un `Origin` de `CORS_ORIGINS` entra, y toda escritura
+con esa cookie lo exige (`403 ORIGIN_NOT_ALLOWED`); si llegan cookie y
+`Bearer`, manda el `Bearer`. Strict obliga a servir el panel en el mismo
+sitio que la API.
+
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/admin/login` | `{ username, password }` → `{ token, company }` |
-| POST | `/api/fleet/logout` | Cierra sesión: revoca todos los tokens de esa cuenta (204) |
+| POST | `/api/admin/login` | `{ username, password }` → `{ token, company }`; desde el navegador, `{ company }` y la cookie |
+| GET | `/api/admin/sesion` | `{ company }` si la sesión sigue viva (el panel web la retoma así), si no 401 |
+| POST | `/api/fleet/logout` | Cierra sesión: revoca todos los tokens de esa cuenta y borra la cookie (204) |
 | GET | `/api/fleet/positions` | Flota de la empresa del token |
 | GET / POST | `/api/fleet/routes` | Catálogo de rutas / alta `{ routeId, name }` |
 | PATCH / DELETE | `/api/fleet/routes/:routeId` | Renombrar `{ name }` / borrar |
