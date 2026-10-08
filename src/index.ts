@@ -8,11 +8,13 @@ import {
   HTTP_TLS_CERT_PATH,
   HTTP_TLS_KEY_PATH,
   CORS_ORIGINS,
+  PANEL_WEB_DIR,
   flotaDemoHabilitada,
   validateConfig,
 } from './config';
 import { closeBroker, PositionHandlingResult, startBroker } from './mqtt/broker';
 import { handleAPI, metodosHttpRegistrados } from './api/routes';
+import { panelWeb } from './api/panel_web';
 import {
   getPositionValidationState,
   busInCatalog,
@@ -71,6 +73,18 @@ import {
 } from './security/physics';
 // ─────────────────────────────────────────────────────────────────────
 
+// Una carpeta del panel a medias (sin su CSP o sin index.html) deja el panel
+// en 404 y lo dice en el log, pero no tumba la API: los pasajeros no se
+// quedan sin buses por una build del panel.
+const servirPanel = ((): ReturnType<typeof panelWeb> => {
+  try {
+    return panelWeb(PANEL_WEB_DIR);
+  } catch (error) {
+    console.error(`[Panel] No se sirve el panel web: ${(error as Error).message}`);
+    return () => false;
+  }
+})();
+
 const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => {
   // CORS solo para orígenes autorizados explícitamente (CORS_ORIGINS): los
   // clientes nativos no usan CORS y un navegador no autorizado no puede
@@ -99,6 +113,8 @@ const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => 
     res.end();
     return;
   }
+
+  if (servirPanel(req, res)) return;
 
   if (!handleAPI(req, res)) {
     res.writeHead(404, { 'Content-Type': 'application/json' });

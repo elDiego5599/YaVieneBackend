@@ -52,6 +52,7 @@ YA_VIENE_FLOTA_DEMO=0 npm start
 | `HTTP_ALLOW_REMOTE` | `1` deja que el API atienda a la red local fuera de producción. Sin ella, y sin `NODE_ENV=production`, solo atiende a esta máquina (loopback): ngrok, la flota demo y el panel local entran por ahí |
 | `MQTT_TLS_CERT_PATH` + `MQTT_TLS_KEY_PATH` | TLS del MQTT por TCP. Van juntas |
 | `CORS_ORIGINS` | Orígenes del panel web y nada más, separados por coma: un origen aquí puede iniciar la sesión del panel y escribir con su cookie. Sin ella no se emite CORS |
+| `YA_VIENE_PANEL_WEB` | Carpeta de la build web del panel (`tool/compilar-panel-web.sh --base-href /panel/` en la app, con su `csp.txt`): se sirve en `/panel/`, en el mismo origen que la API. Sin ella `/panel/` es 404; si la carpeta no sirve, el arranque lo dice (`[Panel] …`) y la API sigue |
 | `YA_VIENE_DB_PATH` | Ruta del archivo SQLite |
 | `YA_VIENE_FLOTA_DEMO` | `0` apaga la flota simulada, `1` la enciende. Sin la variable: encendida en desarrollo, apagada con `NODE_ENV=production` |
 | `YA_VIENE_MAX_MQTT_ANONIMAS_IP` | Conexiones de `/mqtt` que una misma dirección puede tener abiertas sin autenticar. Por defecto 20; la siguiente recibe `429` (`src/mqtt/guardia.ts`) |
@@ -132,10 +133,11 @@ clave mal** (`429 RATE_LIMITED`).
 En macOS y Windows el panel manda el token como `Bearer`. En el navegador
 (una petición con `Origin`) el login no lo devuelve: lo pone en la cookie
 `yv_panel` (HttpOnly, Secure, SameSite=Strict, 8 h), que vale para lo mismo
-que el `Bearer`. Solo un `Origin` de `CORS_ORIGINS` entra, y toda escritura
-con esa cookie lo exige (`403 ORIGIN_NOT_ALLOWED`); si llegan cookie y
-`Bearer`, manda el `Bearer`. Strict obliga a servir el panel en el mismo
-sitio que la API.
+que el `Bearer`. Solo entra un `Origin` de `CORS_ORIGINS` o el del mismo
+servidor (su `host:puerto` igual al `Host`: el panel servido en `/panel/`),
+y toda escritura con esa cookie lo exige (`403 ORIGIN_NOT_ALLOWED`); si
+llegan cookie y `Bearer`, manda el `Bearer`. Strict obliga a servir el
+panel en el mismo sitio que la API.
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|

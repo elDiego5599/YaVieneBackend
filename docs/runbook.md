@@ -391,6 +391,37 @@ app, y algunos fabricantes (Xiaomi, Huawei) duermen las apps en segundo
 plano si no se les quita el ahorro de batería. En iPhone no llega nunca:
 falta la cuenta de Apple.
 
+## El panel en el navegador (/panel/)
+
+El backend sirve la build web del panel en `/panel/`, en el mismo origen que
+la API: por ngrok queda en `https://occupy-shed-squatter.ngrok-free.dev/panel/`.
+Así la cookie del panel (SameSite=Strict) viaja y el login no pide CORS.
+
+Ponerlo o actualizarlo:
+
+1. En la app: `tool/compilar-panel-web.sh --base-href /panel/
+   https://occupy-shed-squatter.ngrok-free.dev`. Deja la build y su
+   `csp.txt` en `app_control/build/web`.
+2. Copiarla **fuera del repo** a una carpeta fija (por ejemplo
+   `~/.config/yaviene/panel-web`), para que la siguiente compilación no
+   cambie lo que se está sirviendo: `rsync -a --delete
+   app_control/build/web/ ~/.config/yaviene/panel-web/`.
+3. La primera vez, en `local.env`: `YA_VIENE_PANEL_WEB=/ruta/a/panel-web`.
+4. `npm run build` y reiniciar
+   (`launchctl kickstart -k gui/$UID/com.yaviene.backend`). Para cambiar
+   solo la build (paso 2) no hace falta reiniciar: se lee del disco en cada
+   petición; la CSP sí se lee al arrancar.
+
+Si la carpeta no existe o le falta `index.html` o `csp.txt`, el arranque
+dice `[Panel] No se sirve el panel web: …`, `/panel/` da 404 y la API sigue
+igual: el pasajero no se entera. Sin la variable, `/panel/` es 404.
+
+Saber que está sano: `curl -sI localhost:3000/panel/` da 200 con
+`Content-Security-Policy`. La primera visita por ngrok gratis muestra su
+aviso («You are about to visit…»); se pasa una vez por navegador. ngrok
+gratis va lento (unos 140 KB/s): el panel sale comprimido con gzip, 3,2 MB
+en vez de 9, y después el navegador solo revalida.
+
 ## Buzón de problemas y sugerencias
 
 Los reportes que el pasajero manda desde el menú de la app llegan al Gmail

@@ -16,13 +16,29 @@ import { ADMIN_TOKEN_TTL_S } from './tokens';
 export const COOKIE_PANEL = 'yv_panel';
 
 /**
- * Si la petición viene de una página autorizada en CORS_ORIGINS. Esa lista
- * es de orígenes del panel web y nada más: uno que entre ahí puede iniciar
- * la sesión del panel y escribir con su cookie.
+ * Si la petición viene de una página del panel: una autorizada en
+ * CORS_ORIGINS (esa lista es de orígenes del panel web y nada más: uno que
+ * entre ahí puede iniciar la sesión del panel y escribir con su cookie), o
+ * una del mismo origen que la API, que es el panel servido en /panel/
+ * (`api/panel_web.ts`): este servidor no da ninguna otra página. El
+ * navegador manda Origin también en el mismo origen, y ni él ni otra página
+ * pueden cambiar el Host. Se compara host y puerto, no el esquema: detrás
+ * de ngrok el backend recibe http y el Origin dice https.
  */
 export function esOrigenDelPanel(headers: IncomingHttpHeaders): boolean {
   const origen = headers.origin;
-  return typeof origen === 'string' && CORS_ORIGINS.includes(origen);
+  if (typeof origen !== 'string') return false;
+  return CORS_ORIGINS.includes(origen) || mismoOrigen(origen, headers.host);
+}
+
+function mismoOrigen(origen: string, host: string | undefined): boolean {
+  if (!host) return false;
+  try {
+    const url = new URL(origen);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && url.host === host.toLowerCase();
+  } catch {
+    return false; // «null» y lo que no es una URL
+  }
 }
 
 /** El token de la cookie del panel, o null si la petición no la trae. */

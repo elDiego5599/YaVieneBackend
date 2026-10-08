@@ -36,6 +36,13 @@ export const CORS_ORIGINS: string[] = (process.env.CORS_ORIGINS || '')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+/**
+ * La carpeta de la build web del panel (`app_control/build/web`, compilada
+ * con `tool/compilar-panel-web.sh --base-href /panel/`). Con ella el panel se
+ * sirve en /panel/ (`api/panel_web.ts`); sin ella /panel es 404.
+ */
+export const PANEL_WEB_DIR: string | undefined = process.env.YA_VIENE_PANEL_WEB || undefined;
+
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 
 /**

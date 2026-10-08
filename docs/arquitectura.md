@@ -199,7 +199,7 @@ reportes esperan en la tabla.
 | Cliente | Qué es | Cómo habla |
 |---------|--------|------------|
 | `app_pasajero` | Flutter, Android e iOS | REST para el catálogo, socket para las posiciones, `/api/avisos` y FCM para avisar con la app cerrada (Android), `/api/reportes` para el buzón. Sin cuenta. |
-| `app_control` | Flutter, macOS y Windows (y web) | `POST /api/admin/login`, después REST y socket con el token; en web, con la cookie `yv_panel` (README, «Panel de empresa»). |
+| `app_control` | Flutter, macOS y Windows (y web) | `POST /api/admin/login`, después REST y socket con el token; en web, con la cookie `yv_panel` (README, «Panel de empresa»); el backend sirve esa build en `/panel/`, mismo origen que la API (`api/panel_web.ts`). |
 | `YaVieneWeb` | la landing | no habla con el backend: su mapa es una simulación, rotulada. |
 
 ## Las tres cosas que más sorprenden
