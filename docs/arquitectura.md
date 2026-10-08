@@ -202,6 +202,13 @@ reportes esperan en la tabla.
 | `app_control` | Flutter, macOS y Windows (y web) | `POST /api/admin/login`, después REST y socket con el token; en web, con la cookie `yv_panel` (README, «Panel de empresa»); el backend sirve esa build en `/panel/`, mismo origen que la API (`api/panel_web.ts`). |
 | `YaVieneWeb` | la landing | no habla con el backend: su mapa es una simulación, rotulada. |
 
+Ojo: el login del panel acepta como suyo un `Origin` con el mismo
+`host:puerto` que el `Host` (`auth/cookie_panel.ts`), porque en ese origen
+la única página es el panel de `/panel/`. Si algún día el backend sirve otra
+página HTML en ese origen, esa confianza se cae: esa página podría abrir la
+sesión del panel. Habría que sacarla a otro origen o volver a exigir
+`CORS_ORIGINS`.
+
 ## Las tres cosas que más sorprenden
 
 1. **No hay app de conductor y no va a haberla.** El GPS es hardware montado
