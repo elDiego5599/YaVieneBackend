@@ -234,8 +234,9 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
   io = new Server(httpServer, {
     path: WS_PATH,
     // Mismo criterio que el HTTP: solo orígenes de navegador autorizados.
-    // Los clientes nativos no envían Origin y no pasan por aquí.
-    cors: { origin: CORS_ORIGINS, methods: ['GET', 'POST'] },
+    // Los clientes nativos no envían Origin y no pasan por aquí. credentials:
+    // la cookie del panel web también viaja si el handshake va por polling.
+    cors: { origin: CORS_ORIGINS, methods: ['GET', 'POST'], credentials: true },
     pingInterval: 10000,
     pingTimeout: 5000,
     // Lo más grande que manda un cliente legítimo es el token de admin en el

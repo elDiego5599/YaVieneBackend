@@ -51,7 +51,7 @@ YA_VIENE_FLOTA_DEMO=0 npm start
 | `HTTP_TLS_EXTERNO` | `1` declara que el TLS lo termina un proxy delante (Fly, ngrok). En producción hace falta esto o el par TLS |
 | `HTTP_ALLOW_REMOTE` | `1` deja que el API atienda a la red local fuera de producción. Sin ella, y sin `NODE_ENV=production`, solo atiende a esta máquina (loopback): ngrok, la flota demo y el panel local entran por ahí |
 | `MQTT_TLS_CERT_PATH` + `MQTT_TLS_KEY_PATH` | TLS del MQTT por TCP. Van juntas |
-| `CORS_ORIGINS` | Orígenes web autorizados, separados por coma. Sin ella no se emite CORS |
+| `CORS_ORIGINS` | Orígenes del panel web y nada más, separados por coma: un origen aquí puede iniciar la sesión del panel y escribir con su cookie. Sin ella no se emite CORS |
 | `YA_VIENE_DB_PATH` | Ruta del archivo SQLite |
 | `YA_VIENE_FLOTA_DEMO` | `0` apaga la flota simulada, `1` la enciende. Sin la variable: encendida en desarrollo, apagada con `NODE_ENV=production` |
 | `YA_VIENE_MAX_MQTT_ANONIMAS_IP` | Conexiones de `/mqtt` que una misma dirección puede tener abiertas sin autenticar. Por defecto 20; la siguiente recibe `429` (`src/mqtt/guardia.ts`) |

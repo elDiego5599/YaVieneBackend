@@ -284,3 +284,12 @@ test('el socket del panel web entra con la cookie y el Origin del panel', { time
   // El escritorio, con su token en el handshake, igual que siempre.
   assert.equal(await suscribir(abrirSocket({ token: tokenFlota })), 'lote');
 });
+
+test('el socket deja viajar la cookie también por polling', { timeout: 60_000 }, async () => {
+  // El panel usa solo websocket, pero si un día entra el polling (origen
+  // cruzado), sin Allow-Credentials el navegador no mandaría la cookie.
+  const r = await fetch(`${BASE}/ws/?EIO=4&transport=polling`, { headers: { origin: ORIGEN } });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('access-control-allow-origin'), ORIGEN);
+  assert.equal(r.headers.get('access-control-allow-credentials'), 'true');
+});

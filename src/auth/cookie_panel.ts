@@ -15,7 +15,11 @@ import { ADMIN_TOKEN_TTL_S } from './tokens';
  */
 export const COOKIE_PANEL = 'yv_panel';
 
-/** Si la petición viene de una página autorizada en CORS_ORIGINS. */
+/**
+ * Si la petición viene de una página autorizada en CORS_ORIGINS. Esa lista
+ * es de orígenes del panel web y nada más: uno que entre ahí puede iniciar
+ * la sesión del panel y escribir con su cookie.
+ */
 export function esOrigenDelPanel(headers: IncomingHttpHeaders): boolean {
   const origen = headers.origin;
   return typeof origen === 'string' && CORS_ORIGINS.includes(origen);
