@@ -43,6 +43,7 @@ import {
   setupSocketServer,
   closeSocketServer,
   broadcastBusPosition,
+  broadcastBusPositionToFleet,
   broadcastBusLeft,
   broadcastBusRemoved,
   broadcastBusHidden,
@@ -181,12 +182,15 @@ function emitLifecycleEvent(event: LifecycleEvent): void {
     return;
   }
 
-  if (!getBusVisibility(event.payload.busId as string)) return;
-
-  broadcastBusPosition({
+  const position = {
     ...(event.payload as unknown as BusPosition),
     eventId: event.eventId,
-  }, true);
+  };
+  if (!getBusVisibility(position.busId)) {
+    broadcastBusPositionToFleet(position);
+    return;
+  }
+  broadcastBusPosition(position, true);
 }
 
 // Una excepción dentro de un setInterval sube sin dueño y tumba el proceso
@@ -322,7 +326,8 @@ startBroker(
     return { accepted: true, sequence: positionSequence, reason: 'DUPLICATE' };
   }
   if (!getBusVisibility(auth.busId)) {
-    console.log(`[FLEET] Bus ${auth.busId} oculto — posición guardada sin difundir`);
+    // Oculto para el pasajero; el panel de su empresa lo sigue viendo.
+    broadcastBusPositionToFleet(updated);
   } else {
     broadcastBusPosition(updated);
   }

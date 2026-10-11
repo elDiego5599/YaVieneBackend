@@ -349,6 +349,15 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
     assert.equal(await toggleVisibility(admin1.token, bus1, false), 200);
     await adminHidden;
 
+    // Oculto es para el pasajero, no para su empresa: el panel sigue
+    // recibiendo cada posición, con su velocidad. Antes se callaba también
+    // aquí, y el bus oculto quedaba quieto en el panel hasta la siguiente
+    // foto de la flota, sin velocidad.
+    const posicionOculta = await waitForSocketEvent(
+      adminSocket, 'bus:position', (p) => p?.busId === bus1, 15_000,
+    );
+    assert.equal(typeof posicionOculta.speedKmh, 'number');
+
     // Sin token de admin no se puede entrar a la sala de flota
     const rogue = connectSocket();
     sockets.push(rogue);

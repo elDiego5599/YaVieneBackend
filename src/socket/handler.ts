@@ -469,6 +469,19 @@ export function broadcastBusPosition(busData: BusPosition, immediate = false): v
   }, SOCKET_FLUSH_MS));
 }
 
+/**
+ * La posición de un bus oculto, solo para el panel de su empresa. Ocultar lo
+ * quita del mapa del pasajero, no del de quien lo decidió: el panel lo sigue
+ * viendo moverse, con su velocidad, sin pasar por la sala de la ruta.
+ */
+export function broadcastBusPositionToFleet(busData: BusPosition): void {
+  if (!io) return;
+  const companyId = busData.companyId || getBusCompanyId(busData.busId) || '';
+  if (!companyId) return;
+  io.to(`admin:${companyId}`).emit('bus:position', conEmision(busData));
+  incrementMetric('socket.position.emitted');
+}
+
 export function broadcastBusLeft(busId: string, routeId: string, eventId?: string, companyId?: string): void {
   if (!io) return;
   pendingPositions.get(routeId)?.delete(busId);
