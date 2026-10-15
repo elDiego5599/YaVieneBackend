@@ -464,6 +464,36 @@ salir: Gmail lleva días rechazando). Si `buzon.fallidos` sube y
 mal puesta o revocada; hay que crear otra. Un reporte que falla espera 1
 minuto, luego 2, 4… hasta 6 horas, y sale solo cuando Gmail vuelve.
 
+## La lista de «Avísame cuando salga»
+
+Los celulares que deja la gente en el hero de la web
+([D15](decisiones/D15-lista-lanzamiento.md)). Se guardan con la fecha y la
+versión del permiso; los números no salen en ningún log.
+
+Encenderla, cuando la web tenga su dominio: en `local.env`,
+`WEB_ORIGINS='https://el-dominio-de-la-web'` (sin barra final; varios, con
+coma), `npm run build` y reiniciar. Sin eso la web no puede leer la
+respuesta y la persona ve «No pudimos guardar tu número». No va en
+`CORS_ORIGINS`: esa lista es del panel y le da su sesión.
+
+Leerla, desde la carpeta del backend (la clave no sale en pantalla):
+
+```sh
+(source local.env && curl -s -H "x-admin-key: $ADMIN_API_KEY" http://127.0.0.1:3000/api/admin/lanzamiento)
+```
+
+Borrar un número que lo pida (como lo escriba la persona, entre comillas):
+
+```sh
+(source local.env && curl -s -X DELETE -H "x-admin-key: $ADMIN_API_KEY" "http://127.0.0.1:3000/api/admin/lanzamiento/3001234567")
+```
+
+Tras avisar del lanzamiento, vaciarla: el mismo `DELETE` sin el número
+(`/api/admin/lanzamiento`). La lista solo servía para ese aviso.
+
+`/api/metrics` cuenta `lanzamiento.recibidos` y `lanzamiento.lleno`
+(20.000 números).
+
 ## Qué ve la gente en cada caso
 
 | Situación | Pasajero | Panel |

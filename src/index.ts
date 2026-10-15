@@ -8,6 +8,7 @@ import {
   HTTP_TLS_CERT_PATH,
   HTTP_TLS_KEY_PATH,
   CORS_ORIGINS,
+  WEB_ORIGINS,
   PANEL_WEB_DIR,
   flotaDemoHabilitada,
   validateConfig,
@@ -97,6 +98,10 @@ const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => 
     // navegador solo la manda y deja leer la respuesta con esto.
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Vary', 'Origin');
+  } else if (origin && WEB_ORIGINS.includes(origin) && req.url?.split('?')[0] === '/api/lanzamiento') {
+    // La landing (D15): solo su lista y sin credenciales, que no es el panel.
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
   }
   // Los métodos salen de las rutas registradas, no de una lista escrita a
   // mano: la de antes decía `GET, POST` y dejaba fuera el PATCH y el
@@ -104,7 +109,9 @@ const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => 
   // pasaba del preflight al apagar o borrar un bus.
   const metodos = [...metodosHttpRegistrados(), 'OPTIONS'].join(', ');
   res.setHeader('Access-Control-Allow-Methods', metodos);
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  // ngrok-skip-browser-warning: sin ella ngrok le contesta al fetch de un
+  // navegador con su página de aviso en HTML, no con la API (D15).
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, ngrok-skip-browser-warning');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');

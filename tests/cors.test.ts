@@ -23,6 +23,8 @@ import { HOST_PRUEBAS } from './red_pruebas';
 const HTTP_PORT = '3180';
 const MQTT_PORT = '8950';
 const ORIGEN = 'http://localhost:8091';
+// La landing (D15): solo puede la lista de «Avísame cuando salga».
+const WEB = 'https://landing.example';
 const BASE = `http://127.0.0.1:${HTTP_PORT}`;
 
 const tmp = mkdtempSync(join(tmpdir(), 'yaviene-cors-'));
@@ -55,6 +57,7 @@ test.before(async () => {
       HTTP_PORT,
       MQTT_PORT,
       CORS_ORIGINS: ORIGEN,
+      WEB_ORIGINS: WEB,
       YA_VIENE_DB_PATH: join(tmp, 'test.db'),
     },
     stdio: ['ignore', 'ignore', 'pipe'],
@@ -94,7 +97,12 @@ test('el preflight nombra todos los métodos que la API atiende', { timeout: 60_
     r.headers.get('access-control-allow-methods'),
     'GET, POST, PATCH, DELETE, PUT, OPTIONS',
   );
-  assert.equal(r.headers.get('access-control-allow-headers'), 'Authorization, Content-Type');
+  // ngrok-skip-browser-warning: sin ella, ngrok le contesta al fetch de la
+  // landing con su página de aviso en HTML y no con la API (D15).
+  assert.equal(
+    r.headers.get('access-control-allow-headers'),
+    'Authorization, Content-Type, ngrok-skip-browser-warning',
+  );
 });
 
 test('un origen que no está en la lista no recibe permiso', { timeout: 60_000 }, async () => {
@@ -107,4 +115,28 @@ test('un origen que no está en la lista no recibe permiso', { timeout: 60_000 }
   // Sin esta cabecera el navegador descarta la respuesta, diga lo que diga
   // la lista de métodos.
   assert.equal(r.headers.get('access-control-allow-origin'), null);
+});
+
+test('la landing solo puede la lista de lanzamiento, y sin credenciales', { timeout: 60_000 }, async () => {
+  const preflight = await fetch(`${BASE}/api/lanzamiento`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: WEB,
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type, ngrok-skip-browser-warning',
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), WEB);
+  // La landing no es el panel: su página no lleva la cookie del panel.
+  assert.equal(preflight.headers.get('access-control-allow-credentials'), null);
+
+  // Cualquier otra puerta de la API sigue cerrada para ella.
+  for (const ruta of ['/api/admin/lanzamiento', '/api/fleet/buses', '/api/health', '/api/lanzamientox']) {
+    const r = await fetch(`${BASE}${ruta}`, {
+      method: 'OPTIONS',
+      headers: { Origin: WEB, 'Access-Control-Request-Method': 'GET' },
+    });
+    assert.equal(r.headers.get('access-control-allow-origin'), null, ruta);
+  }
 });

@@ -29,3 +29,4 @@ cuándo.
 | [D12](D12-artemis.md) | No se instala `google/artemis` antes del pitch | herramienta | decidida |
 | [D13](D13-avisos-push.md) | En Android el aviso llega con la app cerrada, por push del servidor | backend, apps, web | decidida, falta la clave del dueño |
 | [D14](D14-buzon.md) | El buzón del pasajero llega al correo del equipo, por el backend | backend, apps | decidida, falta la contraseña del dueño |
+| [D15](D15-lista-lanzamiento.md) | La lista de «Avísame cuando salga» la guarda el backend | backend, web | decidida, falta `WEB_ORIGINS` al publicar la web |

@@ -42,6 +42,7 @@ import {
   pinPorCuentaBloqueo,
   readRateLimiter,
   reportesRateLimiter,
+  lanzamientoRateLimiter,
   requestKey,
   SlidingWindowRateLimiter,
 } from '../security/rate_limiter';
@@ -50,6 +51,9 @@ import {
   borrarAviso, crearAviso, RADIO_AVISO_M, RADIO_MAXIMO_M, RADIO_MINIMO_M, renovarAviso, VIDA_MAXIMA_MS,
 } from '../data/avisos_push';
 import { crearReporte, leerReporte } from '../data/reportes';
+import {
+  borrarSuscripcion, borrarTodas, guardarSuscripcion, leerSuscripcion, listarSuscripciones, normalizarTelefono,
+} from '../data/lanzamiento';
 import { busInCatalog } from '../data/positions_store';
 import { getBusVisibility } from '../data/fleet_admin';
 import { dentroDeZona } from '../security/zona';
@@ -1040,6 +1044,56 @@ addRoute('POST', '/api/reportes', (req, res, _params, body) => {
     return;
   }
   writeJson(res, 201, { recibido: true });
+});
+
+// ─── «Avísame cuando salga», la lista de la web (D15) ───────────────────
+
+addRoute('POST', '/api/lanzamiento', (req, res, _params, body) => {
+  if (!guardRate(lanzamientoRateLimiter, req, res, 'lanzamiento')) return;
+  const suscripcion = leerSuscripcion(body);
+  if ('error' in suscripcion) {
+    writeError(res, 400, 'INVALID_INPUT', suscripcion.error);
+    return;
+  }
+  if (guardarSuscripcion(suscripcion.telefono) === 'lleno') {
+    writeError(res, 503, 'LISTA_LLENA', 'No se pueden guardar más números por ahora');
+    return;
+  }
+  writeJson(res, 201, { recibido: true });
+});
+
+/** Las rutas del equipo: el tope va antes de la clave, como en las demás. */
+function guardAdmin(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!guardRate(adminRateLimiter, req, res, 'lanzamiento-admin')) return false;
+  if (isAdminRequest(req)) return true;
+  writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
+  return false;
+}
+
+addRoute('GET', '/api/admin/lanzamiento', (req, res) => {
+  if (!guardAdmin(req, res)) return;
+  writeJson(res, 200, { telefonos: listarSuscripciones() });
+});
+
+// A pedido de su dueño (Ley 1581): se escribe como lo dé la persona.
+addRoute('DELETE', '/api/admin/lanzamiento/:telefono', (req, res, params) => {
+  if (!guardAdmin(req, res)) return;
+  const telefono = normalizarTelefono(params.telefono);
+  if (!telefono) {
+    writeError(res, 400, 'INVALID_INPUT', 'telefono no es un celular válido');
+    return;
+  }
+  borrarSuscripcion(telefono);
+  res.writeHead(204);
+  res.end();
+});
+
+// Tras avisar del lanzamiento la lista ya cumplió: se vacía entera.
+addRoute('DELETE', '/api/admin/lanzamiento', (req, res) => {
+  if (!guardAdmin(req, res)) return;
+  borrarTodas();
+  res.writeHead(204);
+  res.end();
 });
 
 /**

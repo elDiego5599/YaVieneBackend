@@ -194,13 +194,21 @@ fila espera y cada 30 s salen hasta cinco al Gmail del equipo por SMTP
 cada vez más. Sin `YA_VIENE_CORREO_USUARIO` y `YA_VIENE_CORREO_CLAVE` los
 reportes esperan en la tabla.
 
+## 8. La lista de «Avísame cuando salga»
+
+`lanzamiento` (`src/data/lanzamiento.ts`) guarda los celulares que deja la
+gente en el hero de la web con `POST /api/lanzamiento`: el número, cuándo
+aceptó y la versión del texto ([D15](decisiones/D15-lista-lanzamiento.md)).
+El equipo la lee y la borra por `/api/admin/lanzamiento`. La web entra por
+`WEB_ORIGINS`, que solo abre esa ruta y sin credenciales.
+
 ## Los otros dos clientes
 
 | Cliente | Qué es | Cómo habla |
 |---------|--------|------------|
 | `app_pasajero` | Flutter, Android e iOS | REST para el catálogo, socket para las posiciones, `/api/avisos` y FCM para avisar con la app cerrada (Android), `/api/reportes` para el buzón. Sin cuenta. |
 | `app_control` | Flutter, macOS y Windows (y web) | `POST /api/admin/login`, después REST y socket con el token; en web, con la cookie `yv_panel` (README, «Panel de empresa»); el backend sirve esa build en `/panel/`, mismo origen que la API (`api/panel_web.ts`). |
-| `YaVieneWeb` | la landing | no habla con el backend: su mapa es una simulación, rotulada. |
+| `YaVieneWeb` | la landing | solo `POST /api/lanzamiento`, el «Avísame cuando salga» del hero, desde un origen de `WEB_ORIGINS`; su mapa es una simulación, rotulada. |
 
 Ojo: el login del panel acepta como suyo un `Origin` con el mismo
 `host:puerto` que el `Host` (`auth/cookie_panel.ts`), porque en ese origen

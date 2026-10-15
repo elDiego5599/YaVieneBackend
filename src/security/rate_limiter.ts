@@ -106,6 +106,13 @@ export const avisosRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
 export const reportesRateLimiter = new SlidingWindowRateLimiter(5, 10 * 60_000);
 
 /**
+ * La lista de «Avísame cuando salga» (`POST /api/lanzamiento`, D15). Una
+ * persona deja su número una vez: cinco cada diez minutos por IP alcanzan
+ * para una familia detrás del mismo router y no dejan llenar la lista.
+ */
+export const lanzamientoRateLimiter = new SlidingWindowRateLimiter(5, 10 * 60_000);
+
+/**
  * Bloqueo temporal de una cuenta tras muchos fallos seguidos (auditoría
  * 2026-09, P2-3). Los topes de login cuentan por IP y por (IP, cuenta): quien
  * reparte los intentos contra un mismo teléfono entre muchas IP no tropieza
@@ -227,6 +234,7 @@ const LIMITADORES: Record<string, { readonly size: number }> = {
   pinCuenta: pinPorCuentaBloqueo,
   avisos: avisosRateLimiter,
   reportes: reportesRateLimiter,
+  lanzamiento: lanzamientoRateLimiter,
 };
 
 // La memoria de cada limitador está acotada por el barrido, pero nadie la

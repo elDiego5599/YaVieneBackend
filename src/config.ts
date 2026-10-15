@@ -37,6 +37,17 @@ export const CORS_ORIGINS: string[] = (process.env.CORS_ORIGINS || '')
   .filter(Boolean);
 
 /**
+ * Orígenes de la web pública (la landing), separados por coma. No son
+ * CORS_ORIGINS: esa lista es del panel y da su sesión. Estos solo pueden
+ * `POST /api/lanzamiento`, el «Avísame cuando salga» del hero (D15), y sin
+ * credenciales.
+ */
+export const WEB_ORIGINS: string[] = (process.env.WEB_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+/**
  * La carpeta de la build web del panel (`app_control/build/web`, compilada
  * con `tool/compilar-panel-web.sh --base-href /panel/`). Con ella el panel se
  * sirve en /panel/ (`api/panel_web.ts`); sin ella /panel es 404.
@@ -156,18 +167,20 @@ export function validateConfig(
     avisos.push('HTTP_ALLOW_REMOTE=1: el API atiende a toda la red local en HTTP plano, sin pasar por ngrok ni por TLS');
   }
 
-  const origenes = (env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
-  for (const origen of origenes) {
-    let valido = false;
-    try {
-      valido = new URL(origen).origin === origen;
-    } catch {
-      valido = false;
-    }
-    if (!valido) {
-      errores.push(`CORS_ORIGINS: «${origen}» no es un origen (esquema://host[:puerto], sin barra final ni comodines)`);
-    } else if (expuesto && !origen.startsWith('https://')) {
-      errores.push(`CORS_ORIGINS: «${origen}» no es https; en producción solo se autorizan orígenes cifrados`);
+  for (const variable of ['CORS_ORIGINS', 'WEB_ORIGINS']) {
+    const origenes = (env[variable] || '').split(',').map((o) => o.trim()).filter(Boolean);
+    for (const origen of origenes) {
+      let valido = false;
+      try {
+        valido = new URL(origen).origin === origen;
+      } catch {
+        valido = false;
+      }
+      if (!valido) {
+        errores.push(`${variable}: «${origen}» no es un origen (esquema://host[:puerto], sin barra final ni comodines)`);
+      } else if (expuesto && !origen.startsWith('https://')) {
+        errores.push(`${variable}: «${origen}» no es https; en producción solo se autorizan orígenes cifrados`);
+      }
     }
   }
 

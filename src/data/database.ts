@@ -905,6 +905,20 @@ function initSchema(): void {
         ensureColumn(d, 'avisos_push', 'radio_m', 'INTEGER NOT NULL DEFAULT 1000');
       },
     },
+    {
+      version: 30,
+      apply: () => {
+        // La lista de «Avísame cuando salga» de la web (D15): el celular,
+        // cuándo aceptó y qué versión del texto. Nada más.
+        d.exec(`
+          CREATE TABLE IF NOT EXISTS lanzamiento (
+            telefono TEXT PRIMARY KEY,
+            aceptado INTEGER NOT NULL,
+            autorizacion INTEGER NOT NULL
+          )
+        `);
+      },
+    },
   ];
 
   for (const migration of migrations) {
