@@ -1,8 +1,8 @@
 # D15 · La lista de «Avísame cuando salga» la guarda el backend
 
 - **Decidida**: 2026-10-14. **Toca**: `YaVieneBackend`, `YaVieneWeb`.
-- **Estado**: decidida; falta poner el origen de la web en `WEB_ORIGINS`
-  cuando la web se publique.
+- **Estado**: en uso; `WEB_ORIGINS` abre `https://yavienetech.com`
+  (2026-10-15).
 
 ## La pregunta
 
@@ -15,7 +15,9 @@ lista ni fecha del permiso. ¿Dónde se guarda?
 
 **En el backend, en su propia tabla** (`lanzamiento`), por
 `POST /api/lanzamiento`. Se guarda el celular normalizado (cifras con su
-indicativo; un celular colombiano de 10 cifras gana el 57), cuándo se
+indicativo; un celular colombiano de 10 cifras gana el 57; sin + solo
+entra un celular de Colombia, y con + el de otro país en E.164; la web
+aplica la misma regla antes de enviar), cuándo se
 aceptó y la versión del texto aceptado (`VERSION_AUTORIZACION`). El equipo
 la lee con `GET /api/admin/lanzamiento`, borra un número a pedido de su
 dueño con `DELETE /api/admin/lanzamiento/:telefono` y la vacía entera con

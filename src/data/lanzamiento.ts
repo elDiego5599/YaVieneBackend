@@ -22,16 +22,22 @@ export const MAX_LANZAMIENTO = 20_000;
 const ESCRITO = /^\+?[0-9 ()-]+$/;
 
 /**
- * El número limpio, en cifras y con su indicativo, o null. Un celular de
- * Colombia (10 cifras que empiezan por 3) gana el 57; lo demás tiene que
- * traer ya su indicativo y caber en E.164 (8 a 15 cifras). Un fijo de 7
- * cifras no sirve: el aviso sale por WhatsApp.
+ * El número limpio, en cifras y con su indicativo, o null. Sin +, solo un
+ * celular de Colombia: 10 cifras que empiezan por 3 (gana el 57) o esas
+ * mismas con el 57 delante. Con +, el de otro país en E.164 (8 a 15
+ * cifras); el +57 tiene que ser igual un celular. Ni un fijo ni diez
+ * cifras cualquiera: el aviso sale por WhatsApp. La web aplica la misma
+ * regla antes de enviar (`celularValido`, YaVieneWeb/src/aviso-lanzamiento.ts).
  */
 export function normalizarTelefono(valor: unknown): string | null {
-  if (typeof valor !== 'string' || valor.length > 32 || !ESCRITO.test(valor.trim())) return null;
-  const cifras = valor.replace(/\D/g, '');
-  if (cifras.length === 10 && cifras.startsWith('3')) return `57${cifras}`;
-  return cifras.length >= 8 && cifras.length <= 15 ? cifras : null;
+  if (typeof valor !== 'string' || valor.length > 32) return null;
+  const escrito = valor.trim();
+  if (!ESCRITO.test(escrito)) return null;
+  const cifras = escrito.replace(/\D/g, '');
+  if (/^3\d{9}$/.test(cifras)) return `57${cifras}`;
+  if (/^573\d{9}$/.test(cifras)) return cifras;
+  const internacional = escrito.startsWith('+') && !cifras.startsWith('57');
+  return internacional && cifras.length >= 8 && cifras.length <= 15 ? cifras : null;
 }
 
 /** Lee y valida el cuerpo de `POST /api/lanzamiento`. */

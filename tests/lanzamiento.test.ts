@@ -83,6 +83,10 @@ test('rechaza lo que no es un número al que se pueda escribir', () => {
     '300 123 456a',
     '300+1234567', // el + solo va adelante
     '++573001234567',
+    '1234567890', // 10 cifras que no son un celular de Colombia
+    '12345678', // sin + no es de otro país
+    '+57 123 456 7890', // +57 tiene que ser un celular
+    '+1234567', // E.164 pide al menos 8
     '',
     3001234567,
     null,
