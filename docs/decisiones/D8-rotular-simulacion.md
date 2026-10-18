@@ -27,3 +27,9 @@ mirando.
 
 T6.10: «Simulación» en negrita al principio de la pastilla de la atribución,
 en el mapa vivo de la portada.
+
+El 2026-10-12 el mapa en vivo se fue de la portada y el rótulo con él, pero
+el teléfono derecho del hero sigue moviendo buses sobre el mapa real. El
+2026-10-18 (AUD16-08) volvió en negrita al principio de la atribución del
+mosaico del hero (`index.html`, `data-mapa-simulacion`), vigilado por
+`tests/simulacion.test.ts` y medido en `e2e/contraste.spec.ts`.
