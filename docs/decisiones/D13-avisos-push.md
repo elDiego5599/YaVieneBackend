@@ -19,6 +19,9 @@ iPhone sigue como dice [D4](D4-ios-segundo-plano.md).
 
 ## Cómo funciona
 
+- Cada teléfono puede tener un solo bus armado a la vez. La app sigue ese
+  bus en la pantalla bloqueada y la Dynamic Island, y el servidor aplica el
+  mismo límite por token.
 - Al armar el aviso, la app manda al servidor el bus, la ruta, el punto
   donde espera, la distancia a la que quiere el aviso (`radioM`, de 500 m a
   3 km; la elige el pasajero, dueño 2026-10-06; sin ella, 1 km) y el token

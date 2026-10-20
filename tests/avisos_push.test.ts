@@ -290,7 +290,7 @@ test('emisor: qué es token inválido y qué se reintenta', async () => {
 });
 
 // ── La tabla ─────────────────────────────────────────────────────────
-test('crearAviso: el mismo teléfono y bus reemplaza; dos por teléfono; tope de la tabla', () => {
+test('crearAviso: el mismo teléfono y bus reemplaza; uno por teléfono; tope de la tabla', () => {
   limpiar();
   const primero = armar();
   const segundo = armar();
@@ -299,7 +299,7 @@ test('crearAviso: el mismo teléfono y bus reemplaza; dos por teléfono; tope de
   assert.deepEqual(filas.map((f) => f.id), [segundo]);
 
   const comun = { token: TOKEN, routeId: RUTA, ...PASAJERO, vidaMs: 1000, radioM: avisos.RADIO_AVISO_M };
-  assert.equal(typeof avisos.crearAviso({ ...comun, busId: busOculto }), 'object');
+  assert.equal(avisos.crearAviso({ ...comun, busId: busOculto }), 'tope_token');
   assert.equal(avisos.crearAviso({ ...comun, busId: 'BUS-OTRO' }), 'tope_token');
 
   // La vida se recorta a tres horas.

@@ -361,6 +361,8 @@ El servidor avisa por Firebase Cloud Messaging cuando la app del pasajero
 está cerrada ([D13](decisiones/D13-avisos-push.md)). Necesita la clave de la
 cuenta de servicio de Firebase; sin ella el arranque dice
 `[Push] Sin YA_VIENE_FCM_CREDENCIALES` y la app sigue avisando solo abierta.
+Cada teléfono puede tener un solo bus armado a la vez; el backend rechaza
+otro aviso hasta que se retire el actual o suene.
 
 Encenderlo, una vez:
 

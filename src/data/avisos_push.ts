@@ -31,8 +31,8 @@ export const RADIO_MAXIMO_M = 3000;
 export const RADIO_AVISO_M = 1000;
 /** Tres horas, como `vidaDeUnAviso` en la app: un aviso olvidado no queda armado. */
 export const VIDA_MAXIMA_MS = 3 * 60 * 60 * 1000;
-/** Un pasajero sigue como mucho dos buses a la vez. */
-export const MAX_AVISOS_POR_TOKEN = 2;
+/** Un pasajero sigue como mucho un bus a la vez. */
+export const MAX_AVISOS_POR_TOKEN = 1;
 /** Tope de la tabla entera: una avalancha llena esto y no el disco. */
 export const MAX_AVISOS = 10_000;
 

@@ -64,3 +64,11 @@ test('docs: el índice de decisiones y la carpeta dicen lo mismo', () => {
     assert.ok(indice.includes(`[D${n}]`), `el índice no enlaza D${n}`);
   }
 });
+
+test('docs: D13 y el backend limitan cada teléfono a un bus seguido', () => {
+  const d13 = readFileSync(join(docs, 'decisiones', 'D13-avisos-push.md'), 'utf8');
+  const codigo = readFileSync(join(__dirname, '..', 'src', 'data', 'avisos_push.ts'), 'utf8');
+
+  assert.match(d13, /Cada teléfono puede tener un solo bus armado a la vez/i);
+  assert.match(codigo, /MAX_AVISOS_POR_TOKEN\s*=\s*1/);
+});
