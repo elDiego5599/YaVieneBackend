@@ -46,7 +46,7 @@ const { count } = db.prepare(
   'SELECT COUNT(*) AS count FROM empresa_admins WHERE company_id = ?',
 ).get(admin.company_id);
 
-if (count === 1 && !process.env.FORZAR) {
+if (count === 1 && process.env.FORZAR !== '1') {
   console.error(
     `[ALTO] '${username}' es el único admin de la empresa '${admin.company_id}'.\n` +
     '       Si lo borras, nadie puede entrar al panel de esa empresa.\n' +

@@ -87,6 +87,28 @@ test('una ruta bien formada sigue contestando, exista o no', async () => {
   assert.deepEqual(cuerpo.buses, []);
 });
 
+test('los POST con cuerpo exigen application/json y permiten charset', async () => {
+  const tipoNoJson = await fetch(`${base}/api/avisos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: '{"busId":"BUS-1"}',
+  });
+  assert.equal(tipoNoJson.status, 415);
+  assert.deepEqual(await tipoNoJson.json(), {
+    error: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Content-Type must be application/json' },
+  });
+
+  const conCharset = await fetch(`${base}/api/avisos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: '{',
+  });
+  assert.equal(conCharset.status, 400);
+  assert.deepEqual(await conCharset.json(), {
+    error: { code: 'INVALID_JSON', message: 'Request body must be valid JSON' },
+  });
+});
+
 test('las rutas de una empresa traen su identificador como routeId', async () => {
   // El resto del contrato —posiciones, panel, sockets— lo llama `routeId`, y
   // esta lista era la única que lo llamaba `id`. Durante una versión van los

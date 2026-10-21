@@ -4,7 +4,7 @@
 // internet.
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, IncomingMessage, Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -473,6 +473,50 @@ test('revisarAvisos: barre los vencidos', async () => {
   await avisos.revisarAvisos(emisor, ahora + avisos.VIDA_MAXIMA_MS);
   const { n } = getDb().prepare('SELECT COUNT(*) AS n FROM avisos_push').get() as { n: number };
   assert.equal(n, 0);
+});
+
+test('revisarAvisos: limita cada vuelta a 500 avisos', async () => {
+  limpiar();
+  ponerBus(CERCA);
+  for (let i = 0; i < 501; i++) armar(`lote-${i}`, PASAJERO, Date.now());
+  let envios = 0;
+  const emisor = { enviar: async () => { envios++; return 'enviado' as const; } } as unknown as import('../src/push/fcm').EmisorFcm;
+  await avisos.revisarAvisos(emisor);
+  assert.equal(envios, 500);
+  await avisos.revisarAvisos(emisor);
+  assert.equal(envios, 501, 'la vuelta siguiente continúa con el aviso que quedó pendiente');
+});
+
+test('revisarAvisos: nunca mantiene más de 20 envíos FCM en curso', async () => {
+  limpiar();
+  ponerBus(CERCA);
+  for (let i = 0; i < 40; i++) armar(`paralelo-${i}`, PASAJERO, Date.now());
+  let activos = 0;
+  let maximo = 0;
+  let iniciados = 0;
+  const pendientes: Array<() => void> = [];
+  const emisor = {
+    enviar: () => {
+      activos++;
+      iniciados++;
+      maximo = Math.max(maximo, activos);
+      return new Promise<'enviado'>((resolver) => pendientes.push(() => { activos--; resolver('enviado'); }));
+    },
+  } as unknown as import('../src/push/fcm').EmisorFcm;
+  const revision = avisos.revisarAvisos(emisor);
+  while (iniciados < 40) {
+    await new Promise<void>((resolver) => setImmediate(resolver));
+    const tanda = pendientes.splice(0);
+    for (const resolver of tanda) resolver();
+  }
+  await revision;
+  assert.equal(maximo, 20);
+});
+
+test('el temporizador de avisos salta la vuelta si la anterior sigue activa', () => {
+  const codigo = readFileSync(join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  assert.match(codigo, /let avisoEnCurso = false;[\s\S]*?if \(avisoEnCurso\) return;/);
+  assert.match(codigo, /\.finally\(\(\) => \{\s*avisoEnCurso = false;/);
 });
 
 // ── Las rutas ────────────────────────────────────────────────────────

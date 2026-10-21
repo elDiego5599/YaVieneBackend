@@ -12,14 +12,22 @@
  *            ADMIN_API_KEY, CAPTURE_INTERVAL_MS (demo rápida: 400).
  */
 
-import net from 'net';
-import http from 'http';
+import net, { isIP } from 'net';
+import tls from 'tls';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
+const backendUrl = new URL(BACKEND_URL);
+const hostBackendLocal = ['localhost', '127.0.0.1', '::1'].includes(backendUrl.hostname.replace(/^\[|\]$/g, '').toLowerCase());
+if (!['http:', 'https:'].includes(backendUrl.protocol)) {
+  throw new Error('BACKEND_URL debe usar http:// o https://');
+}
+if (backendUrl.protocol === 'http:' && !hostBackendLocal) {
+  throw new Error('BACKEND_URL remoto debe usar https:// para proteger PIN y x-admin-key');
+}
 const MQTT_PORT = parseInt(process.env.MQTT_PORT || '8883', 10);
 const BUS_ID = process.env.BUS_ID || 'BUS-ABC123';
 const PHONE = process.env.PHONE || '3000000000';
@@ -163,39 +171,19 @@ function anotarAck(payload) {
   }
 }
 
-function postJson(path, payload, extraHeaders = {}) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify(payload);
-
-    const url = new URL(`${BACKEND_URL}${path}`);
-    const req = http.request(
-      {
-        hostname: url.hostname,
-        port: url.port,
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(data),
-          ...extraHeaders,
-        },
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (chunk) => (body += chunk));
-        res.on('end', () => {
-          try {
-            resolve({ statusCode: res.statusCode, body: JSON.parse(body) });
-          } catch {
-            reject(new Error(`Respuesta JSON invalida: ${body}`));
-          }
-        });
-      }
-    );
-    req.on('error', reject);
-    req.write(data);
-    req.end();
+async function postJson(path, payload, extraHeaders = {}) {
+  const respuesta = await fetch(new URL(path, BACKEND_URL), {
+    method: 'POST',
+    redirect: 'error',
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+    body: JSON.stringify(payload),
   });
+  const texto = await respuesta.text();
+  try {
+    return { statusCode: respuesta.status, body: JSON.parse(texto) };
+  } catch {
+    throw new Error(`Respuesta JSON invalida: ${texto}`);
+  }
 }
 
 async function registerDriver() {
@@ -248,8 +236,12 @@ async function renovarToken() {
 
 async function connectMQTTWithAuth() {
   return new Promise((resolve, reject) => {
-    const host = new URL(BACKEND_URL).hostname;
-    const client = net.createConnection({ host, port: MQTT_PORT }, () => {
+    const host = backendUrl.hostname.replace(/^\[|\]$/g, '');
+    const conectar = backendUrl.protocol === 'https:'
+      ? tls.connect({ host, port: MQTT_PORT, ...(isIP(host) ? {} : { servername: host }) })
+      : net.createConnection({ host, port: MQTT_PORT });
+    const client = conectar;
+    client.once(backendUrl.protocol === 'https:' ? 'secureConnect' : 'connect', () => {
       console.log(`[MQTT] Conectado a ${host}:${MQTT_PORT}`);
       mqttClient = client;
       resolve();

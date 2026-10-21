@@ -233,9 +233,20 @@ sessionCleanupTimer.unref();
 // Avisos con la app cerrada (D13): cada 5 s, el mismo paso con el que la
 // app viva mira la distancia. Sin cuenta de servicio de FCM no arranca.
 const emisor = emisorPush();
+// Si FCM tarda más de 5 s, se omite esa marca para no solapar barridos.
+let avisoEnCurso = false;
 const avisosTimer = emisor
   ? setInterval(vueltaProtegida('Avisos', 'avisos.error', () => {
-    void revisarAvisos(emisor);
+    if (avisoEnCurso) return;
+    avisoEnCurso = true;
+    void Promise.resolve()
+      .then(() => revisarAvisos(emisor))
+      .catch((error) => {
+        console.error('[Avisos] Falló el barrido:', error);
+      })
+      .finally(() => {
+        avisoEnCurso = false;
+      });
   }), 5_000)
   : null;
 avisosTimer?.unref();

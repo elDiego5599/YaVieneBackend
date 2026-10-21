@@ -213,6 +213,21 @@ test('P3-2: borrar-admin-empresa dice que el acceso se corta, no que el token si
   assert.match(r.stdout, /siguiente petición/);
 });
 
+test('P3-2: FORZAR solo salta la guarda con el valor exacto 1', () => {
+  getDb().prepare('INSERT OR IGNORE INTO empresas (company_id, name, created_at) VALUES (?, ?, ?)')
+    .run('EMP-FORZAR', 'Forzar', Date.now());
+  empresas.createOrUpdateCompanyAdmin('EMP-FORZAR', 'unico-forzar', hashSecret('clave-de-prueba'));
+  for (const valor of ['0', 'false']) {
+    const r = spawnSync(process.execPath, ['scripts/borrar-admin-empresa.mjs', 'unico-forzar'], {
+      env: { PATH: process.env.PATH ?? '', YA_VIENE_DB_PATH: DB_EN_PROCESO, FORZAR: valor },
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 1, `FORZAR=${valor} no debe borrar el único admin`);
+    assert.match(r.stderr, /es el único admin/);
+    assert.ok(empresas.getCompanyAdminByUsername('unico-forzar'));
+  }
+});
+
 test('P3-3: crear-admin-empresa lee la contraseña de la entrada o del entorno, nunca del argumento', () => {
   const crear = (args: string[], input?: string, extra: Record<string, string> = {}) =>
     spawnSync(process.execPath, ['scripts/crear-admin-empresa.mjs', ...args], {

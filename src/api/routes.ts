@@ -1173,6 +1173,13 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
         if (tooLarge) return;
 
         const body = Buffer.concat(trozos).toString('utf8');
+        // Sin esta comprobación, un navegador puede enviar text/plain sin
+        // preflight y el servidor lo interpreta como JSON en operaciones de escritura.
+        const tipoJson = /^application\/json(?:\s*;\s*charset\s*=\s*[^;\s]+)?\s*$/i;
+        if (body && !tipoJson.test(req.headers['content-type'] ?? '')) {
+          writeError(res, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json');
+          return;
+        }
         let parsedBody: Record<string, unknown>;
         try {
           parsedBody = body ? JSON.parse(body) as Record<string, unknown> : {};

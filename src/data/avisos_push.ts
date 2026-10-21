@@ -35,6 +35,12 @@ export const VIDA_MAXIMA_MS = 3 * 60 * 60 * 1000;
 export const MAX_AVISOS_POR_TOKEN = 1;
 /** Tope de la tabla entera: una avalancha llena esto y no el disco. */
 export const MAX_AVISOS = 10_000;
+/** Por vuelta, para acotar el trabajo aunque crezca la tabla. */
+export const MAX_AVISOS_POR_BARRIDO = 500;
+/** FCM admite ráfagas, pero no hace falta abrir cientos de peticiones a la vez. */
+export const MAX_ENVIOS_FCM_EN_PARALELO = 20;
+// El cursor circular evita que 500 avisos lejanos escondan siempre los demás.
+let ultimoAvisoRevisadoId = '';
 
 export interface NuevoAviso {
   token: string;
@@ -136,13 +142,18 @@ export function revisarAvisos(emisor: EmisorFcm, ahora: number = Date.now()): Pr
     FROM avisos_push a
     JOIN positions p ON p.bus_id = a.bus_id AND p.route_id = a.route_id AND p.is_ghost = 0
     JOIN buses b ON b.bus_id = a.bus_id AND b.visible = 1
-    WHERE a.enviado_en IS NULL
-  `).all() as Array<{
+    WHERE a.enviado_en IS NULL AND a.id > ?
+    ORDER BY a.id
+    LIMIT ${MAX_AVISOS_POR_BARRIDO}
+  `).all(ultimoAvisoRevisadoId) as Array<{
     id: string; token: string; bus_id: string; route_id: string;
     lat: number; lon: number; radio_m: number; bus_lat: number; bus_lon: number;
   }>;
+  ultimoAvisoRevisadoId = candidatos.length < MAX_AVISOS_POR_BARRIDO
+    ? ''
+    : candidatos[candidatos.length - 1].id;
 
-  const envios: Promise<void>[] = [];
+  const envios: Array<() => Promise<void>> = [];
   for (const c of candidatos) {
     const metros = haversineDistanceKm(c.lat, c.lon, c.bus_lat, c.bus_lon) * 1000;
     if (metros > c.radio_m || !marcarEnviado(c.id, ahora)) continue;
@@ -153,7 +164,7 @@ export function revisarAvisos(emisor: EmisorFcm, ahora: number = Date.now()): Pr
       routeId: c.route_id,
       distancia: String(Math.round(metros)),
     };
-    envios.push(emisor.enviar(c.token, datos, ahora).then(
+    envios.push(() => emisor.enviar(c.token, datos, ahora).then(
       (resultado) => {
         if (resultado === 'enviado') {
           incrementMetric('push.enviados');
@@ -175,5 +186,15 @@ export function revisarAvisos(emisor: EmisorFcm, ahora: number = Date.now()): Pr
       console.error('[Push] No se pudo apuntar el resultado de un envío:', error);
     }));
   }
-  return Promise.all(envios).then(() => undefined);
+  let siguiente = 0;
+  const trabajadores = Array.from(
+    { length: Math.min(MAX_ENVIOS_FCM_EN_PARALELO, envios.length) },
+    async () => {
+      while (siguiente < envios.length) {
+        const indice = siguiente++;
+        await envios[indice]();
+      }
+    },
+  );
+  return Promise.all(trabajadores).then(() => undefined);
 }
