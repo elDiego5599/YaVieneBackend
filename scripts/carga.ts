@@ -1,6 +1,6 @@
-// Prueba de carga: N buses publicando contra un backend propio.
+// Prueba de carga: buses publicando y pasajeros conectados a un backend propio.
 //
-//   node --import tsx scripts/carga.ts --buses 300 --segundos 60
+//   node --import tsx scripts/carga.ts --buses 300 --pasajeros 1200 --segundos 60
 //
 // Arranca su propio backend sobre una base temporal (nunca la real: la ruta
 // sale de mkdtemp y se borra al terminar), con secretos generados al azar
@@ -10,13 +10,15 @@
 //
 // Todos los buses salen de este mismo proceso, un cliente MQTT por bus,
 // repartidos en las rutas del catálogo y moviéndose por su geometría real
-// (scripts/data/rutas.json). Un socket por ruta hace de pasajero y mide
-// cuánto tarda cada posición desde que el bus la captura hasta que llega.
+// (scripts/data/rutas.json). --pasajeros sockets se reparten en round-robin
+// por las rutas, conectándose por lotes. El valor por defecto es uno por ruta.
 //
 // Al final imprime un informe en JSON: CPU y memoria del backend, latencias
-// p50/p95/p99, cuántas posiciones aceptó o rechazó el backend (por motivo),
-// cuántas llegaron a los pasajeros y cuántas se fundieron en el camino. El
-// retraso del bucle de eventos de este proceso va también: si sube, lo que
+// p50/p95/p99, sockets y desconexiones, posiciones por socket y latencias,
+// cuántas posiciones aceptó o rechazó el backend (por motivo) y cuántas se
+// fundieron en el camino. Las latencias usan histograma por milisegundo para
+// mantener memoria acotada incluso con 20.000 pasajeros.
+// El retraso del bucle de eventos de este proceso va también: si sube, lo que
 // se está midiendo es el equipo que genera la carga y no el backend.
 import { execFile as execFileAsync, execFileSync, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -25,13 +27,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
+import { createConnection } from 'node:net';
 
 import mqtt, { MqttClient } from 'mqtt';
 import { io, Socket } from 'socket.io-client';
+import { percentil, percentilHistograma } from './histograma';
 
 const { values: args } = parseArgs({
   options: {
     buses: { type: 'string', default: '50' },
+    pasajeros: { type: 'string' },
     segundos: { type: 'string', default: '60' },
     'cadencia-ms': { type: 'string', default: '2000' },
     'http-port': { type: 'string', default: '3300' },
@@ -57,6 +62,10 @@ function entero(nombre: keyof typeof args, min: number, max: number): number {
     throw new Error(`--${nombre} tiene que ser un entero entre ${min} y ${max}`);
   }
   return n;
+}
+
+function repartirPasajeros(total: number, rutas: string[]): { routeId: string; index: number }[] {
+  return Array.from({ length: total }, (_, index) => ({ routeId: rutas[index % rutas.length], index }));
 }
 
 // ── La base temporal y sus secretos ───────────────────────────────────
@@ -230,11 +239,6 @@ function usoDeAsync(pid: number): Promise<{ cpuS: number; rssKb: number } | null
   });
 }
 
-function percentil(ordenadas: number[], p: number): number | null {
-  if (ordenadas.length === 0) return null;
-  return ordenadas[Math.min(ordenadas.length - 1, Math.floor(ordenadas.length * p))];
-}
-
 async function esperarListo(): Promise<void> {
   const limite = Date.now() + 30_000;
   while (Date.now() < limite) {
@@ -244,6 +248,26 @@ async function esperarListo(): Promise<void> {
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error('El backend no quedó listo en 30 s');
+}
+
+function puertoOcupado(port: number): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ host: '127.0.0.1', port });
+    socket.setTimeout(1000);
+    socket.once('connect', () => { socket.destroy(); resolve(true); });
+    socket.once('timeout', () => { socket.destroy(); reject(new Error(`Tiempo agotado al comprobar el puerto ${port}`)); });
+    socket.once('error', (error: NodeJS.ErrnoException) => {
+      socket.destroy();
+      if (error.code === 'ECONNREFUSED') resolve(false);
+      else reject(new Error(`No se pudo comprobar el puerto ${port}: ${error.message}`));
+    });
+  });
+}
+
+async function comprobarPuertosLibres(): Promise<void> {
+  for (const [nombre, port] of [['HTTP', HTTP_PORT], ['MQTT', MQTT_PORT]] as const) {
+    if (await puertoOcupado(port)) throw new Error(`El puerto ${port} (${nombre}) ya está ocupado`);
+  }
 }
 
 function conectar(bus: Bus, acks: Map<string, number>): Promise<boolean> {
@@ -277,8 +301,12 @@ function conectar(bus: Bus, acks: Map<string, number>): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
+  await comprobarPuertosLibres();
   const buses = await provisionar();
   const rutas = [...new Set(buses.map((b) => b.routeId))];
+  const totalPasajeros = args.pasajeros === undefined ? rutas.length : entero('pasajeros', 1, 20_000);
+  const asignaciones = repartirPasajeros(totalPasajeros, rutas);
+  const maxSocketsPorIp = String(Math.max(100, totalPasajeros + 10));
 
   const backend = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     cwd: join(__dirname, '..'),
@@ -291,14 +319,23 @@ async function main(): Promise<void> {
       MQTT_DEBUG_LOGS: 'false',
       YA_VIENE_FLOTA_DEMO: '0',
       YA_VIENE_DB_PATH: DB_PATH,
+      // La carga es local y todos los pasajeros comparten 127.0.0.1; elevar
+      // el tope solo en este backend temporal evita medir el guard por IP.
+      YA_VIENE_MAX_SOCKETS_IP: maxSocketsPorIp,
     },
     stdio: 'ignore',
   });
 
   const acks = new Map<string, number>();
-  const latencias: number[] = [];
-  const pasajeros: Socket[] = [];
+  const latencias = new Map<number, number>();
+  const posicionesPorSocket: number[] = Array(totalPasajeros).fill(0);
+  const pasajeros: { socket: Socket; routeId: string; index: number }[] = [];
   let recibidas = 0;
+  let ultimaPosicionAt = 0;
+  let pasajerosConectados = 0;
+  let latenciasContadas = 0;
+  const desconexiones = new Map<string, number>();
+  const fallosConexion = new Map<string, number>();
   let publicadas = 0;
   const muestras: { cpuS: number; rssKb: number; t: number }[] = [];
   const bucle = monitorEventLoopDelay({ resolution: 20 });
@@ -309,22 +346,36 @@ async function main(): Promise<void> {
   try {
     await esperarListo();
 
-    for (const routeId of rutas) {
-      const s = io(BASE, { path: '/ws', transports: ['websocket'], reconnection: false });
-      pasajeros.push(s);
-      await new Promise<void>((resolve, reject) => {
-        s.once('connect', () => resolve());
-        s.once('connect_error', reject);
-      });
-      const anotar = (p: { capturedAt?: number }) => {
-        recibidas += 1;
-        if (typeof p.capturedAt === 'number') latencias.push(Date.now() - p.capturedAt);
-      };
-      s.on('bus:position', anotar);
-      s.on('positions:update', (lote: { buses?: { capturedAt?: number }[] }) => {
-        for (const p of lote.buses ?? []) anotar(p);
-      });
-      s.emit('subscribe:route', routeId);
+    for (let i = 0; i < asignaciones.length; i += LOTE_CONEXION) {
+      const lote = asignaciones.slice(i, i + LOTE_CONEXION);
+      await Promise.all(lote.map(({ routeId, index }) => new Promise<void>((resolve) => {
+        const s = io(BASE, { path: '/ws', transports: ['websocket'], reconnection: false, timeout: 15_000 });
+        const pasajero = { socket: s, routeId, index };
+        pasajeros.push(pasajero);
+        const anotar = (p: { capturedAt?: number }) => {
+          recibidas += 1;
+          ultimaPosicionAt = Date.now();
+          posicionesPorSocket[index] += 1;
+          if (typeof p.capturedAt === 'number') {
+            const ms = Math.max(0, Date.now() - p.capturedAt);
+            latencias.set(ms, (latencias.get(ms) ?? 0) + 1);
+            latenciasContadas += 1;
+          }
+        };
+        s.on('bus:position', anotar);
+        s.on('positions:update', (batch: { buses?: { capturedAt?: number }[] }) => {
+          for (const p of batch.buses ?? []) anotar(p);
+        });
+        s.on('disconnect', (reason) => desconexiones.set(reason, (desconexiones.get(reason) ?? 0) + 1));
+        let terminado = false;
+        const finalizar = () => { if (!terminado) { terminado = true; resolve(); } };
+        s.once('connect', () => { pasajerosConectados += 1; s.emit('subscribe:route', routeId); finalizar(); });
+        s.once('connect_error', (error) => {
+          const motivo = error.message || 'connect_error';
+          fallosConexion.set(motivo, (fallosConexion.get(motivo) ?? 0) + 1);
+          finalizar();
+        });
+      })));
     }
 
     for (let i = 0; i < buses.length; i += LOTE_CONEXION) {
@@ -334,8 +385,10 @@ async function main(): Promise<void> {
     }
 
     // Lo de arriba no se mide: solo la operación sostenida.
-    latencias.length = 0;
+    latencias.clear();
     recibidas = 0;
+    latenciasContadas = 0;
+    posicionesPorSocket.fill(0);
     const inicial = await usoDeAsync(backend.pid!);
     const t0 = Date.now();
     bucle.enable();
@@ -375,18 +428,29 @@ async function main(): Promise<void> {
 
     await new Promise((r) => setTimeout(r, SEGUNDOS * 1000));
     clearInterval(publicador);
-    // Lo que ya salió termina de llegar.
-    await new Promise((r) => setTimeout(r, 1500));
+    // Espera a que los últimos lotes lleguen a los sockets: 1,5 s de calma,
+    // con un tope para no colgar la corrida si un cliente queda atascado.
+    ultimaPosicionAt = Date.now();
+    const limiteDrenaje = Date.now() + 10_000;
+    while (Date.now() < limiteDrenaje && Date.now() - ultimaPosicionAt < 1500) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
     clearInterval(muestreo);
     bucle.disable();
 
     const final = await usoDeAsync(backend.pid!);
     const segundosReales = (Date.now() - t0) / 1000;
-    const metricas = await (await fetch(`${BASE}/api/metrics`, {
+    const respuestaMetricas = await fetch(`${BASE}/api/metrics`, {
       headers: { 'x-admin-key': ADMIN_API_KEY },
-    })).json() as { counters: Record<string, number>; gauges: Record<string, number> };
+    });
+    if (!respuestaMetricas.ok) {
+      throw new Error(`/api/metrics respondió HTTP ${respuestaMetricas.status}; no se pudo generar el informe`);
+    }
+    const metricas = await respuestaMetricas.json() as { counters: Record<string, number>; gauges: Record<string, number> };
 
-    latencias.sort((a, b) => a - b);
+    const indicesConectados = new Set(pasajeros.filter(({ socket }) => socket.connected).map(({ index }) => index));
+    const ordenadasPorSocket = posicionesPorSocket.filter((_n, index) => indicesConectados.has(index)).sort((a, b) => a - b);
+    const rechazadosPorIp = metricas.counters['socket.rechazado.por_ip'] ?? 0;
     const rss = muestras.map((m) => m.rssKb);
     // CPU por intervalo, en % de un núcleo.
     const cpu = muestras.slice(1).map((m, k) =>
@@ -401,13 +465,27 @@ async function main(): Promise<void> {
       publicadas,
       acks: Object.fromEntries([...acks].sort()),
       pasajeros: {
-        sockets: pasajeros.length,
+        solicitados: totalPasajeros,
+        conectados: pasajerosConectados,
+        fallidosConexion: Object.fromEntries([...fallosConexion].sort()),
+        desconectados: Object.fromEntries([...desconexiones].sort()),
+        limitePorIp: {
+          maximo: Number(maxSocketsPorIp),
+          rechazados: rechazadosPorIp,
+          nota: 'Los rechazos por IP se cuentan aquí; los errores connect_error también pueden incluirlos.',
+        },
+        rutas: Object.fromEntries(rutas.map((routeId) => [routeId,
+          asignaciones.filter((asignacion) => asignacion.routeId === routeId).length])),
         posicionesRecibidas: recibidas,
+        posicionesPorSocket: {
+          minimo: ordenadasPorSocket[0] ?? 0,
+          mediana: percentil(ordenadasPorSocket, 0.5),
+        },
         latenciaMs: {
-          p50: percentil(latencias, 0.5),
-          p95: percentil(latencias, 0.95),
-          p99: percentil(latencias, 0.99),
-          max: latencias.at(-1) ?? null,
+          p50: percentilHistograma(latencias, latenciasContadas, 0.5),
+          p95: percentilHistograma(latencias, latenciasContadas, 0.95),
+          p99: percentilHistograma(latencias, latenciasContadas, 0.99),
+          max: latencias.size ? Math.max(...latencias.keys()) : null,
         },
       },
       backend: {
@@ -431,20 +509,21 @@ async function main(): Promise<void> {
     console.log(texto);
     if (args.informe) writeFileSync(args.informe, `${texto}\n`);
   } finally {
-    if (publicador) clearInterval(publicador);
-    if (muestreo) clearInterval(muestreo);
-    for (const bus of buses) bus.cliente?.end(true);
-    for (const s of pasajeros) s.close();
-    await new Promise<void>((resolve) => {
-      if (backend.exitCode !== null) return resolve();
-      const matar = setTimeout(() => backend.kill('SIGKILL'), 5000);
-      backend.once('exit', () => {
-        clearTimeout(matar);
-        resolve();
+    try { if (publicador) clearInterval(publicador); } catch {}
+    try { if (muestreo) clearInterval(muestreo); } catch {}
+    // Termina primero el hijo, para que un fallo al cerrar cualquier cliente
+    // nunca deje un backend huérfano escuchando en los puertos de la prueba.
+    try {
+      await new Promise<void>((resolve) => {
+        if (backend.exitCode !== null || backend.signalCode !== null) return resolve();
+        const matar = setTimeout(() => backend.kill('SIGKILL'), 5000);
+        backend.once('exit', () => { clearTimeout(matar); resolve(); });
+        backend.kill('SIGTERM');
       });
-      backend.kill('SIGTERM');
-    });
-    rmSync(dir, { recursive: true, force: true });
+    } catch {}
+    for (const bus of buses) { try { bus.cliente?.end(true); } catch {} }
+    for (const pasajero of pasajeros) { try { pasajero.socket.close(); } catch {} }
+    try { rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
 
