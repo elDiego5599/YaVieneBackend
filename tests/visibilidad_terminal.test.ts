@@ -78,6 +78,28 @@ test('salida: histéresis conserva oculto dentro de 120 m y lo muestra al alejar
   assert.equal(sale.visible, true);
 });
 
+test('un bus oculto que llega a B y sale como venida vuelve a mostrarse al avanzar', () => {
+  const llegada = decidirVisibilidadTerminal(enRecta(0.97, { speedKmh: 0 }), estado(true, 0.94));
+  const llegada2 = decidirVisibilidadTerminal(enRecta(0.97, { capturedAt: 2_100, speedKmh: 0 }), llegada.estado);
+  assert.equal(llegada2.visible, false);
+  const parte = decidirVisibilidadTerminal(enRecta(0.98, {
+    sentido: 'venida', capturedAt: 3_000, speedKmh: 25,
+  }), llegada2.estado);
+  assert.equal(parte.visible, false, 'la primera fijación de salida aún no basta');
+  const avanza = decidirVisibilidadTerminal(enRecta(0.97, {
+    sentido: 'venida', capturedAt: 3_400, speedKmh: 25,
+  }), parte.estado);
+  assert.equal(avanza.visible, false, 'el punto de reanclaje no cuenta como avance');
+  const confirma = decidirVisibilidadTerminal(enRecta(0.88, {
+    sentido: 'venida', capturedAt: 3_800, speedKmh: 25,
+  }), avanza.estado);
+  assert.equal(confirma.visible, false, 'una fijación fuera de 120 m aún no basta');
+  const sale = decidirVisibilidadTerminal(enRecta(0.87, {
+    sentido: 'venida', capturedAt: 4_200, speedKmh: 25,
+  }), confirma.estado);
+  assert.equal(sale.visible, true);
+});
+
 test('ruido GPS aislado dentro del terminal no oculta y al regresar a mitad de ruta sigue visible', () => {
   const medio = estado(true, 0.5);
   const salto = decidirVisibilidadTerminal(enRecta(0.97), medio);

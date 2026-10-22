@@ -42,6 +42,7 @@ export interface BusDemo {
   intervaloMs: string;
   sentido: 'ida' | 'venida';
   activo: boolean;
+  velocidadBaseKmh: number;
 }
 
 // Misma regla que decide index.ts: apagada en producción salvo que el
@@ -75,6 +76,31 @@ function letrasPlaca(indice: number): string {
     n = Math.floor(n / ALFABETO.length);
   }
   return letras;
+}
+
+function hashBus(busId: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < busId.length; i++) hash = Math.imul(hash ^ busId.charCodeAt(i), 16777619);
+  return hash >>> 0;
+}
+
+/** Velocidad determinista por bus: base distinta, oscilación suave y frenadas periódicas. */
+export function velocidadDemo(bus: Pick<BusDemo, 'busId' | 'velocidadBaseKmh'>, elapsedMs: number): number {
+  const hash = hashBus(bus.busId);
+  const base = bus.velocidadBaseKmh;
+  if (elapsedMs <= 0) return base;
+  const fase = ((hash >>> 8) % 6283) / 1000;
+  const segundos = Math.max(0, elapsedMs) / 1000;
+  const variacion = 3.5 * Math.sin(segundos / 24 + fase) + 1.5 * Math.sin(segundos / 61 + fase * 1.7);
+  const ciclo = ((segundos + fase * 3) % 78 + 78) % 78;
+  const crucero = Math.max(18, base + variacion);
+  const freno = ciclo < 9 ? (1 - ciclo / 9) * crucero : 0;
+  return Math.max(0, Math.min(42, crucero - freno));
+}
+
+/** Metros que recorre el bus en una publicación, usando la velocidad simulada. */
+export function metrosAvanceDemo(bus: Pick<BusDemo, 'busId' | 'velocidadBaseKmh'>, elapsedMs: number, intervaloMs: number): number {
+  return velocidadDemo(bus, elapsedMs) / 3.6 * intervaloMs / 1000;
 }
 
 /**
@@ -139,6 +165,7 @@ export function construirFlota(): BusDemo[] {
         intervaloMs: routeId === RUTA_DESTACADA ? INTERVALO_RAPIDO : INTERVALO_LENTO,
         sentido,
         activo,
+        velocidadBaseKmh: 18 + (hashBus(busIdFromPlaca(placa)) % 2401) / 100,
       });
     }
   }
@@ -171,8 +198,8 @@ export function prepararFlota(flota: BusDemo[]): BusDemo[] {
   const dueno = db.prepare('SELECT company_id FROM buses WHERE bus_id = ?');
   const placaAjena = db.prepare('SELECT 1 FROM buses WHERE plate_number = ? AND bus_id <> ?');
   const alta = db.prepare(`
-    INSERT INTO buses (bus_id, company_id, plate_number, route_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO buses (bus_id, company_id, plate_number, route_id, visible, en_terminal, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 1, 0, ?, ?)
     ON CONFLICT(bus_id) DO UPDATE SET
       plate_number = COALESCE(buses.plate_number, excluded.plate_number),
       route_id = COALESCE(buses.route_id, excluded.route_id)
@@ -219,6 +246,7 @@ type EstadoBus = {
   siguiente: number;
   secuencia: number;
   capturedAt: number;
+  iniciadoEn: number;
   cliente?: MqttClient;
   rechazos: number;
 };
@@ -352,7 +380,8 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
     estado.capturedAt = Math.max(estado.capturedAt + interval, ahora - interval);
     return;
   }
-  const recorrido = (35 / 3.6) * interval / 1000;
+  const velocidad = velocidadDemo(estado.bus, estado.capturedAt - estado.iniciadoEn);
+  const recorrido = metrosAvanceDemo(estado.bus, estado.capturedAt - estado.iniciadoEn, interval);
   estado.progreso += estado.sentido === 'ida' ? recorrido : -recorrido;
   const terminal = estado.sentido === 'ida' && estado.progreso >= estado.longitud
     ? 'B'
@@ -409,7 +438,7 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
   estado.cliente?.publish(topic, JSON.stringify({
     protocolVersion: 1, lat, lon,
     heading: estado.sentido === 'venida' ? rumbo(b, a) : rumbo(a, b),
-    speedKmh: 35, sentido: estado.sentido,
+    speedKmh: velocidad, sentido: estado.sentido,
     capturedAt: estado.capturedAt, sequence: ++estado.secuencia,
   }));
   estado.capturedAt = Math.max(estado.capturedAt + interval, ahora - interval);
@@ -451,6 +480,7 @@ export function arrancarFlotaDemo(): void {
     estados.set(bus.busId, {
       bus, ...datos, sentido: bus.sentido, iniciado: true, esperandoTerminal: !bus.activo,
       siguiente: 0, secuencia: 0, capturedAt: Date.now(), rechazos: 0,
+      iniciadoEn: Date.now(),
     });
   }
   for (const estado of estados.values()) {

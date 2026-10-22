@@ -187,21 +187,29 @@ export function decidirVisibilidadTerminal(
 
   siguiente.muestrasQuieto = 0;
   delete siguiente.quietoDesde;
-  const cambioSentido = base.sentido !== undefined && base.sentido !== sentido;
-  const referenciaSalida = cambioSentido ? 0 : base.fraccionAlOcultar;
-  const inicio = referenciaSalida !== undefined
-    && referenciaSalida <= FRACCION_INICIO
-    && orientada - referenciaSalida >= FRACCION_REENGANCHE;
-  const salidaValida = metrosAlOrigen >= RADIO_SALIDA_M && inicio;
-  if (!salidaValida) {
+  const cambioSentido = base.sentido !== sentido;
+  // Al relevar en el terminal opuesto, `fraccionAlOcultar` sigue expresada
+  // desde el origen del viaje anterior. Reancla el umbral al primer punto
+  // observado con el nuevo sentido; después exige dos fijaciones con avance.
+  if (cambioSentido) siguiente.fraccionAlOcultar = orientada;
+  const referenciaSalida = siguiente.fraccionAlOcultar;
+  if (referenciaSalida === undefined && orientada <= FRACCION_INICIO) {
+    siguiente.fraccionAlOcultar = orientada;
+  }
+  const referenciaSalidaActualizada = siguiente.fraccionAlOcultar;
+  const inicio = referenciaSalidaActualizada !== undefined
+    && referenciaSalidaActualizada <= FRACCION_INICIO
+    && orientada - referenciaSalidaActualizada >= FRACCION_REENGANCHE;
+  const progresoDeSalida = inicio && metrosAlOrigen >= RADIO_SALIDA_M;
+  if (!progresoDeSalida) {
     siguiente.muestrasSalida = 0;
     delete siguiente.progresoSalida;
   } else if (siguiente.muestrasSalida > 0 && siguiente.progresoSalida !== undefined
     && orientada - siguiente.progresoSalida >= FRACCION_PASO_MINIMO) {
     siguiente.muestrasSalida += 1;
     siguiente.progresoSalida = orientada;
-    if (siguiente.muestrasSalida >= 2) {
-      siguiente.visible = true;
+    if (siguiente.muestrasSalida >= 2) siguiente.visible = true;
+    if (siguiente.visible) {
       delete siguiente.fraccionAlOcultar;
       siguiente.muestrasSalida = 0;
       delete siguiente.progresoSalida;

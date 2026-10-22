@@ -19,7 +19,7 @@ process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
 // require y no import: estos módulos abren la base al evaluarse.
 const { getDb } = require('../src/data/database') as typeof import('../src/data/database');
 const { getCompanyBuses } = require('../src/data/fleet_admin') as typeof import('../src/data/fleet_admin');
-const { construirFlota, prepararFlota, retrasoArranque, relevoTerminal } =
+const { construirFlota, prepararFlota, retrasoArranque, relevoTerminal, velocidadDemo, metrosAvanceDemo } =
   require('../src/demo/flota_demo') as typeof import('../src/demo/flota_demo');
 
 test.after(() => {
@@ -174,6 +174,20 @@ test('un relevo espera dos llegadas al mismo terminal y despacha dos buses junto
   });
   assert.deepEqual(llegadas, []);
   assert.deepEqual(esperando, ['BUS-LLE001', 'BUS-LLE002']);
+});
+
+test('la velocidad de demo es reproducible, distinta por bus, varía y frena; el avance usa esa velocidad', () => {
+  const [busA, busB] = construirFlota().filter((b) => b.activo);
+  const a0 = velocidadDemo(busA, 0);
+  assert.equal(a0, velocidadDemo(busA, 0));
+  assert.notEqual(a0, velocidadDemo(busB, 0));
+  assert.ok(a0 >= 18 && a0 <= 42);
+  assert.notEqual(a0, velocidadDemo(busA, 20_000));
+  const velocidades = Array.from({ length: 800 }, (_, i) => velocidadDemo(busA, i * 100));
+  assert.ok(velocidades.some((v) => v <= 8), 'debe incluir frenadas para paradas y semáforos');
+  const intervalo = 1_000;
+  const t = 15_000;
+  assert.equal(metrosAvanceDemo(busA, t, intervalo), velocidadDemo(busA, t) / 3.6);
 });
 
 test('preparar dos veces no cambia nada, y una placa editada en el panel se respeta', () => {
