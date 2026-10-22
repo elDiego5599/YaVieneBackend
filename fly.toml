@@ -95,6 +95,6 @@ primary_region = "iad"
 
 [[vm]]
   size = "shared-cpu-1x"
-  # 512 MB en vez de 256: además del backend, dentro de esta misma máquina
-  # corren los dos buses simulados de la demo (dos procesos de Node más).
+  # 512 MB en vez de 256: el backend mueve la flota demo en su propio
+  # proceso, con un solo temporizador compartido por todos los buses.
   memory = "512mb"

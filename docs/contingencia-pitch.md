@@ -32,8 +32,8 @@ El orden, que es el mismo de la demo en vivo:
    nueva hace falta `YA_VIENE_SEED_DEMO=1` (Fly lo trae en `fly.toml`; ver el
    `README.md`).
 4. **Toca el mapa** para poner su punto de espera, y luego **toca un bus**.
-   Salen los dos de la ruta: `ABC123` viene hacia el punto y `WFK042` ya pasó.
-   Conviene tocar `ABC123`.
+   Hay doce buses repartidos por el recorrido; conviene tocar `ABC123`, que viene hacia el punto.
+   
 5. **La tarjeta del bus**: el número grande con la distancia («850», «m de ti»)
    bajando sola mientras el bus se acerca. Distancia, no tiempo estimado: eso es
    deliberado y vale la pena decirlo en voz alta mientras se graba.

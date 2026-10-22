@@ -66,11 +66,10 @@ arranque. Tiene que ser una IP, y en producción no una de loopback: el
 arranque se detiene con `[Config]` si no. La suite ya la fija sola en
 `127.0.0.1` (`tests/entorno.ts`).
 
-Los buses de la demo no se arrancan a mano: el propio backend levanta dieciocho
-simuladores al iniciar, dos por ruta de Sobusa y de Coolitoral
-(`src/demo/flota_demo.ts`; `YA_VIENE_FLOTA_EMPRESA=EMP-01` deja solo la
-primera). Arrancan 18 por minuto: el alta y el login del conductor admiten
-20 por minuto desde una IP, y los dos que sobran son para un reintento. Para apagarlos —tráfico real,
+Los buses de la demo no se arrancan a mano: el backend mueve los 108 buses (12 por ruta en las nueve rutas actuales) desde un proceso y un temporizador compartidos, repartidos en ambos sentidos (`src/demo/flota_demo.ts`;
+`YA_VIENE_FLOTA_EMPRESA=EMP-01` deja solo las seis rutas de Sobusa). Arrancan
+18 por minuto: el alta y el login admiten 20 por minuto desde una IP, con
+margen para reintentos. Para apagarlos —tráfico real,
 donde esas posiciones falsas viajarían por el mismo canal que las buenas—
 `YA_VIENE_FLOTA_DEMO=0` delante del arranque. Mientras la flota esté
 encendida, el entorno necesita `PIN` (en `local.env`, y en Fly como secreto):
@@ -96,7 +95,7 @@ cd /Users/diegoangarita/YaViene/YaViene && bash check-demo.sh
 ```
 
 En unos veinte segundos comprueba que el túnel conteste `/api/ready`, que los
-dos buses de R-106 publiquen por el socket (lo mismo que ve la app) y que la
+doce buses de R-106 publiquen por el socket (lo mismo que ve la app) y que la
 base esté recibiendo posiciones frescas. En este Mac revisa además, sin
 cambiar nada, el resto del tablero del día (T10.3): los cuatro servicios de
 launchd, la corriente, que no se pueda dormir, una copia de menos de 2 h y
