@@ -67,7 +67,7 @@ test('las métricas publican el tamaño de cada limitador', async () => {
   const gauges = metrics.getMetrics().gauges;
   assert.equal(gauges['ratelimit.read.claves'], limitadores.readRateLimiter.size);
   assert.ok(gauges['ratelimit.read.claves'] >= 2);
-  for (const nombre of ['login', 'loginIp', 'admin', 'read', 'fleetWrite', 'pinCuenta', 'avisos']) {
+  for (const nombre of ['login', 'loginIp', 'admin', 'read', 'fleetWrite', 'deviceLogin', 'avisos']) {
     assert.equal(typeof gauges[`ratelimit.${nombre}.claves`], 'number', nombre);
   }
 });

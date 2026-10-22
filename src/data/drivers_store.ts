@@ -62,6 +62,7 @@ export function registerDriver(
           company_id = excluded.company_id,
           bus_id = excluded.bus_id,
           secret_hash = excluded.secret_hash,
+          status = 'active',
           updated_at = excluded.updated_at
       `).run(driverId, companyId, busId, phoneNumber, pinHash ?? '', name, routeId, now, now);
 
@@ -125,6 +126,14 @@ export function getDriver(phoneNumber: string): DriverInfo | null {
   };
   driverCache.set(phoneNumber, driver);
   return driver;
+}
+
+export function getActiveDeviceByIdentifier(identifier: string): DriverInfo | null {
+  const row = getDb().prepare(
+    'SELECT status FROM gps_devices WHERE identifier = ?',
+  ).get(identifier) as { status: string } | undefined;
+  if (!row || row.status !== 'active') return null;
+  return getDriver(identifier);
 }
 
 export function getDriverById(driverId: string): DriverInfo | null {

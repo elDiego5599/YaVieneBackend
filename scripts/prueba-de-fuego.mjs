@@ -43,10 +43,10 @@ export const MUTACIONES = [
   { archivo: 'src/security/zona.ts', de: 'return lat >= ZONA.latMin &&', a: 'return lat >= ZONA.latMin - 1 &&', que: 'zona de servicio' },
   // Autenticación: quién puede qué.
   { archivo: 'src/auth/http.ts', de: "if (auth?.role !== 'admin') return null;", a: 'if (!auth) return null;', que: 'solo administradores al panel' },
-  { archivo: 'src/auth/http.ts', de: "if (!auth || auth.role !== 'driver' || auth.busId !== busId) return false;", a: "if (!auth || auth.role !== 'driver') return false;", que: 'el equipo solo reporta su bus' },
+  { archivo: 'src/auth/http.ts', de: "if (!auth || auth.role !== 'device' || auth.busId !== busId) return false;", a: "if (!auth || auth.role !== 'device') return false;", que: 'el equipo solo reporta su bus' },
   { archivo: 'src/auth/http.ts', de: 'session.busId === auth.busId;', a: 'true;', que: 'la sesión es de ese bus' },
   { archivo: 'src/auth/http.ts', de: "session?.status === 'active' &&", a: 'session != null &&', que: 'sesión revocada no reporta' },
-  { archivo: 'src/auth/tokens.ts', de: "if (decoded.role !== 'driver') return null;", a: "if (decoded.role === 'nadie') return null;", que: 'rol del token' },
+  { archivo: 'src/auth/tokens.ts', de: "if (decoded.role !== 'device' && !isLegacyDriver) return null;", a: "if (decoded.role === 'nadie') return null;", que: 'rol del token' },
   { archivo: 'src/auth/tokens.ts', de: 'export const ADMIN_TOKEN_TTL_S = 8 * 60 * 60;', a: 'export const ADMIN_TOKEN_TTL_S = 24 * 60 * 60;', que: 'el token del panel dura 8 h' },
   { archivo: 'src/auth/passwords.ts', de: 'expected.length === actual.length && timingSafeEqual(expected, actual)', a: 'expected.length === actual.length', que: 'la contraseña se compara' },
   { archivo: 'src/data/sessions.ts', de: 'if (cached.clientId != null && cached.clientId !== clientId) return false;', a: 'if (cached.clientId != null && false) return false;', que: 'una sesión, un cliente' },

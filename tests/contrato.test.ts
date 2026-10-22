@@ -259,7 +259,7 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
       companyId: EMPRESA, busId: bus.busId, routeId: RUTA,
     });
     const token = signToken({
-      sub: telefono, driverId: telefono, phoneNumber: telefono, role: 'driver',
+      sub: telefono, deviceId: telefono, identifier: telefono, role: 'device',
       companyId: EMPRESA, busId: bus.busId, routeId: RUTA, sessionId,
     });
     return { busId: bus.busId, telefono, token, secuencia: 0 };

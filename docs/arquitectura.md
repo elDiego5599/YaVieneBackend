@@ -61,7 +61,7 @@ su /64.
 Tres candados, en `src/mqtt/broker.ts`:
 
 1. **Token.** La contraseña MQTT es el JWT de `POST /api/auth/login`. Sin
-   `role: 'driver'` no se entra.
+   `role: 'device'` no se entra.
 2. **Sesión.** Un bus, una sesión. La sesión nueva desplaza a la anterior;
    una sesión revocada deja de poder publicar en el acto, no al expirar el
    token.
@@ -228,7 +228,7 @@ sesión del panel. Habría que sacarla a otro origen o volver a exigir
 
 1. **No hay app de conductor y no va a haberla.** El GPS es hardware montado
    en el bus. Lo que queda en el código con nombre de conductor —la tabla
-   `drivers`, `driver_sessions`, el `role: 'driver'` del token— es la
+   `drivers`, `driver_sessions`, el `role: 'device'` del token— es la
    credencial del equipo, no de una persona.
 2. **Una desconexión no borra el bus.** Se queda donde estaba y pasa a «sin
    señal» a los 5 minutos. Un bus quieto en un trancón no tiene posición

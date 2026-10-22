@@ -11,7 +11,7 @@ import {
   MQTT_TLS_CERT_PATH,
   MQTT_TLS_KEY_PATH,
 } from '../config';
-import { DriverTokenPayload, verifyToken } from '../auth/tokens';
+import { DeviceTokenPayload, verifyToken } from '../auth/tokens';
 import { claimSession, getSession, isSessionAuthorized, releaseSession } from '../data/sessions';
 import { incrementMetric } from '../observability/metrics';
 import { requestKey } from '../security/rate_limiter';
@@ -71,7 +71,7 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
 // como propiedad extra sobre el objeto Client con casts a `any`; un WeakMap
 // tipado hace lo mismo sin mentirle al compilador (y se limpia solo cuando
 // el cliente es recolectado).
-const clientAuth = new WeakMap<Client, DriverTokenPayload>();
+const clientAuth = new WeakMap<Client, DeviceTokenPayload>();
 
 export function isBrokerReady(): boolean {
   return brokerReady;
@@ -142,11 +142,11 @@ export interface PositionHandlingResult {
 
 type MessageHandler = (
   clientId: string,
-  auth: DriverTokenPayload,
+  auth: DeviceTokenPayload,
   topic: string,
   payload: Record<string, unknown>,
 ) => PositionHandlingResult | void;
-type DisconnectHandler = (clientId: string, auth: DriverTokenPayload) => void;
+type DisconnectHandler = (clientId: string, auth: DeviceTokenPayload) => void;
 
 export function startBroker(
   onMessage: MessageHandler,
@@ -168,12 +168,12 @@ export function startBroker(
     const token = password.toString();
     const payload = verifyToken(token);
 
-    if (!payload || payload.role !== 'driver') {
+    if (!payload || payload.role !== 'device') {
       incrementMetric('mqtt.auth.rejected');
       console.warn(`[MQTT] Auth rejected for client ${client.id}: invalid JWT`);
       return callback(null, false);
     }
-    const driverPayload = payload as DriverTokenPayload;
+    const driverPayload = payload as DeviceTokenPayload;
 
     if (!claimSession(driverPayload.sessionId, client.id)) {
       // La sesión está "reclamada" por otro cliente. Si ese dueño ya está
@@ -188,7 +188,7 @@ export function startBroker(
           if (claimSession(driverPayload.sessionId, client.id)) {
             clientAuth.set(client, driverPayload);
             incrementMetric('mqtt.auth.accepted');
-            console.log(`[MQTT] Auth OK (claim robado): conductor ${driverPayload.driverId} (bus ${driverPayload.busId})`);
+            console.log(`[MQTT] Auth OK (claim robado): equipo ${driverPayload.deviceId} (bus ${driverPayload.busId})`);
             return callback(null, true);
           }
         }
@@ -203,7 +203,7 @@ export function startBroker(
     // El teléfono del conductor no sale en los registros: en Fly se guardan
     // y los lee cualquiera con acceso a la consola. El driverId basta para
     // cruzar un incidente con la base.
-    console.log(`[MQTT] Auth OK: conductor ${driverPayload.driverId} (bus ${driverPayload.busId})`);
+    console.log(`[MQTT] Auth OK: equipo ${driverPayload.deviceId} (bus ${driverPayload.busId})`);
     callback(null, true);
   };
 
@@ -247,7 +247,7 @@ export function startBroker(
     }
     if (topic !== expectedTopic) {
       incrementMetric('mqtt.publish.rejected_topic');
-      console.warn(`[MQTT] TOPIC HIJACKING: conductor ${payload.driverId} (bus ${payload.busId}) intentó publicar a ${topic}`);
+      console.warn(`[MQTT] TOPIC HIJACKING: equipo ${payload.deviceId} (bus ${payload.busId}) intentó publicar a ${topic}`);
       forceCloseClient(broker, client, `topic hijacking: ${topic}`);
       return callback(denyPublish(`topic no autorizado: ${topic}`));
     }
@@ -271,7 +271,7 @@ export function startBroker(
     callback(null, subscription);
   };
 
-  function publishAck(auth: DriverTokenPayload, result: PositionHandlingResult): void {
+  function publishAck(auth: DeviceTokenPayload, result: PositionHandlingResult): void {
     if (result.sequence == null) return;
     const topic = `empresa/${auth.companyId}/bus/${auth.busId}/ack`;
     const payload = Buffer.from(JSON.stringify({
@@ -335,7 +335,7 @@ export function startBroker(
     const authPayload = clientAuth.get(client);
     if (authPayload && onDisconnect) {
       if (!releaseSession(authPayload.sessionId, client.id as string)) return;
-      console.log(`[MQTT] Disconnect: conductor ${authPayload.driverId} (bus ${authPayload.busId})`);
+      console.log(`[MQTT] Disconnect: equipo ${authPayload.deviceId} (bus ${authPayload.busId})`);
       onDisconnect(client.id as string, authPayload);
     }
   });
@@ -350,7 +350,7 @@ export function startBroker(
         forceCloseClient(
           broker,
           client,
-          `sesión revocada (conductor ${payload.driverId} inició en otro dispositivo o fue expulsado)`,
+          `sesión revocada (equipo ${payload.deviceId} inició en otro dispositivo o fue expulsado)`,
         );
       }
     }

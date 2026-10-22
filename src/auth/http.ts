@@ -54,10 +54,10 @@ export function isAdminRequest(req: IncomingMessage): boolean {
   return timingSafeEqual(a, b);
 }
 
-export function isDriverForBus(auth: TokenPayload | null, busId: string): boolean {
-  if (!auth || auth.role !== 'driver' || auth.busId !== busId) return false;
+export function isDeviceForBus(auth: TokenPayload | null, busId: string): boolean {
+  if (!auth || auth.role !== 'device' || auth.busId !== busId) return false;
   const session = getSession(auth.sessionId);
   return session?.status === 'active' &&
-      session.driverId === auth.driverId &&
+      session.driverId === auth.deviceId &&
       session.busId === auth.busId;
 }

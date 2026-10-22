@@ -429,8 +429,8 @@ async function pedirToken(estado: EstadoBus): Promise<string> {
     busId: bus.busId, routeId: bus.routeId, companyId: bus.companyId,
   });
   return signToken({
-    sub: driver.driverId, driverId: driver.driverId, phoneNumber: driver.phoneNumber,
-    role: 'driver', companyId: bus.companyId, busId: bus.busId,
+    sub: driver.driverId, deviceId: driver.driverId, identifier: driver.phoneNumber,
+    role: 'device', companyId: bus.companyId, busId: bus.busId,
     routeId: bus.routeId, sessionId,
   });
 }

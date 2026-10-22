@@ -32,7 +32,7 @@ import { dispatchBusEvents } from './data/despacho';
 import { LifecycleEvent } from './data/lifecycle_events';
 import { flushMetrics, incrementMetric, restoreMetrics } from './observability/metrics';
 import { arrancarFlotaDemo, detenerFlotaDemo } from './demo/flota_demo';
-import { DriverTokenPayload } from './auth/tokens';
+import { DeviceTokenPayload } from './auth/tokens';
 import { validarPayloadPosicion } from './security/payload';
 import { cerrarRedLocal } from './security/red_local';
 import { registrarTamanosLimitadores } from './security/rate_limiter';
@@ -266,7 +266,7 @@ buzonTimer?.unref();
 if (!correo) console.log('[Buzón] Sin YA_VIENE_CORREO_USUARIO/CLAVE: los reportes esperan en la cola');
 
 startBroker(
-  (_clientId: string, auth: DriverTokenPayload, topic, payload): PositionHandlingResult | void => {
+  (_clientId: string, auth: DeviceTokenPayload, topic, payload): PositionHandlingResult | void => {
   const match = topic.match(/^empresa\/([^/]+)\/bus\/([^/]+)\/posicion$/);
   if (!match) {
     console.warn(`[MQTT] Topic rejected after authorization: ${topic}`);
@@ -276,7 +276,7 @@ startBroker(
   const topicCompanyId = match[1];
   const topicBusId = match[2];
   if (topicCompanyId !== auth.companyId || topicBusId !== auth.busId) {
-    console.warn(`[MQTT] Topic bus mismatch for authenticated driver ${auth.driverId}`);
+    console.warn(`[MQTT] Topic bus mismatch for authenticated device ${auth.deviceId}`);
     return;
   }
 
@@ -327,7 +327,7 @@ startBroker(
     return { accepted: false, sequence: positionSequence, reason: sanity.reason };
   }
 
-  const updated = upsertPosition(auth.phoneNumber, {
+  const updated = upsertPosition(auth.identifier, {
     busId: auth.busId,
     routeId: auth.routeId,
     lat,
@@ -353,11 +353,11 @@ startBroker(
   }
   return { accepted: true, sequence: positionSequence };
 },
-  (_clientId: string, auth: DriverTokenPayload) => {
+  (_clientId: string, auth: DeviceTokenPayload) => {
     // Desconexión MQTT: NO se borra la posición. El bus conserva su última
     // ubicación y pasa a "sin señal" (is_ghost) tras GHOST_MS via sweep.
     console.log(
-      `[MQTT] Conductor ${auth.driverId} desconectado — bus ${auth.busId} pasa a sin señal en ${GHOST_MS / 1000}s`,
+      `[MQTT] Equipo ${auth.deviceId} desconectado — bus ${auth.busId} pasa a sin señal en ${GHOST_MS / 1000}s`,
     );
   },
   server,

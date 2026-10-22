@@ -189,7 +189,7 @@ test('P3-10: la provisión rechaza identificadores con los que el equipo nunca p
 
 test('P3-7: un token firmado con otro algoritmo no vale aunque la clave sea la buena', () => {
   const valido = signToken({
-    sub: 'd1', driverId: 'd1', phoneNumber: '300', role: 'driver',
+    sub: 'd1', deviceId: 'd1', identifier: '300', role: 'device',
     companyId: 'EMP-01', busId: 'B-1', routeId: 'R-101', sessionId: 's1',
   });
   assert.equal((jwt.decode(valido, { complete: true }) as jwt.Jwt).header.alg, 'HS256');

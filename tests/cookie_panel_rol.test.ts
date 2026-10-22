@@ -1,6 +1,6 @@
 // La cookie del panel web solo vale para un token de panel. Nadie emite una
 // cookie con el token del conductor, pero si alguien la arma a mano no debe
-// abrirle las rutas del bus (`isDriverForBus`): el conductor entra solo con
+// abrirle las rutas del bus (`isDeviceForBus`): el equipo entra solo con
 // `Authorization: Bearer`. En proceso, sin servidor.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -21,7 +21,7 @@ const { signToken } = require('../src/auth/tokens') as typeof import('../src/aut
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
 
 const conductor = signToken({
-  sub: 'd1', driverId: 'd1', phoneNumber: '+57800', role: 'driver',
+  sub: 'd1', deviceId: 'd1', identifier: '+57800', role: 'device',
   companyId: 'EMP', busId: 'B1', routeId: 'R1', sessionId: 's1',
 });
 const panel = signToken({ sub: 'a1', role: 'admin', companyId: 'EMP', username: 'u', tv: 0 });
@@ -36,5 +36,5 @@ test('la cookie no lleva el token del conductor', () => {
 
 test('la cookie sí lleva el del panel, y el conductor sigue entrando con Bearer', () => {
   assert.equal(authenticateRequest(peticion({ cookie: `yv_panel=${panel}` }))?.role, 'admin');
-  assert.equal(authenticateRequest(peticion({ authorization: `Bearer ${conductor}` }))?.role, 'driver');
+  assert.equal(authenticateRequest(peticion({ authorization: `Bearer ${conductor}` }))?.role, 'device');
 });

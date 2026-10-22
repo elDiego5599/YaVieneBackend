@@ -134,7 +134,7 @@ async function provisionar(): Promise<Bus[]> {
       companyId: EMPRESA, busId, routeId,
     });
     const token = signToken({
-      sub: telefono, driverId: telefono, phoneNumber: telefono, role: 'driver',
+      sub: telefono, deviceId: telefono, identifier: telefono, role: 'device',
       companyId: EMPRESA, busId, routeId, sessionId,
     });
     const tramos = puntos.slice(1).map((p, k) => metros(puntos[k], p));

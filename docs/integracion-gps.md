@@ -52,11 +52,15 @@ El equipo se conecta con usuario vacío y **el JWT como contraseña MQTT**. El
 token se pide una vez por jornada:
 
 ```
-POST /api/auth/login
+POST /api/devices/login
 Content-Type: application/json
 
-{"phoneNumber": "<línea del equipo>", "pin": "<PIN de 4 a 8 dígitos>"}
+{"identifier": "<identificador del equipo>", "secret": "<secreto del equipo>"}
 ```
+
+`POST /api/auth/login` sigue disponible durante la transición y acepta el
+cuerpo anterior `{ "phoneNumber": "…", "pin": "…" }` (también `busId` y
+`routeId` opcionales). Ambos endpoints emiten un token con rol `device`.
 
 La respuesta trae `token`, y dentro de él van la empresa, el bus, la ruta y
 un `sessionId` nuevo. El token dura **24 horas**; pasado ese tiempo la

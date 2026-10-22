@@ -17,11 +17,11 @@ function jwtSecret(): string {
   return secret;
 }
 
-export interface DriverTokenPayload {
+export interface DeviceTokenPayload {
   sub: string;
-  driverId: string;
-  phoneNumber: string;
-  role: 'driver';
+  deviceId: string;
+  identifier: string;
+  role: 'device';
   companyId: string;
   busId: string;
   routeId: string;
@@ -44,7 +44,7 @@ export interface AdminTokenPayload {
   tv: number;
 }
 
-export type TokenPayload = DriverTokenPayload | AdminTokenPayload;
+export type TokenPayload = DeviceTokenPayload | AdminTokenPayload;
 
 /** Lo que dura el token del panel: 8 h, una jornada. La cookie del panel web
  * (`cookie_panel.ts`) dura lo mismo. */
@@ -84,21 +84,19 @@ export function verifyToken(token: string): TokenPayload | null {
       return decoded as AdminTokenPayload;
     }
 
-    const requiredStrings = [
-      'sub',
-      'driverId',
-      'phoneNumber',
-      'companyId',
-      'busId',
-      'routeId',
-      'sessionId',
-    ];
+    const isLegacyDriver = decoded.role === 'driver';
+    const requiredStrings = isLegacyDriver
+      ? ['sub', 'driverId', 'phoneNumber', 'companyId', 'busId', 'routeId', 'sessionId']
+      : ['sub', 'deviceId', 'identifier', 'companyId', 'busId', 'routeId', 'sessionId'];
     if (!requiredStrings.every((key) => typeof decoded[key] === 'string' && decoded[key])) {
       return null;
     }
-    if (decoded.role !== 'driver') return null;
-
-    return decoded as DriverTokenPayload;
+    if (decoded.role !== 'device' && !isLegacyDriver) return null;
+    if (isLegacyDriver) {
+      const { driverId, phoneNumber, ...claims } = decoded;
+      return { ...claims, deviceId: driverId, identifier: phoneNumber, role: 'device' } as DeviceTokenPayload;
+    }
+    return decoded as DeviceTokenPayload;
   } catch {
     return null;
   }

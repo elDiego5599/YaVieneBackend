@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer, IncomingMessage, request } from 'node:http';
 import test from 'node:test';
+import jwt from 'jsonwebtoken';
 
 process.env.JWT_SECRET = 'test-jwt-secret';
 process.env.ADMIN_API_KEY = 'test-admin-key';
@@ -183,9 +184,9 @@ test('PIN hashing never validates the wrong PIN', () => {
 test('JWT validates canonical claims and rejects tampering', () => {
   const token = signToken({
     sub: 'driver-1',
-    driverId: 'driver-1',
-    phoneNumber: '3000000000',
-    role: 'driver',
+    deviceId: 'driver-1',
+    identifier: '3000000000',
+    role: 'device',
     companyId: 'EMP-01',
     busId: 'BUS-WFK042',
     routeId: 'R-101',
@@ -194,6 +195,35 @@ test('JWT validates canonical claims and rejects tampering', () => {
 
   assert.equal(verifyToken(token)?.sessionId, 'session-1');
   assert.equal(verifyToken(`${token}tampered`), null);
+});
+
+test('JWT de equipo y token legado normalizan la identidad; rechaza claims incompletos', () => {
+  const device = signToken({
+    sub: 'device-1', deviceId: 'device-1', identifier: 'gps-001', role: 'device',
+    companyId: 'EMP-01', busId: 'BUS-WFK042', routeId: 'R-101', sessionId: 'session-1',
+  });
+  const verifiedDevice = verifyToken(device);
+  assert.equal(verifiedDevice?.role, 'device');
+  assert.equal(verifiedDevice?.deviceId, 'device-1');
+  assert.equal(verifiedDevice?.identifier, 'gps-001');
+  assert.equal(verifiedDevice?.sessionId, 'session-1');
+
+  const legacy = jwt.sign({
+    sub: 'device-1', driverId: 'device-1', phoneNumber: 'gps-001', role: 'driver',
+    companyId: 'EMP-01', busId: 'BUS-WFK042', routeId: 'R-101', sessionId: 'session-1',
+  }, process.env.JWT_SECRET!, {
+    algorithm: 'HS256', issuer: 'ya-viene-backend', audience: 'ya-viene-mqtt', expiresIn: '24h',
+  });
+  const verifiedLegacy = verifyToken(legacy);
+  assert.equal(verifiedLegacy?.role, 'device');
+  assert.equal(verifiedLegacy?.deviceId, 'device-1');
+  assert.equal(verifiedLegacy?.identifier, 'gps-001');
+  assert.equal(verifiedLegacy?.sessionId, 'session-1');
+
+  const incomplete = jwt.sign({ sub: 'device-1', role: 'device' }, process.env.JWT_SECRET!, {
+    algorithm: 'HS256', issuer: 'ya-viene-backend', audience: 'ya-viene-mqtt', expiresIn: '24h',
+  });
+  assert.equal(verifyToken(incomplete), null);
 });
 
 // El token del panel lleva la versión de la credencial; uno emitido antes de

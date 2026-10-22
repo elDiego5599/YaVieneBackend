@@ -218,7 +218,7 @@ export const MAX_FALLOS_PIN_POR_CUENTA = 10;
 export const VENTANA_FALLOS_PIN_MS = 60 * 60_000;
 export const BLOQUEO_PIN_BASE_MS = 5 * 60_000;
 export const BLOQUEO_PIN_TOPE_MS = 24 * 60 * 60_000;
-export const pinPorCuentaBloqueo = new BloqueoPorCuenta(
+export const deviceLoginLockout = new BloqueoPorCuenta(
   MAX_FALLOS_PIN_POR_CUENTA,
   VENTANA_FALLOS_PIN_MS,
   BLOQUEO_PIN_BASE_MS,
@@ -231,7 +231,7 @@ const LIMITADORES: Record<string, { readonly size: number }> = {
   admin: adminRateLimiter,
   read: readRateLimiter,
   fleetWrite: fleetWriteRateLimiter,
-  pinCuenta: pinPorCuentaBloqueo,
+  deviceLogin: deviceLoginLockout,
   avisos: avisosRateLimiter,
   reportes: reportesRateLimiter,
   lanzamiento: lanzamientoRateLimiter,

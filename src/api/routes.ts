@@ -24,7 +24,8 @@ import {
   getCompanyBuses,
 } from '../data/buses';
 import { getEmpresas } from '../data/empresas';
-import { authenticateRequest, isAdminRequest, isDriverForBus, authenticateCompanyAdmin } from '../auth/http';
+import { getActiveDeviceByIdentifier } from '../data/drivers_store';
+import { authenticateRequest, isAdminRequest, isDeviceForBus, authenticateCompanyAdmin } from '../auth/http';
 import { hashPin, hashSecret, verifySecretSinDelatar } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
 import { cookieBorrada, cookieDeSesion, esOrigenDelPanel, leerCookiePanel } from '../auth/cookie_panel';
@@ -39,7 +40,7 @@ import {
   loginIpRateLimiter,
   loginRateLimiter,
   MAX_FALLOS_PIN_POR_CUENTA,
-  pinPorCuentaBloqueo,
+  deviceLoginLockout,
   readRateLimiter,
   reportesRateLimiter,
   lanzamientoRateLimiter,
@@ -239,7 +240,7 @@ addRoute('GET', '/api/buses/:busId', (req, res, params) => {
 
 addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
   const auth = authenticateRequest(req);
-  if (auth?.role !== 'driver' || !isDriverForBus(auth, params.busId)) {
+  if (auth?.role !== 'device' || !isDeviceForBus(auth, params.busId)) {
     writeError(res, 403, 'BUS_FORBIDDEN', 'The token cannot control this bus');
     return;
   }
@@ -251,7 +252,7 @@ addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
   }
   removePositionOwned(params.busId, auth.sessionId);
   revokeSession(auth.sessionId);
-  endAssignment(auth.driverId, params.busId);
+  endAssignment(auth.deviceId, params.busId);
   console.log(`[API] Bus ${params.busId} marcado offline por el conductor`);
   writeJson(res, 200, { status: 'offline', busId: params.busId });
 });
@@ -327,7 +328,7 @@ function provisionDriver(
   revokeSessionsForDriver(driver.driverId);
   // El alta pone un PIN nuevo con la clave de administración: el bloqueo por
   // PIN fallidos de esa línea ya no protege nada y el equipo entra enseguida.
-  pinPorCuentaBloqueo.levantar(phoneNumber);
+  deviceLoginLockout.levantar(phoneNumber);
 
   writeJson(res, 201, {
     status: 'provisioned',
@@ -338,23 +339,25 @@ function provisionDriver(
 addRoute('POST', '/api/admin/drivers', provisionDriver);
 addRoute('POST', '/api/drivers/register', provisionDriver);
 
-addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
-  const phoneNumber = typeof body?.phoneNumber === 'string' ? body.phoneNumber : '';
-  const pin = typeof body?.pin === 'string' ? body.pin : '';
-  const requestedBusId = typeof body?.busId === 'string' ? body.busId : null;
-  const requestedRouteId = typeof body?.routeId === 'string' ? body.routeId : null;
-
+function loginDevice(
+  req: IncomingMessage,
+  res: ServerResponse,
+  identifier: string,
+  secret: string,
+  requestedBusId: string | null,
+  requestedRouteId: string | null,
+): void {
   // Dos topes: el de la IP entera frena la barrida de cuentas, y el de
   // (IP, teléfono) frena el bombardeo de PIN contra una sola.
   if (
     !loginIpRateLimiter.allow(requestKey(req, 'login')) ||
-    !loginRateLimiter.allow(requestKey(req, `login:${phoneNumber || 'unknown'}`))
+    !loginRateLimiter.allow(requestKey(req, `login:${identifier || 'unknown'}`))
   ) {
     writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
     return;
   }
 
-  if (!phoneNumber || !pin) {
+  if (!identifier || !secret) {
     writeError(res, 400, 'CREDENTIALS_REQUIRED', 'phoneNumber and pin are required');
     return;
   }
@@ -363,62 +366,77 @@ addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
   // intentos contra un mismo teléfono repartidos entre muchas IP. Mientras
   // dura el bloqueo no se mira el PIN, ni siquiera el bueno. Mismo 429 que
   // los otros topes: el equipo ya sabe esperar y reintentar.
-  const bloqueo = pinPorCuentaBloqueo.restante(phoneNumber);
+  const bloqueo = deviceLoginLockout.restante(identifier);
   if (bloqueo > 0) {
     res.setHeader('Retry-After', String(Math.ceil(bloqueo / 1000)));
     writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
     return;
   }
 
-  const driver = getDriver(phoneNumber);
+  const device = getActiveDeviceByIdentifier(identifier);
   // scrypt corre siempre, exista o no la línea (P3-1): si no, el tiempo de
   // respuesta decía qué teléfonos están dados de alta.
-  const pinBueno = verifySecretSinDelatar(pin, driver?.pinHash);
-  if (!driver || !pinBueno || !driver.companyId || !driver.busId) {
-    const bloqueoMs = pinPorCuentaBloqueo.fallo(phoneNumber);
+  const pinBueno = verifySecretSinDelatar(secret, device?.pinHash);
+  if (!device || !pinBueno || !device.companyId || !device.busId) {
+    const bloqueoMs = deviceLoginLockout.fallo(identifier);
     if (bloqueoMs > 0) {
       incrementMetric('login.cuenta_bloqueada');
-      console.warn(`[Auth] Cuenta …${phoneNumber.slice(-4)} bloqueada ${Math.round(bloqueoMs / 60_000)} min tras ${MAX_FALLOS_PIN_POR_CUENTA} PIN fallidos`);
+      console.warn(`[Auth] Cuenta …${identifier.slice(-4)} bloqueada ${Math.round(bloqueoMs / 60_000)} min tras ${MAX_FALLOS_PIN_POR_CUENTA} PIN fallidos`);
     }
     writeError(res, 401, 'INVALID_CREDENTIALS', 'Invalid driver credentials');
     return;
   }
-  pinPorCuentaBloqueo.acierto(phoneNumber);
+  deviceLoginLockout.acierto(identifier);
 
-  if (requestedBusId && requestedBusId !== driver.busId) {
+  if (requestedBusId && requestedBusId !== device.busId) {
     writeError(res, 403, 'BUS_FORBIDDEN', 'The driver is not assigned to this bus');
     return;
   }
-  if (requestedRouteId && requestedRouteId !== driver.routeId) {
+  if (requestedRouteId && requestedRouteId !== device.routeId) {
     writeError(res, 403, 'ROUTE_FORBIDDEN', 'The driver is not assigned to this route');
     return;
   }
 
   const sessionId = randomUUID();
   const token = signToken({
-    sub: driver.driverId,
-    driverId: driver.driverId,
-    phoneNumber: String(phoneNumber),
-    role: 'driver',
-    companyId: driver.companyId,
-    busId: driver.busId,
-    routeId: driver.routeId,
+    sub: device.driverId,
+    deviceId: device.driverId,
+    identifier,
+    role: 'device',
+    companyId: device.companyId,
+    busId: device.busId,
+    routeId: device.routeId,
     sessionId,
   });
 
   createDriverSession({
     sessionId,
-    driverId: driver.driverId,
-    phoneNumber: driver.phoneNumber,
-    companyId: driver.companyId,
-    busId: driver.busId,
-    routeId: driver.routeId,
+    driverId: device.driverId,
+    phoneNumber: device.phoneNumber,
+    companyId: device.companyId,
+    busId: device.busId,
+    routeId: device.routeId,
   });
 
   writeJson(res, 200, {
-    driver: publicDriver(driver),
+    driver: publicDriver(device),
     token,
   });
+}
+
+addRoute('POST', '/api/devices/login', (req, res, _params, body) => {
+  const identifier = typeof body?.identifier === 'string' ? body.identifier : '';
+  const secret = typeof body?.secret === 'string' ? body.secret : '';
+  loginDevice(req, res, identifier, secret, null, null);
+});
+
+// Compatibilidad temporal: clientes anteriores todavía envían phoneNumber/pin.
+addRoute('POST', '/api/auth/login', (req, res, _params, body) => {
+  const identifier = typeof body?.phoneNumber === 'string' ? body.phoneNumber : '';
+  const secret = typeof body?.pin === 'string' ? body.pin : '';
+  const busId = typeof body?.busId === 'string' ? body.busId : null;
+  const routeId = typeof body?.routeId === 'string' ? body.routeId : null;
+  loginDevice(req, res, identifier, secret, busId, routeId);
 });
 
 // Aquí vivían POST /api/demo/session y POST /api/demo/buses. El primero

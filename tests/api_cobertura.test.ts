@@ -24,6 +24,7 @@ const { createOrUpdateCompanyAdmin } = require('../src/data/empresas') as typeof
 const { addCompanyRoute } = require('../src/data/routes_store') as typeof import('../src/data/routes_store');
 const { upsertPosition } = require('../src/data/positions_store') as typeof import('../src/data/positions_store');
 const { signToken } = require('../src/auth/tokens') as typeof import('../src/auth/tokens');
+const { verifyToken } = require('../src/auth/tokens') as typeof import('../src/auth/tokens');
 const { hashSecret } = require('../src/auth/passwords') as typeof import('../src/auth/passwords');
 
 const EMPRESA = 'API-COB';
@@ -157,6 +158,14 @@ test('offline del conductor', async () => {
     (await llamar('POST', '/api/buses/BUS-API001/offline', {})).estado,
     403,
   );
+});
+
+test('login del equipo usa identifier y secret y emite rol device', async () => {
+  const response = await llamar('POST', '/api/devices/login', { identifier: TELEFONO, secret: PIN });
+  assert.equal(response.estado, 200);
+  const payload = verifyToken(response.cuerpo.token as string);
+  assert.equal(payload?.role, 'device');
+  assert.equal(payload?.identifier, TELEFONO);
 });
 
 test('login de panel: faltantes, malo y bueno', async () => {
