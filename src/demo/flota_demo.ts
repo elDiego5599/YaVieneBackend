@@ -21,7 +21,8 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { getDb } from '../data/database';
-import { busCompanyCache, busIdFromPlaca, deleteBus } from '../data/fleet_admin';
+import { busCompanyCache, busIdFromPlaca, deleteBus, visibilityCache } from '../data/fleet_admin';
+import { resetEstadoVisibilidadTerminal } from '../data/positions_store';
 import { flotaDemoHabilitada } from '../config';
 import { registerDriver } from '../data/drivers_store';
 import { createDriverSession } from '../data/sessions';
@@ -64,8 +65,8 @@ const RUTA_DESTACADA = process.env.YA_VIENE_FLOTA_RUTA || 'R-106';
 const INTERVALO_RAPIDO = process.env.CAPTURE_INTERVAL_MS || '400';
 const INTERVALO_LENTO = process.env.CAPTURE_INTERVAL_MS_RESTO || '1500';
 
-// Doce buses por ruta: ocho activos y cuatro esperando en los terminales.
-const BUSES_POR_RUTA = 12;
+// Dieciséis buses por ruta: ocho en servicio y ocho esperando en terminal.
+const BUSES_POR_RUTA = 16;
 const ALFABETO = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 function letrasPlaca(indice: number): string {
@@ -84,23 +85,44 @@ function hashBus(busId: string): number {
   return hash >>> 0;
 }
 
-/** Velocidad determinista por bus: base distinta, oscilación suave y frenadas periódicas. */
-export function velocidadDemo(bus: Pick<BusDemo, 'busId' | 'velocidadBaseKmh'>, elapsedMs: number): number {
+function diferenciaAngular(a: number, b: number): number {
+  return Math.abs(((b - a + 540) % 360) - 180);
+}
+
+function velocidadGeometrica(puntos?: Punto[], progreso?: number): number {
+  if (!puntos || puntos.length < 3 || progreso === undefined) return 80;
+  let acumulado = 0;
+  let tramo = 0;
+  while (tramo < puntos.length - 2) {
+    const largo = distancia(puntos[tramo], puntos[tramo + 1]);
+    if (acumulado + largo > progreso) break;
+    acumulado += largo;
+    tramo++;
+  }
+  if (tramo >= puntos.length - 2) return 80;
+  const giro = diferenciaAngular(rumbo(puntos[tramo], puntos[tramo + 1]), rumbo(puntos[tramo + 1], puntos[tramo + 2]));
+  return giro < 20 ? 80 : Math.max(15, 30 - Math.min(giro, 180) / 180 * 15);
+}
+
+/** Velocidad determinista por bus y ajustada a la geometría que tiene delante. */
+export function velocidadDemo(bus: Pick<BusDemo, 'busId' | 'velocidadBaseKmh'>, elapsedMs: number, puntos?: Punto[], progreso?: number): number {
   const hash = hashBus(bus.busId);
-  const base = bus.velocidadBaseKmh;
-  if (elapsedMs <= 0) return base;
+  const base = velocidadGeometrica(puntos, progreso);
   const fase = ((hash >>> 8) % 6283) / 1000;
   const segundos = Math.max(0, elapsedMs) / 1000;
-  const variacion = 3.5 * Math.sin(segundos / 24 + fase) + 1.5 * Math.sin(segundos / 61 + fase * 1.7);
+  const variacion = 10 * Math.sin(segundos / 24 + fase) + 5 * Math.sin(segundos / 61 + fase * 1.7);
+  const limiteBajo = base === 80 ? 60 : 15;
+  const limiteAlto = base === 80 ? 100 : 30;
+  const crucero = Math.max(limiteBajo, Math.min(limiteAlto, base + variacion));
   const ciclo = ((segundos + fase * 3) % 78 + 78) % 78;
-  const crucero = Math.max(18, base + variacion);
-  const freno = ciclo < 9 ? (1 - ciclo / 9) * crucero : 0;
-  return Math.max(0, Math.min(42, crucero - freno));
+  const suave = (t: number) => t * t * (3 - 2 * t);
+  const freno = ciclo < 0.8 ? suave(ciclo / 0.8) : ciclo < 1.8 ? 1 - suave((ciclo - 0.8) / 1) : 0;
+  return Math.max(0, crucero * (1 - freno));
 }
 
 /** Metros que recorre el bus en una publicación, usando la velocidad simulada. */
-export function metrosAvanceDemo(bus: Pick<BusDemo, 'busId' | 'velocidadBaseKmh'>, elapsedMs: number, intervaloMs: number): number {
-  return velocidadDemo(bus, elapsedMs) / 3.6 * intervaloMs / 1000;
+export function metrosAvanceDemo(bus: Pick<BusDemo, 'busId' | 'velocidadBaseKmh'>, elapsedMs: number, intervaloMs: number, puntos?: Punto[], progreso?: number): number {
+  return velocidadDemo(bus, elapsedMs, puntos, progreso) / 3.6 * intervaloMs / 1000;
 }
 
 /**
@@ -142,8 +164,7 @@ export function construirFlota(): BusDemo[] {
   const rutas = EMPRESAS.flatMap((companyId) =>
     rutasDelCatalogo(companyId).map((routeId) => ({ companyId, routeId })),
   );
-  let numeroBus = 0;
-  for (const { companyId, routeId } of rutas) {
+  for (const [indiceRuta, { companyId, routeId }] of rutas.entries()) {
     for (let i = 0; i < BUSES_POR_RUTA; i++) {
       const activo = i < 8;
       const sentido = i % 2 === 0 ? 'ida' : 'venida';
@@ -151,25 +172,90 @@ export function construirFlota(): BusDemo[] {
       // START_FRACTION del simulador se expresa desde el terminal de salida;
       // venida invierte esa coordenada para ocupar otra posición física.
       const fraccion = sentido === 'ida' ? posicion : 1 - posicion;
+      // Conserva los IDs de los doce buses de la versión anterior en cada
+      // ruta. Los cuatro nuevos usan el bloque final para no desplazar rutas.
+      const numeroBus = i < 12
+        ? indiceRuta * 12 + i
+        : rutas.length * 12 + indiceRuta * 4 + i - 12;
       const placa = routeId === 'R-106' && i === 5
         ? 'ABC123'
         : `${letrasPlaca(numeroBus)}${String(numeroBus % 1000).padStart(3, '0')}`;
-      const busNumero = numeroBus++;
       flota.push({
         busId: busIdFromPlaca(placa),
         placa,
         routeId,
         companyId,
         fraccion,
-        telefono: `300${String(busNumero).padStart(7, '0')}`,
+        telefono: `300${String(numeroBus).padStart(7, '0')}`,
         intervaloMs: routeId === RUTA_DESTACADA ? INTERVALO_RAPIDO : INTERVALO_LENTO,
         sentido,
         activo,
-        velocidadBaseKmh: 18 + (hashBus(busIdFromPlaca(placa)) % 2401) / 100,
+        velocidadBaseKmh: 60 + (hashBus(busIdFromPlaca(placa)) % 4001) / 100,
       });
     }
   }
   return flota;
+}
+
+/** Marca generaciones anteriores solo con su firma de conductor simulada. */
+function marcarFlotaAnterior(flota: BusDemo[]): void {
+  if (flota.length === 0 || EMPRESAS.length === 0) return;
+  const rutas = [...new Map(flota.map((bus) => [`${bus.companyId}:${bus.routeId}`, {
+    companyId: bus.companyId, routeId: bus.routeId,
+  }])).values()];
+  const firmas = new Set<string>();
+  for (const cantidad of [12, 16]) {
+    rutas.forEach(({ companyId, routeId }, indiceRuta) => {
+      for (let i = 0; i < cantidad; i++) {
+        const numero = indiceRuta * cantidad + i;
+        const placa = routeId === 'R-106' && i === 5
+          ? 'ABC123'
+          : `${letrasPlaca(numero)}${String(numero % 1000).padStart(3, '0')}`;
+        const busId = busIdFromPlaca(placa);
+        const telefono = `300${String(numero).padStart(7, '0')}`;
+        firmas.add(`${busId}\0${companyId}\0${routeId}\0${telefono}`);
+      }
+    });
+  }
+  const filas = getDb().prepare(`
+    SELECT b.bus_id, b.company_id, b.route_id, d.phone_number
+    FROM buses b JOIN drivers d ON d.bus_id = b.bus_id
+    WHERE b.company_id IN (${EMPRESAS.map(() => '?').join(',')})
+      AND d.company_id = b.company_id AND d.route_id = b.route_id
+      AND d.name = 'Conductor ' || d.phone_number
+  `).all(...EMPRESAS) as Array<{ bus_id: string; company_id: string; route_id: string; phone_number: string }>;
+  const marcar = getDb().prepare('UPDATE buses SET is_demo = 1 WHERE bus_id = ? AND company_id = ?');
+  for (const fila of filas) {
+    if (firmas.has(`${fila.bus_id}\0${fila.company_id}\0${fila.route_id}\0${fila.phone_number}`)) {
+      marcar.run(fila.bus_id, fila.company_id);
+    }
+  }
+}
+
+/** Busca otra placa libre cuando el ID generado ya pertenece a una flota ajena. */
+function resolverColisiones(flota: BusDemo[]): BusDemo[] {
+  const db = getDb();
+  const duenoId = db.prepare('SELECT company_id, is_demo FROM buses WHERE bus_id = ?');
+  const duenoPlaca = db.prepare('SELECT bus_id FROM buses WHERE plate_number = ?');
+  const usadas = new Set(flota.map((bus) => bus.placa));
+  return flota.map((bus) => {
+    const conflictoId = duenoId.get(bus.busId) as { company_id: string; is_demo: number } | undefined;
+    const conflictoPlaca = duenoPlaca.get(bus.placa) as { bus_id: string } | undefined;
+    const yaEsDemo = conflictoId?.company_id === bus.companyId && conflictoId.is_demo === 1;
+    if (yaEsDemo || (!conflictoId && !conflictoPlaca)) return bus;
+    let n = 1_000_000 + hashBus(`${bus.companyId}:${bus.routeId}:${bus.busId}`) % 1_000_000;
+    let placa = '';
+    let busId = '';
+    do {
+      placa = `${letrasPlaca(n)}${String(n % 1000).padStart(3, '0')}`;
+      busId = busIdFromPlaca(placa);
+      n++;
+    } while (usadas.has(placa) || duenoPlaca.get(placa)
+      || (duenoId.get(busId) as { company_id: string; is_demo: number } | undefined));
+    usadas.add(placa);
+    console.warn(`[FLOTA] ${bus.busId} usa placa alterna ${placa}: la placa generada ya pertenece a otro bus.`);
+    return { ...bus, busId, placa };
+  });
 }
 
 /**
@@ -180,12 +266,14 @@ export function construirFlota(): BusDemo[] {
  * alta cada bus con su placa antes de que el simulador se registre: el
  * registro del conductor solo crea el bus por su id, y sin `plate_number` el
  * panel enseñaba «BUS-ABC123». Una placa ya cambiada desde el panel se
- * respeta. Un bus cuyo id o cuya placa ya son de otra empresa se queda
- * fuera: el registro lo rechazaría igual y el simulador se reiniciaría en
- * bucle.
+ * respeta. La columna `is_demo` conserva la procedencia aunque el ID sea una
+ * placa normal; las generaciones anteriores se reconocen por su teléfono y
+ * nombre de conductor deterministas. Una colisión con un bus ajeno recibe
+ * otra placa para mantener los ocho activos y ocho relevos.
  */
 export function prepararFlota(flota: BusDemo[]): BusDemo[] {
   const db = getDb();
+  marcarFlotaAnterior(flota);
   const deEmpresa = db.prepare('SELECT bus_id FROM buses WHERE company_id = ?');
   const viejos = EMPRESAS
     .flatMap((e) => (deEmpresa.all(e) as { bus_id: string }[]).map((r) => r.bus_id))
@@ -196,27 +284,53 @@ export function prepararFlota(flota: BusDemo[]): BusDemo[] {
   }
 
   const dueno = db.prepare('SELECT company_id FROM buses WHERE bus_id = ?');
-  const placaAjena = db.prepare('SELECT 1 FROM buses WHERE plate_number = ? AND bus_id <> ?');
+  const plan = resolverColisiones(flota);
   const alta = db.prepare(`
-    INSERT INTO buses (bus_id, company_id, plate_number, route_id, visible, en_terminal, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 1, 0, ?, ?)
+    INSERT INTO buses (bus_id, company_id, plate_number, route_id, visible, en_terminal, is_demo, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
     ON CONFLICT(bus_id) DO UPDATE SET
       plate_number = COALESCE(buses.plate_number, excluded.plate_number),
-      route_id = COALESCE(buses.route_id, excluded.route_id)
+      route_id = excluded.route_id,
+      visible = excluded.visible,
+      en_terminal = excluded.en_terminal,
+      is_demo = 1
+  `);
+  const limpiarPosicion = db.prepare(`
+    UPDATE positions SET route_fraction = NULL, route_direction = NULL, session_id = NULL, sequence = NULL
+    WHERE bus_id = ?
   `);
   const listos: BusDemo[] = [];
   db.transaction(() => {
-    for (const bus of flota) {
+    for (const bus of plan) {
       const fila = dueno.get(bus.busId) as { company_id: string } | undefined;
       if (fila && fila.company_id !== bus.companyId) continue;
-      if (placaAjena.get(bus.placa, bus.busId)) continue;
       const ahora = Date.now();
-      alta.run(bus.busId, bus.companyId, bus.placa, bus.routeId, ahora, ahora);
+      alta.run(bus.busId, bus.companyId, bus.placa, bus.routeId, bus.activo ? 1 : 0,
+        bus.activo ? 0 : 1, ahora, ahora);
+      // Arrancar la demo es una nueva sesión de simulación: no heredamos una
+      // posición terminal ni la fracción de la ejecución anterior.
+      limpiarPosicion.run(bus.busId);
       listos.push(bus);
     }
   })();
-  for (const bus of listos) busCompanyCache.set(bus.busId, bus.companyId);
-  const fuera = flota.filter((b) => !listos.includes(b));
+  const idsActivos = listos.map((bus) => bus.busId);
+  const placeholders = idsActivos.map(() => '?').join(',');
+  db.prepare(`UPDATE buses SET visible = 0, en_terminal = 0 WHERE is_demo = 1
+    AND company_id IN (${EMPRESAS.map(() => '?').join(',')})
+    AND bus_id NOT IN (${placeholders})`).run(...EMPRESAS, ...idsActivos);
+  const antiguos = db.prepare(`SELECT bus_id FROM buses WHERE is_demo = 1
+    AND company_id IN (${EMPRESAS.map(() => '?').join(',')}) AND bus_id NOT IN (${placeholders})`)
+    .all(...EMPRESAS, ...idsActivos) as Array<{ bus_id: string }>;
+  for (const fila of antiguos) {
+    visibilityCache.set(fila.bus_id, false);
+    resetEstadoVisibilidadTerminal(fila.bus_id);
+  }
+  for (const bus of listos) {
+    busCompanyCache.set(bus.busId, bus.companyId);
+    visibilityCache.set(bus.busId, bus.activo);
+    resetEstadoVisibilidadTerminal(bus.busId);
+  }
+  const fuera = plan.filter((b) => !listos.includes(b));
   if (fuera.length > 0) {
     console.warn(
       `[FLOTA] ${fuera.map((b) => b.placa).join(', ')} ya son de otra empresa: no salen en la demo.`,
@@ -249,6 +363,7 @@ type EstadoBus = {
   iniciadoEn: number;
   cliente?: MqttClient;
   rechazos: number;
+  velocidadKmh: number;
 };
 
 const estados = new Map<string, EstadoBus>();
@@ -380,8 +495,12 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
     estado.capturedAt = Math.max(estado.capturedAt + interval, ahora - interval);
     return;
   }
-  const velocidad = velocidadDemo(estado.bus, estado.capturedAt - estado.iniciadoEn);
-  const recorrido = metrosAvanceDemo(estado.bus, estado.capturedAt - estado.iniciadoEn, interval);
+  const objetivo = velocidadDemo(estado.bus, estado.capturedAt - estado.iniciadoEn, estado.puntos, estado.progreso);
+  const dt = Math.max(0.1, Math.min(5, interval / 1000));
+  const cambioMaximo = 12 * dt;
+  const velocidad = estado.velocidadKmh + Math.max(-cambioMaximo, Math.min(cambioMaximo, objetivo - estado.velocidadKmh));
+  const recorrido = (estado.velocidadKmh + velocidad) / 2 / 3.6 * interval / 1000;
+  estado.velocidadKmh = velocidad;
   estado.progreso += estado.sentido === 'ida' ? recorrido : -recorrido;
   const terminal = estado.sentido === 'ida' && estado.progreso >= estado.longitud
     ? 'B'
@@ -479,7 +598,7 @@ export function arrancarFlotaDemo(): void {
     const datos = geometriaBus(bus);
     estados.set(bus.busId, {
       bus, ...datos, sentido: bus.sentido, iniciado: true, esperandoTerminal: !bus.activo,
-      siguiente: 0, secuencia: 0, capturedAt: Date.now(), rechazos: 0,
+      siguiente: 0, secuencia: 0, capturedAt: Date.now(), rechazos: 0, velocidadKmh: 0,
       iniciadoEn: Date.now(),
     });
   }

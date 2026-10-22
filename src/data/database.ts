@@ -944,6 +944,14 @@ function initSchema(): void {
         ensureColumn(d, 'buses', 'en_terminal', 'INTEGER NOT NULL DEFAULT 0');
       },
     },
+    {
+      version: 34,
+      apply: () => {
+        // Marca explícitamente los buses mantenidos por la flota simulada;
+        // el ID BUS-<placa> también lo usan buses normales.
+        ensureColumn(d, 'buses', 'is_demo', 'INTEGER NOT NULL DEFAULT 0');
+      },
+    },
   ];
 
   for (const migration of migrations) {
