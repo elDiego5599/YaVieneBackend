@@ -19,7 +19,7 @@ process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
 // require y no import: estos módulos abren la base al evaluarse.
 const { getDb } = require('../src/data/database') as typeof import('../src/data/database');
 const { getCompanyBuses } = require('../src/data/fleet_admin') as typeof import('../src/data/fleet_admin');
-const { construirFlota, prepararFlota, retrasoArranque } =
+const { construirFlota, prepararFlota, retrasoArranque, relevoTerminal } =
   require('../src/demo/flota_demo') as typeof import('../src/demo/flota_demo');
 
 test.after(() => {
@@ -57,21 +57,25 @@ test('cada bus de la flota lleva placa colombiana y su id sale de ella', () => {
   const destacada = flota.find((b) => b.placa === 'ABC123');
   assert.equal(destacada?.routeId, 'R-106');
   assert.equal(destacada?.sentido, 'venida');
-  assert.equal(destacada?.fraccion, 1 - 5.5 / 12);
+  assert.equal(destacada?.fraccion, 1 - 5.5 / 8);
 });
 
-test('cada ruta tiene 10–15 buses distribuidos uniformemente y en ambos sentidos', () => {
+test('cada ruta conserva doce placas: ocho rodando, cuatro en espera terminal, cuatro por sentido', () => {
   const flota = construirFlota();
   const rutas = new Map<string, typeof flota>();
   for (const bus of flota) rutas.set(bus.routeId, [...(rutas.get(bus.routeId) ?? []), bus]);
   for (const [ruta, buses] of rutas) {
-    assert.ok(buses.length >= 10 && buses.length <= 15, `${ruta}: ${buses.length}`);
-    const posiciones = buses.map((b) => b.sentido === 'venida' ? 1 - b.fraccion : b.fraccion).sort((a, b) => a - b);
-    assert.equal(new Set(posiciones).size, buses.length, `${ruta}: posiciones repetidas`);
+    assert.equal(buses.length, 12, `${ruta}: plantilla`);
+    const activos = buses.filter((b) => b.activo);
+    assert.equal(activos.length, 8, ruta);
+    assert.equal(activos.filter((b) => b.sentido === 'ida').length, 4, ruta);
+    assert.equal(activos.filter((b) => b.sentido === 'venida').length, 4, ruta);
+    assert.equal(buses.filter((b) => !b.activo).length, 4, ruta);
+    const posiciones = activos.map((b) => b.sentido === 'ida' ? b.fraccion : 1 - b.fraccion).sort((a, b) => a - b);
     const brechas = posiciones.slice(1).map((p, i) => p - posiciones[i]);
     const media = brechas.reduce((s, b) => s + b, 0) / brechas.length;
     assert.ok(Math.max(...brechas) <= 2 * media, `${ruta}: brechas ${brechas.join(',')}`);
-    assert.ok(buses.some((b) => b.sentido === 'ida') && buses.some((b) => b.sentido === 'venida'), ruta);
+    assert.ok(buses.filter((b) => !b.activo).every((b) => b.fraccion === 0 || b.fraccion === 1), ruta);
   }
 });
 
@@ -155,18 +159,21 @@ test('Coolitoral sale con doce buses por ruta, a su nombre', () => {
   );
 });
 
-// El alta y el login del conductor admiten 20 por minuto desde una misma IP
-// (`adminRateLimiter`, `loginIpRateLimiter`), y todos los simuladores salen
-// de 127.0.0.1. Con 108 simuladores, de un tirón se llenaría el cupo; el
-// tope deja margen para que un bus caído pueda registrarse al reintentar.
-test('la flota arranca a 18 buses por minuto como mucho', () => {
+test('los primeros ocho buses arrancan de inmediato sin esperar el limitador HTTP', () => {
   const arranques = Array.from({ length: 40 }, (_, i) => retrasoArranque(i));
-  for (const desde of arranques) {
-    const enUnMinuto = arranques.filter((t) => t >= desde && t < desde + 60_000).length;
-    assert.ok(enUnMinuto <= 18, `${enUnMinuto} arranques en el minuto que empieza en ${desde} ms`);
-  }
-  // Los primeros 18 salen seguidos, como antes: la demo no espera.
-  assert.equal(retrasoArranque(17), 17 * 400);
+  assert.deepEqual(arranques, Array(40).fill(0));
+});
+
+test('un relevo espera dos llegadas al mismo terminal y despacha dos buses juntos', () => {
+  const llegadas: string[] = [];
+  const esperando = ['BUS-ESP001', 'BUS-ESP002'];
+  assert.equal(relevoTerminal(llegadas, 'BUS-LLE001', esperando), null);
+  assert.deepEqual(relevoTerminal(llegadas, 'BUS-LLE002', esperando), {
+    retirar: ['BUS-LLE001', 'BUS-LLE002'],
+    salen: ['BUS-ESP001', 'BUS-ESP002'],
+  });
+  assert.deepEqual(llegadas, []);
+  assert.deepEqual(esperando, ['BUS-LLE001', 'BUS-LLE002']);
 });
 
 test('preparar dos veces no cambia nada, y una placa editada en el panel se respeta', () => {

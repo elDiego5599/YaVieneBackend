@@ -28,11 +28,15 @@ El orden, que es el mismo de la demo en vivo:
    sesión.
 3. **Elige empresa y ruta**: Sobusa → `R-106`, «Calle 72 - Uninorte». Es la ruta
    de la demo, la única cuyos buses van a 400 ms; en las demás el movimiento se
-   ve más a saltos. Sobusa existe porque la base nació sembrada: en una base
+   ve más a saltos. Al arrancar el backend sus ocho buses están rodando en
+   segundos: cuatro de ida y cuatro de vuelta; la plantilla conserva otros
+   cuatro esperando en los terminales y los relevos salen por pares. Sobusa
+   existe porque la base nació sembrada: en una base
    nueva hace falta `YA_VIENE_SEED_DEMO=1` (Fly lo trae en `fly.toml`; ver el
    `README.md`).
 4. **Toca el mapa** para poner su punto de espera, y luego **toca un bus**.
-   Hay doce buses repartidos por el recorrido; conviene tocar `ABC123`, que viene hacia el punto.
+   Hay ocho buses rodando, cuatro por sentido, repartidos por el recorrido;
+   conviene tocar `ABC123`, que viene hacia el punto.
    
 5. **La tarjeta del bus**: el número grande con la distancia («850», «m de ti»)
    bajando sola mientras el bus se acerca. Distancia, no tiempo estimado: eso es

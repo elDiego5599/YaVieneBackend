@@ -66,15 +66,15 @@ arranque. Tiene que ser una IP, y en producción no una de loopback: el
 arranque se detiene con `[Config]` si no. La suite ya la fija sola en
 `127.0.0.1` (`tests/entorno.ts`).
 
-Los buses de la demo no se arrancan a mano: el backend mueve los 108 buses (12 por ruta en las nueve rutas actuales) desde un proceso y un temporizador compartidos, repartidos en ambos sentidos (`src/demo/flota_demo.ts`;
+Los buses de la demo no se arrancan a mano: el backend mantiene la plantilla de 12 buses por ruta en un proceso y temporizador compartidos: ocho rodando (cuatro por sentido), repartidos por el recorrido, y cuatro esperando en los terminales. Cuando llegan dos al mismo terminal se retiran y salen allí dos reemplazos. Los ocho iniciales arrancan inmediatamente; el simulador registra sus conductores y firma JWT dentro del proceso con `signToken`, sin usar el limitador del login público (`src/demo/flota_demo.ts`);
 `YA_VIENE_FLOTA_EMPRESA=EMP-01` deja solo las seis rutas de Sobusa). Arrancan
-18 por minuto: el alta y el login admiten 20 por minuto desde una IP, con
 margen para reintentos. Para apagarlos —tráfico real,
 donde esas posiciones falsas viajarían por el mismo canal que las buenas—
 `YA_VIENE_FLOTA_DEMO=0` delante del arranque. Mientras la flota esté
 encendida, el entorno necesita `PIN` (en `local.env`, y en Fly como secreto):
 es el
-PIN con el que los simuladores registran e inician sesión, y sin él el
+PIN que usaban los simuladores para registrarse e iniciar sesión; ahora la flota
+firma sus JWT dentro del backend y no requiere ese PIN. Sin él, el backend
 backend no arranca (`validateConfig`).
 
 ## Saber que está sano

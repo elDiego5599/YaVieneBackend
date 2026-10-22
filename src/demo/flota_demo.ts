@@ -15,14 +15,17 @@
 //
 // Ruedan Sobusa (EMP-01) y Coolitoral (EMP-03), cada bus a nombre de su
 // empresa. Se apaga con YA_VIENE_FLOTA_DEMO=0 —los tests lo hacen: la flota demo completa
-// publicando encima de un test de flota lo vuelven ruido— y no arranca sin
-// ADMIN_API_KEY, que es lo que necesita el simulador para provisionarse.
+// publicando encima de un test de flota lo vuelven ruido—.
 import { connect, type MqttClient } from 'mqtt';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { randomUUID } from 'crypto';
 import { getDb } from '../data/database';
 import { busCompanyCache, busIdFromPlaca, deleteBus } from '../data/fleet_admin';
 import { flotaDemoHabilitada } from '../config';
+import { registerDriver } from '../data/drivers_store';
+import { createDriverSession } from '../data/sessions';
+import { signToken } from '../auth/tokens';
 
 /** Un bus simulado: dónde arranca y cada cuánto publica. */
 export interface BusDemo {
@@ -38,6 +41,7 @@ export interface BusDemo {
   telefono: string;
   intervaloMs: string;
   sentido: 'ida' | 'venida';
+  activo: boolean;
 }
 
 // Misma regla que decide index.ts: apagada en producción salvo que el
@@ -59,8 +63,7 @@ const RUTA_DESTACADA = process.env.YA_VIENE_FLOTA_RUTA || 'R-106';
 const INTERVALO_RAPIDO = process.env.CAPTURE_INTERVAL_MS || '400';
 const INTERVALO_LENTO = process.env.CAPTURE_INTERVAL_MS_RESTO || '1500';
 
-// Doce buses por ruta, en doce puntos equidistantes del recorrido. El sentido
-// alterna para que haya movimiento en ambas direcciones sin amontonarlos.
+// Doce buses por ruta: ocho activos y cuatro esperando en los terminales.
 const BUSES_POR_RUTA = 12;
 const ALFABETO = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
@@ -116,8 +119,9 @@ export function construirFlota(): BusDemo[] {
   let numeroBus = 0;
   for (const { companyId, routeId } of rutas) {
     for (let i = 0; i < BUSES_POR_RUTA; i++) {
+      const activo = i < 8;
       const sentido = i % 2 === 0 ? 'ida' : 'venida';
-      const posicion = (i + 0.5) / BUSES_POR_RUTA;
+      const posicion = activo ? (i + 0.5) / 8 : (i < 10 ? 0 : 1);
       // START_FRACTION del simulador se expresa desde el terminal de salida;
       // venida invierte esa coordenada para ocupar otra posición física.
       const fraccion = sentido === 'ida' ? posicion : 1 - posicion;
@@ -134,6 +138,7 @@ export function construirFlota(): BusDemo[] {
         telefono: `300${String(busNumero).padStart(7, '0')}`,
         intervaloMs: routeId === RUTA_DESTACADA ? INTERVALO_RAPIDO : INTERVALO_LENTO,
         sentido,
+        activo,
       });
     }
   }
@@ -222,12 +227,20 @@ const espera = new Map<string, number>();
 let apagando = false;
 let temporizador: NodeJS.Timeout | undefined;
 let geometria: Map<string, RutaGeometria> | undefined;
-let ultimoArranque = 0;
-let arranquesEnVentana = 0;
-let siguienteBus = 0;
+const llegadasTerminal = new Map<string, string[]>();
+const busesEnTerminal = new Map<string, string[]>();
 
 const ESPERA_MINIMA_MS = 5_000;
 const ESPERA_MAXIMA_MS = 60_000;
+
+/** Coordina el relevo cuando dos buses alcanzan juntos el mismo terminal. */
+export function relevoTerminal(llegadas: string[], busId: string, esperando: string[]): { retirar: string[]; salen: string[] } | null {
+  if (!llegadas.includes(busId)) llegadas.push(busId);
+  if (llegadas.length < 2) return null;
+  const retirar = llegadas.splice(0, 2);
+  esperando.push(...retirar);
+  return { retirar, salen: esperando.splice(0, 2) };
+}
 
 function cargarGeometrias(): Map<string, RutaGeometria> {
   if (geometria) return geometria;
@@ -261,24 +274,21 @@ function geometriaBus(bus: BusDemo): Pick<EstadoBus, 'puntos' | 'tramos' | 'long
 }
 
 async function pedirToken(estado: EstadoBus): Promise<string> {
-  const base = `http://127.0.0.1:${process.env.HTTP_PORT || '3000'}`;
   const { bus } = estado;
-  const registro = await fetch(new URL('/api/drivers/register', base), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-admin-key': process.env.ADMIN_API_KEY ?? '' },
-    body: JSON.stringify({
-      phoneNumber: bus.telefono, name: `Conductor ${bus.telefono}`, pin: process.env.PIN,
-      busId: bus.busId, routeId: bus.routeId, companyId: bus.companyId,
-    }),
+  const driver = registerDriver(bus.telefono, `Conductor ${bus.telefono}`, bus.routeId, {
+    companyId: bus.companyId, busId: bus.busId,
   });
-  if (registro.status !== 201) throw new Error(`registro ${registro.status}`);
-  const login = await fetch(new URL('/api/auth/login', base), {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phoneNumber: bus.telefono, pin: process.env.PIN, busId: bus.busId, routeId: bus.routeId }),
+  if (driver === 'taken') throw new Error('bus asignado a otra empresa');
+  const sessionId = randomUUID();
+  createDriverSession({
+    sessionId, driverId: driver.driverId, phoneNumber: driver.phoneNumber,
+    busId: bus.busId, routeId: bus.routeId, companyId: bus.companyId,
   });
-  const payload = await login.json() as { token?: string };
-  if (login.status !== 200 || !payload.token) throw new Error(`login ${login.status}`);
-  return payload.token;
+  return signToken({
+    sub: driver.driverId, driverId: driver.driverId, phoneNumber: driver.phoneNumber,
+    role: 'driver', companyId: bus.companyId, busId: bus.busId,
+    routeId: bus.routeId, sessionId,
+  });
 }
 
 async function conectarBus(estado: EstadoBus): Promise<void> {
@@ -334,12 +344,45 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
   const interval = Number(estado.bus.intervaloMs);
   const recorrido = (35 / 3.6) * interval / 1000;
   estado.progreso += estado.sentido === 'ida' ? recorrido : -recorrido;
-  if (estado.progreso >= estado.longitud) {
-    estado.progreso = 2 * estado.longitud - estado.progreso;
-    estado.sentido = 'venida';
-  } else if (estado.progreso <= 0) {
-    estado.progreso = -estado.progreso;
-    estado.sentido = 'ida';
+  const terminal = estado.sentido === 'ida' && estado.progreso >= estado.longitud
+    ? 'B'
+    : estado.sentido === 'venida' && estado.progreso <= 0 ? 'A' : undefined;
+  if (terminal) {
+    estado.progreso = terminal === 'A' ? 0 : estado.longitud;
+    const clave = `${estado.bus.routeId}:${terminal}`;
+    const llegadas = llegadasTerminal.get(clave) ?? [];
+    if (llegadas.includes(estado.bus.busId)) return;
+    llegadas.push(estado.bus.busId);
+    llegadasTerminal.set(clave, llegadas);
+    if (llegadas.length >= 2) {
+      const esperando = busesEnTerminal.get(clave) ?? [];
+      const relevo = relevoTerminal(llegadas, estado.bus.busId, esperando);
+      busesEnTerminal.set(clave, esperando);
+      if (!relevo) return;
+      for (const id of relevo.retirar) {
+        const llegado = estados.get(id)!;
+        llegado.iniciado = false;
+        llegado.bus.activo = false;
+        llegado.cliente?.end(true);
+        llegado.cliente = undefined;
+        llegado.bus.fraccion = terminal === 'A'
+          ? (llegado.sentido === 'ida' ? 0 : 1)
+          : (llegado.sentido === 'ida' ? 1 : 0);
+      }
+      for (const id of relevo.salen) {
+        const nuevo = estados.get(id)!;
+        nuevo.cliente?.end(true);
+        nuevo.cliente = undefined;
+        nuevo.sentido = terminal === 'A' ? 'ida' : 'venida';
+        nuevo.bus.activo = true;
+        nuevo.progreso = terminal === 'A' ? 0 : nuevo.longitud;
+        nuevo.iniciado = true;
+        nuevo.siguiente = ahora;
+        nuevo.capturedAt = ahora;
+        void conectarBus(nuevo);
+      }
+    }
+    return;
   }
   let acumulado = 0;
   let segmento = 0;
@@ -364,18 +407,6 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
 function tickFlota(): void {
   const ahora = Date.now();
   const candidatos = [...estados.values()];
-  if (siguienteBus < candidatos.length && ahora - ultimoArranque >= ENTRE_ARRANQUES_MS) {
-    if (ahora - ultimoArranque >= 61_000) arranquesEnVentana = 0;
-    if (arranquesEnVentana < ARRANQUES_POR_MINUTO) {
-      const estado = candidatos[siguienteBus++];
-      estado.iniciado = true;
-      estado.siguiente = ahora;
-      estado.capturedAt = ahora;
-      ultimoArranque = ahora;
-      arranquesEnVentana++;
-      void conectarBus(estado);
-    }
-  }
   for (const estado of candidatos) {
     if (estado.iniciado && ahora >= estado.siguiente) {
       publicarPosicion(estado, ahora);
@@ -384,30 +415,15 @@ function tickFlota(): void {
   }
 }
 
-// El alta del conductor y su login admiten 20 por minuto desde una misma IP
-// (`adminRateLimiter` y `loginIpRateLimiter`), y todos los simuladores salen
-// de 127.0.0.1. Con nueve rutas y doce buses por ruta la flota suma 108;
-// van 18 por minuto para dejar cupo a reintentos.
-const ARRANQUES_POR_MINUTO = 18;
-const ENTRE_ARRANQUES_MS = 400;
-
 /** Cuándo arranca el bus número `i`, en ms desde que se enciende la flota. */
 export function retrasoArranque(i: number): number {
-  return (
-    Math.floor(i / ARRANQUES_POR_MINUTO) * 61_000
-    + (i % ARRANQUES_POR_MINUTO) * ENTRE_ARRANQUES_MS
-  );
+  void i;
+  return 0;
 }
 
-/** Pone la flota a rodar. Sin ADMIN_API_KEY no hay nada que hacer. */
+/** Pone la flota a rodar; la provisión y el JWT ocurren dentro del proceso. */
 export function arrancarFlotaDemo(): void {
   if (!HABILITADA) return;
-  if (!process.env.ADMIN_API_KEY) {
-    console.warn(
-      '[FLOTA] Sin ADMIN_API_KEY no se pueden provisionar los buses simulados: el mapa arranca vacío.',
-    );
-    return;
-  }
 
   const catalogo = construirFlota();
   if (catalogo.length === 0) {
@@ -419,17 +435,22 @@ export function arrancarFlotaDemo(): void {
   console.log(
     `[FLOTA] ${flota.length} buses simulados en ${new Set(flota.map((b) => b.routeId)).size} rutas.`,
   );
-  // Escalonados: varios registros simultáneos saturan el límite de la API
-  // justo cuando el backend acaba de abrir el puerto.
   for (const bus of flota) {
     const datos = geometriaBus(bus);
     estados.set(bus.busId, {
-      bus, ...datos, sentido: bus.sentido, iniciado: false,
+      bus, ...datos, sentido: bus.sentido, iniciado: bus.activo,
       siguiente: 0, secuencia: 0, capturedAt: Date.now(), rechazos: 0,
     });
   }
+  for (const estado of estados.values()) {
+    if (estado.iniciado) continue;
+    const terminal = estado.progreso <= 0 ? 'A' : 'B';
+    const clave = `${estado.bus.routeId}:${terminal}`;
+    busesEnTerminal.set(clave, [...(busesEnTerminal.get(clave) ?? []), estado.bus.busId]);
+  }
   // Un solo temporizador del proceso mueve toda la flota; no se crea un
   // proceso ni un interval por bus.
+  for (const estado of estados.values()) if (estado.iniciado) void conectarBus(estado);
   temporizador = setInterval(tickFlota, 100);
 }
 
