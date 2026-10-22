@@ -18,6 +18,8 @@ export interface BusPosition {
   driverPhone: string;
   companyId: string;
   isGhost: boolean;
+  /** Campo exclusivo del panel; nunca se incluye en la posición pública. */
+  enTerminal?: boolean;
 }
 
 export interface FleetBus {
@@ -34,6 +36,8 @@ export interface FleetBus {
   capacidad: number;
   driverName: string | null;
   visible: boolean;
+  /** Oculto automáticamente por estar quieto en el terminal de su ruta. */
+  enTerminal: boolean;
   online: boolean;
   lat: number | null;
   lon: number | null;
@@ -81,6 +85,8 @@ export interface PositionRow {
   captured_at: number | null;
   sequence: number | null;
   is_ghost: number;
+  route_fraction?: number | null;
+  route_direction?: string | null;
   bus_company_id?: string | null;
   bus_visible?: number | null;
 }

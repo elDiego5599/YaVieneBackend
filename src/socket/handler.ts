@@ -502,13 +502,13 @@ export function broadcastBusRemoved(busId: string, routeId: string, eventId?: st
   incrementMetric('socket.bus_removed.emitted');
 }
 
-export function broadcastBusHidden(busId: string, routeId: string, eventId?: string, companyId?: string): void {
+export function broadcastBusHidden(busId: string, routeId: string, eventId?: string, companyId?: string, enTerminal = false): void {
   if (!io) return;
   pendingPositions.get(routeId)?.delete(busId);
   const payload = { busId, routeId, eventId };
   io.to(`route:${routeId}`).emit('bus:hidden', payload);
   const resolvedCompanyId = companyId || getBusCompanyId(busId) || '';
-  if (resolvedCompanyId) io.to(`admin:${resolvedCompanyId}`).emit('bus:hidden', payload);
+  if (resolvedCompanyId) io.to(`admin:${resolvedCompanyId}`).emit('bus:hidden', { ...payload, enTerminal });
   incrementMetric('socket.bus_hidden.emitted');
 }
 

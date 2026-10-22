@@ -919,6 +919,31 @@ function initSchema(): void {
         `);
       },
     },
+    {
+      version: 31,
+      apply: () => {
+        // Mantiene la última fracción de ruta proyectada. Un punto de una
+        // ruta circular puede estar físicamente en el mismo terminal al salir
+        // y al llegar; sin progreso persistido un reinicio no puede distinguirlos.
+        ensureColumn(d, 'positions', 'route_fraction', 'REAL');
+      },
+    },
+    {
+      version: 32,
+      apply: () => {
+        // El rumbo efectivo puede inferirse de fracciones sucesivas aunque
+        // el equipo no mande `sentido`; se conserva para reconstruir loops.
+        ensureColumn(d, 'positions', 'route_direction', 'TEXT');
+      },
+    },
+    {
+      version: 33,
+      apply: () => {
+        // Distingue el ocultamiento automático por terminal del apagado
+        // manual, para que la flota de empresa pueda mostrar su motivo.
+        ensureColumn(d, 'buses', 'en_terminal', 'INTEGER NOT NULL DEFAULT 0');
+      },
+    },
   ];
 
   for (const migration of migrations) {

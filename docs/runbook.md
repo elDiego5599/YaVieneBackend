@@ -503,9 +503,15 @@ Tras avisar del lanzamiento, vaciarla: el mismo `DELETE` sin el número
 | Túnel caído, respaldo en pie | Buses del respaldo en ~41 s y la línea «Conectado al respaldo» | Igual, con la línea en la cabecera |
 | Túnel y respaldo caídos | Sigue reintentando, sin buses nuevos; el mapa y el último estado se quedan | Sin flota; «Recargar» no arregla nada hasta que vuelva |
 | Backend reiniciado | Se resuscribe solo y vuelven los buses | Vuelve a pedir la flota solo |
+| Bus quieto en terminal | Oculto hasta que sale; deja de aparecer también en avisos FCM | Sigue conectado; la flota REST/socket muestra `enTerminal: true` |
 | Bus sin señal (5 min sin publicar) | «Bus sin señal» en la hoja, y el aviso de cercanía queda bloqueado | El bus deja de actualizarse |
 | Aviso armado y app cerrada (Android) | La notificación llega por push a la distancia que eligió el pasajero, si el servidor tiene la clave de Firebase | — |
 | Panel revocado | — | «Tu sesión expiró» en menos de 60 s |
+
+Si un bus real no aparece al salir del terminal, revisar que tenga ruta
+asignada y geometría válida. Una llegada debe estar proyectada en el último
+5 % del trazado; una parada intermedia cerca del terminal sigue visible. Sin
+geometría válida la regla automática falla abierta. Ver [D16](decisiones/D16-visibilidad-terminal.md).
 
 ## Fly, el respaldo
 

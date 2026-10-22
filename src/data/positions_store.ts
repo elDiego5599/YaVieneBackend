@@ -10,6 +10,36 @@ import {
   normalizeSentido,
 } from './bus_types';
 import { getDriver } from './drivers_store';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { decidirVisibilidadTerminal, type EstadoVisibilidad } from './visibilidad_terminal';
+import { visibilityCache } from './fleet_admin';
+
+const estadosVisibilidad = new Map<string, EstadoVisibilidad>();
+let geometriasRuta: Map<string, { waypoints: Array<{ lat: number; lon: number }> | null; valida: boolean }> | undefined;
+
+/** Descarta el estado automático cuando el panel reactiva manualmente un bus. */
+export function resetEstadoVisibilidadTerminal(busId: string): void {
+  estadosVisibilidad.delete(busId);
+}
+
+function geometriaDeRuta(): NonNullable<typeof geometriasRuta> {
+  if (geometriasRuta) return geometriasRuta;
+  try {
+    const datos = JSON.parse(readFileSync(join(__dirname, '..', '..', 'scripts', 'data', 'rutas.json'), 'utf8')) as {
+      rutas: Array<{ routeId: string; waypoints: Array<{ lat: number; lon: number }> }>;
+    };
+    geometriasRuta = new Map(datos.rutas.map((r) => {
+      const puntos = r.waypoints;
+      const valido = Array.isArray(puntos) && puntos.length >= 2 && puntos.every((p) =>
+        Number.isFinite(p.lat) && Number.isFinite(p.lon) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180);
+      return [r.routeId, { waypoints: valido ? puntos : null, valida: valido }];
+    }));
+  } catch {
+    geometriasRuta = new Map();
+  }
+  return geometriasRuta;
+}
 
 export function rowToPosition(row: PositionRow): BusPosition {
   return {
@@ -30,8 +60,8 @@ export function rowToPosition(row: PositionRow): BusPosition {
   };
 }
 
-export function toPublicPosition(position: BusPosition): Omit<BusPosition, 'driverPhone' | 'companyId'> {
-  const { driverPhone: _driverPhone, companyId: _companyId, ...publicPosition } = position;
+export function toPublicPosition(position: BusPosition): Omit<BusPosition, 'driverPhone' | 'companyId' | 'enTerminal'> {
+  const { driverPhone: _driverPhone, companyId: _companyId, enTerminal: _enTerminal, ...publicPosition } = position;
   return publicPosition;
 }
 
@@ -93,11 +123,51 @@ export function upsertPosition(phoneNumber: string, data: {
   const sentido = normalizeSentido(data.sentido ?? null);
   const companyId = data.companyId || driver?.companyId || '';
 
+  const ruta = geometriaDeRuta().get(routeId);
+  const filaVisible = db.prepare(`
+    SELECT b.visible, b.en_terminal, p.route_id AS route_id, p.route_fraction, p.sentido, p.route_direction
+    FROM buses b LEFT JOIN positions p ON p.bus_id = b.bus_id WHERE b.bus_id = ?
+  `).get(data.busId) as {
+    visible: number; en_terminal: number; route_id: string | null; route_fraction: number | null;
+    sentido: string | null; route_direction: string | null;
+  } | undefined;
+  const sentidoPersistido = filaVisible?.route_direction === 'ida' || filaVisible?.route_direction === 'venida'
+    ? filaVisible.route_direction
+    : filaVisible?.sentido === 'ida' || filaVisible?.sentido === 'venida' ? filaVisible.sentido : undefined;
+  const estadoPersistido: EstadoVisibilidad | undefined = filaVisible?.route_id === routeId
+    ? {
+      visible: filaVisible.visible === 1,
+      rutaId: routeId,
+      sentido: sentidoPersistido,
+      fraccionRecorrida: filaVisible.route_fraction ?? undefined,
+      muestrasQuieto: 0,
+      muestrasSalida: 0,
+      ...(filaVisible.visible === 0 && filaVisible.en_terminal === 1 && filaVisible.route_fraction !== null && filaVisible.route_fraction !== undefined
+        ? { fraccionAlOcultar: sentidoPersistido === 'venida' ? 1 - filaVisible.route_fraction : filaVisible.route_fraction }
+        : {}),
+    }
+    : undefined;
+  const decisionCalculada = decidirVisibilidadTerminal({
+    busId: data.busId, routeId, lat: data.lat, lon: data.lon, speedKmh,
+    capturedAt: data.capturedAt ?? now,
+    sentido,
+    geometria: ruta?.waypoints,
+  }, estadosVisibilidad.get(data.busId) ?? estadoPersistido);
+  // Un apagado ordenado desde el panel no se debe convertir en ocultamiento
+  // terminal ni revertir por movimiento. La migración separa ambos motivos.
+  const ocultoManual = filaVisible?.visible === 0 && filaVisible.en_terminal === 0;
+  const decision = ocultoManual ? {
+    ...decisionCalculada,
+    visible: false,
+    estado: { ...decisionCalculada.estado, visible: false },
+    motivo: 'visible' as const,
+  } : decisionCalculada;
+
   const result = db.prepare(`
     INSERT INTO positions (
       bus_id, route_id, lat, lon, heading, speed_kmh, sentido, timestamp, driver_phone,
-      session_id, captured_at, sequence, is_ghost
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      session_id, captured_at, sequence, is_ghost, route_fraction, route_direction
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     ON CONFLICT(bus_id) DO UPDATE SET
       route_id = excluded.route_id,
       lat = excluded.lat,
@@ -110,7 +180,9 @@ export function upsertPosition(phoneNumber: string, data: {
       session_id = excluded.session_id,
       captured_at = excluded.captured_at,
       sequence = excluded.sequence,
-      is_ghost = 0
+      is_ghost = 0,
+      route_fraction = excluded.route_fraction,
+      route_direction = excluded.route_direction
     WHERE positions.session_id IS NOT excluded.session_id
        OR positions.sequence IS NULL
        OR excluded.sequence > positions.sequence
@@ -127,9 +199,25 @@ export function upsertPosition(phoneNumber: string, data: {
     data.sessionId ?? null,
     data.capturedAt ?? now,
     data.sequence ?? null,
+    decision.fraccionRecorrida ?? null,
+    decision.estado.sentido ?? null,
   );
 
   if (result.changes !== 1) return null;
+
+  estadosVisibilidad.set(data.busId, decision.estado);
+  const enTerminal = !decision.visible && decision.motivo === 'en_terminal';
+  if (filaVisible && (filaVisible.visible !== (decision.visible ? 1 : 0)
+    || filaVisible.en_terminal !== (enTerminal ? 1 : 0))) {
+    db.prepare('UPDATE buses SET visible = ?, en_terminal = ?, updated_at = ? WHERE bus_id = ?')
+      .run(decision.visible ? 1 : 0, enTerminal ? 1 : 0, now, data.busId);
+    visibilityCache.set(data.busId, decision.visible);
+    if (filaVisible.visible !== (decision.visible ? 1 : 0)) queueLifecycleEvent(db, decision.visible ? 'bus:visible' : 'bus:hidden', routeId, {
+      busId: data.busId, routeId,
+      enTerminal,
+      ...(decision.visible ? { position: { busId: data.busId, routeId, lat: data.lat, lon: data.lon, heading, speedKmh, sentido, timestamp: new Date(now).toISOString(), capturedAt: data.capturedAt ?? now, receivedAt: now, sequence: data.sequence ?? null, driverPhone: phoneNumber, companyId, isGhost: false } } : {}),
+    });
+  }
 
   return {
     busId: data.busId,
@@ -146,6 +234,7 @@ export function upsertPosition(phoneNumber: string, data: {
     driverPhone: phoneNumber,
     companyId,
     isGhost: false,
+    enTerminal: !decision.visible && decision.motivo === 'en_terminal',
   };
 }
 

@@ -273,7 +273,7 @@ export function removeCompanyRoute(companyId: string, routeId: string): boolean 
       ).run(fallbackId, Date.now(), companyId, routeId);
       if (fallbackId) {
         const setPositionRoute = db.prepare(
-          'UPDATE positions SET route_id = ? WHERE bus_id = ?',
+          'UPDATE positions SET route_id = ?, route_fraction = NULL, route_direction = NULL WHERE bus_id = ?',
         );
         for (const busId of busIds) {
           setPositionRoute.run(fallbackId, busId);

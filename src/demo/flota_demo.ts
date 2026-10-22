@@ -210,6 +210,7 @@ const PUNTOS_RESPALDO: Punto[] = [
 type EstadoBus = {
   bus: BusDemo;
   iniciado: boolean;
+  esperandoTerminal: boolean;
   sentido: 'ida' | 'venida';
   progreso: number;
   longitud: number;
@@ -342,6 +343,15 @@ function rumbo(a: Punto, b: Punto): number {
 
 function publicarPosicion(estado: EstadoBus, ahora: number): void {
   const interval = Number(estado.bus.intervaloMs);
+  if (estado.esperandoTerminal) {
+    const terminal = estado.progreso <= 0 ? estado.puntos[0] : estado.puntos[estado.puntos.length - 1];
+    estado.cliente?.publish(`empresa/${estado.bus.companyId}/bus/${estado.bus.busId}/posicion`, JSON.stringify({
+      protocolVersion: 1, lat: terminal.lat, lon: terminal.lon, speedKmh: 0,
+      sentido: estado.sentido, capturedAt: estado.capturedAt, sequence: ++estado.secuencia,
+    }));
+    estado.capturedAt = Math.max(estado.capturedAt + interval, ahora - interval);
+    return;
+  }
   const recorrido = (35 / 3.6) * interval / 1000;
   estado.progreso += estado.sentido === 'ida' ? recorrido : -recorrido;
   const terminal = estado.sentido === 'ida' && estado.progreso >= estado.longitud
@@ -349,6 +359,7 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
     : estado.sentido === 'venida' && estado.progreso <= 0 ? 'A' : undefined;
   if (terminal) {
     estado.progreso = terminal === 'A' ? 0 : estado.longitud;
+    estado.esperandoTerminal = true;
     const clave = `${estado.bus.routeId}:${terminal}`;
     const llegadas = llegadasTerminal.get(clave) ?? [];
     if (llegadas.includes(estado.bus.busId)) return;
@@ -361,10 +372,9 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
       if (!relevo) return;
       for (const id of relevo.retirar) {
         const llegado = estados.get(id)!;
-        llegado.iniciado = false;
+        llegado.iniciado = true;
+        llegado.esperandoTerminal = true;
         llegado.bus.activo = false;
-        llegado.cliente?.end(true);
-        llegado.cliente = undefined;
         llegado.bus.fraccion = terminal === 'A'
           ? (llegado.sentido === 'ida' ? 0 : 1)
           : (llegado.sentido === 'ida' ? 1 : 0);
@@ -375,6 +385,7 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
         nuevo.cliente = undefined;
         nuevo.sentido = terminal === 'A' ? 'ida' : 'venida';
         nuevo.bus.activo = true;
+        nuevo.esperandoTerminal = false;
         nuevo.progreso = terminal === 'A' ? 0 : nuevo.longitud;
         nuevo.iniciado = true;
         nuevo.siguiente = ahora;
@@ -438,19 +449,19 @@ export function arrancarFlotaDemo(): void {
   for (const bus of flota) {
     const datos = geometriaBus(bus);
     estados.set(bus.busId, {
-      bus, ...datos, sentido: bus.sentido, iniciado: bus.activo,
+      bus, ...datos, sentido: bus.sentido, iniciado: true, esperandoTerminal: !bus.activo,
       siguiente: 0, secuencia: 0, capturedAt: Date.now(), rechazos: 0,
     });
   }
   for (const estado of estados.values()) {
-    if (estado.iniciado) continue;
+    if (!estado.esperandoTerminal) continue;
     const terminal = estado.progreso <= 0 ? 'A' : 'B';
     const clave = `${estado.bus.routeId}:${terminal}`;
     busesEnTerminal.set(clave, [...(busesEnTerminal.get(clave) ?? []), estado.bus.busId]);
   }
   // Un solo temporizador del proceso mueve toda la flota; no se crea un
   // proceso ni un interval por bus.
-  for (const estado of estados.values()) if (estado.iniciado) void conectarBus(estado);
+  for (const estado of estados.values()) void conectarBus(estado);
   temporizador = setInterval(tickFlota, 100);
 }
 

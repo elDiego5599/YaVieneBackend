@@ -130,6 +130,29 @@ Detalles que cuestan un rechazo si se pasan por alto:
   el resto entra. Es el único campo que se perdona.
 - Cualquier campo de más se ignora en silencio.
 
+## Bus en terminal y visibilidad
+
+El equipo publica con normalidad aunque el bus esté detenido en un terminal:
+mantiene MQTT y sigue enviando `lat`, `lon`, `capturedAt` y `sequence`. El
+backend no confunde la espera con desconexión. Oculta el bus a pasajeros
+cuando confirma quietud en el tramo terminal según progreso de ruta, y lo vuelve
+a mostrar al salir del radio de histéresis. La empresa lo sigue viendo en el panel con `visible: false` y
+`enTerminal: true`; el evento de socket del panel también incluye esa marca.
+El evento del pasajero no agrega campos y debe tratar `bus:hidden` como bus
+que ya no está. La caducidad vigente marca sin señal a un GPS que deja de reportar.
+La entrada usa 100 m y dos muestras quietas separadas por al menos 1 s; la
+salida usa 120 m y dos muestras consecutivas con progreso creciente. La llegada solo cuenta si la proyección del GPS está en el
+último 5 % del trazado; una parada cerca del terminal en mitad de la ruta no
+se oculta. Para rutas circulares se conserva la fracción proyectada entre
+publicaciones y reinicios. Si `sentido` falta, el servidor lo infiere de la
+fracción entre posiciones consecutivas; mientras no tenga evidencia suficiente,
+mantiene el bus visible.
+
+Sin ruta asignada, el equipo no crea una posición para pasajeros y el panel
+conserva el bus hasta asignarla. Con ruta asignada pero geometría inválida, la
+política falla abierta y no adivina dónde ocultarlo. Cambiar de ruta reinicia
+la evidencia acumulada de la ruta anterior. Detalles y radios: [D16](decisiones/D16-visibilidad-terminal.md).
+
 ### Zona de servicio
 
 Toda posición tiene que caer dentro del área metropolitana de Barranquilla:

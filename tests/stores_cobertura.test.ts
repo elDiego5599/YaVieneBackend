@@ -183,6 +183,7 @@ test('posiciones: secuencia, borrados y fantasma que caduca', () => {
   const publica = posiciones.toPublicPosition(viva);
   assert.equal('driverPhone' in publica, false);
   assert.equal('companyId' in publica, false);
+  assert.equal('enTerminal' in publica, false, 'la marca de operación es privada del panel');
   assert.equal(publica.busId, busId);
   assert.equal(posiciones.getPositionSequence(busId, 'cob-ps1'), 1);
   assert.equal(posiciones.getPositionSequence(busId, 'otra'), null);

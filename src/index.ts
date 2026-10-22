@@ -174,6 +174,8 @@ function emitLifecycleEvent(event: LifecycleEvent): void {
       event.payload.busId as string,
       event.routeId,
       event.eventId,
+      undefined,
+      event.payload.enTerminal === true,
     );
     return;
   }

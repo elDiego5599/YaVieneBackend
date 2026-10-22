@@ -300,6 +300,10 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
     const hidden = await hiddenEvent;
     assert.equal(typeof hidden.eventId, 'string');
     assert.equal(hidden.busId, bus1);
+    assert.equal('enTerminal' in hidden, false, 'el evento del pasajero no expone estado operativo');
+    const posicionesRest = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/routes/R-101/positions`);
+    const posicionesRestBody = await posicionesRest.json() as { buses: any[] };
+    assert.equal(posicionesRestBody.buses.some((b) => b.busId === bus1), false, 'REST público excluye buses ocultos');
 
     // Ventana que cubre la siguiente publicación del simulador (10s): debe quedar retenida
     await waitForSilence(passenger, 'bus:position', (p) => p?.busId === bus1, 12_000);
@@ -347,16 +351,17 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
 
     const adminHidden = waitForSocketEvent(adminSocket, 'bus:hidden', (p) => p?.busId === bus1);
     assert.equal(await toggleVisibility(admin1.token, bus1, false), 200);
-    await adminHidden;
+    const adminHiddenPayload = await adminHidden;
+    assert.equal(adminHiddenPayload.enTerminal, false, 'el evento del panel marca explícitamente el apagado manual');
 
     // Oculto es para el pasajero, no para su empresa: el panel sigue
     // recibiendo cada posición, con su velocidad. Antes se callaba también
     // aquí, y el bus oculto quedaba quieto en el panel hasta la siguiente
     // foto de la flota, sin velocidad.
-    const posicionOculta = await waitForSocketEvent(
+    const posicionOcultaBus = await waitForSocketEvent(
       adminSocket, 'bus:position', (p) => p?.busId === bus1, 15_000,
     );
-    assert.equal(typeof posicionOculta.speedKmh, 'number');
+    assert.equal(typeof posicionOcultaBus.speedKmh, 'number');
 
     // Sin token de admin no se puede entrar a la sala de flota
     const rogue = connectSocket();
@@ -740,6 +745,7 @@ test('fleet: una empresa no puede tocar ni ver buses, rutas ni flota de otra', {
     assert.equal(suyo.routeId, 'R-301');
     assert.equal(suyo.interno, '077');
     assert.equal(suyo.visible, false);
+    assert.equal(suyo.enTerminal, false);
     const rutasA = (await (await call(a, 'GET', '/api/fleet/routes')).json()) as any;
     assert.equal(rutasA.routes.find((r: any) => r.routeId === 'R-301')?.name, 'Ruta de A');
 

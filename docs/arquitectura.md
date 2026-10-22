@@ -23,7 +23,8 @@ validación                     formato (payload.ts) y física (physics.ts)
   ▼
 SQLite (positions)             una fila por bus, siempre la última
   │
-  ├──────────────► socket.io  ·  al instante, a quien esté mirando esa ruta
+  ├─ visibilidad terminal ───► buses.visible + eventos bus:hidden/visible
+  ├──────────────► socket.io  ·  solo si el bus es visible para pasajeros
   │
   └─ cola lifecycle_events ──► socket.io  ·  lo que no es una posición
        (barrido cada 10 s, despacho cada 250 ms)
@@ -33,6 +34,12 @@ Las posiciones no pasan por la cola: van directas al socket. La cola es para
 los avisos de ciclo de vida —un bus que se queda sin señal, uno que la
 empresa esconde, uno que se borra—, que son los que no pueden perderse
 porque nadie los va a repetir.
+
+La política pura `src/data/visibilidad_terminal.ts` proyecta cada punto sobre
+la geometría ordenada y conserva `route_fraction` y `route_direction` con la última posición.
+Solo confirma quietud en el 5 % final o el 10 % inicial de la ruta; usa
+histéresis terminal. REST y FCM consultan `buses.visible`; el socket
+envía la posición oculta solo a `admin:<empresa>`. Ver [D16](decisiones/D16-visibilidad-terminal.md).
 
 ## 1. El equipo publica
 
@@ -133,7 +140,7 @@ Eventos que emite el servidor:
 | `fleet:batch` | al suscribirse a la flota: la empresa entera |
 | `bus:position` | una posición nueva (o una que vuelve de «sin señal») |
 | `positions:update` | varias posiciones de la misma ruta en la misma ventana |
-| `bus:left`, `bus:hidden`, `bus:visible`, `bus:removed` | avisos de la cola |
+| `bus:left`, `bus:hidden`, `bus:visible`, `bus:removed` | avisos de la cola; el panel recibe `enTerminal` al ocultar |
 
 Todo lo que sale lleva `emittedAt`: el milisegundo en que el servidor lo
 mandó. Las apps lo usan para medir cuánto tardó en llegarles.

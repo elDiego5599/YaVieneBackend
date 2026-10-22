@@ -5,7 +5,7 @@
 // última ruta de una empresa.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -18,11 +18,11 @@ process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
 // evaluarse: el import se izaría por encima de la línea que fija la ruta.
 const {
   createBus, deleteBus, updateBus, getCompanyBuses, getBusCompanyId, getFleetPositions,
-  setAllBusVisibility,
+  setAllBusVisibility, setBusVisibility,
 } = require('../src/data/fleet_admin') as typeof import('../src/data/fleet_admin');
 const { addCompanyRoute, removeCompanyRoute, getCompanyRoutes, routeExists } =
   require('../src/data/routes_store') as typeof import('../src/data/routes_store');
-const { upsertPosition, getPosition } =
+const { upsertPosition, getPosition, getPositionsByRoute } =
   require('../src/data/positions_store') as typeof import('../src/data/positions_store');
 const { createDriverSession, getSession } =
   require('../src/data/sessions') as typeof import('../src/data/sessions');
@@ -85,6 +85,50 @@ test('el interno explícito manda y no lo pisa el automático', () => {
   assert.equal(alta(empresa, 'EEE555', 'R-901', '042').interno, '042');
   // El siguiente automático continúa desde el mayor, no desde el conteo.
   assert.equal(alta(empresa, 'FFF666', 'R-901').interno, '043');
+});
+
+test('la flota de empresa conserva el bus oculto y lo marca en terminal', () => {
+  const empresa = 'EMP-TERMINAL';
+  nuevaEmpresa(empresa);
+  addCompanyRoute(empresa, 'R-902', 'Ruta terminal');
+  const bus = alta(empresa, 'JJJ999', 'R-902');
+  getDb().prepare('UPDATE buses SET visible = 0, en_terminal = 1 WHERE bus_id = ?').run(bus.busId);
+
+  const panel = getFleetPositions(empresa).find((fila) => fila.busId === bus.busId);
+  assert.ok(panel, 'el bus permanece en la lista de la empresa');
+  assert.equal(panel.visible, false);
+  assert.equal(panel.enTerminal, true);
+});
+
+test('ocultar y reactivar manualmente un bus en marcha restaura posiciones públicas', () => {
+  const empresa = 'EMP-01';
+  const telefono = '3000000799';
+  nuevaEmpresa(empresa);
+  const bus = alta(empresa, 'KKK999', 'R-101');
+  conductor(telefono);
+  const datos = JSON.parse(readFileSync(join(__dirname, '..', 'scripts', 'data', 'rutas.json'), 'utf8')) as {
+    rutas: Array<{ routeId: string; waypoints: Array<{ lat: number; lon: number }> }>;
+  };
+  const ruta = datos.rutas.find((item) => item.routeId === 'R-101');
+  assert.ok(ruta && ruta.waypoints.length > 4);
+  const indiceMedio = Math.floor(ruta.waypoints.length / 2);
+  const publicarEnMarcha = (sequence: number) => upsertPosition(telefono, {
+    busId: bus.busId, routeId: 'R-101',
+    lat: ruta.waypoints[indiceMedio + sequence - 1].lat,
+    lon: ruta.waypoints[indiceMedio + sequence - 1].lon,
+    speedKmh: 30, sentido: 'ida', sessionId: 'ses-reactiva', sequence,
+    capturedAt: sequence * 1_000, driverValidated: true, companyId: empresa,
+  });
+
+  assert.equal(publicarEnMarcha(1)?.enTerminal, false);
+  setBusVisibility(bus.busId, false);
+  assert.equal(publicarEnMarcha(2)?.enTerminal, false);
+  assert.equal(getPositionsByRoute('R-101').some((position) => position.busId === bus.busId), false);
+
+  setBusVisibility(bus.busId, true);
+  const reactivada = publicarEnMarcha(3);
+  assert.equal(reactivada?.enTerminal, false);
+  assert.ok(getPositionsByRoute('R-101').some((position) => position.busId === bus.busId));
 });
 
 test('el identificador de ruta rechaza guiones sueltos', () => {
@@ -366,7 +410,7 @@ test('una posición sin rumbo lo guarda vacío, y el 0 sigue siendo el norte', (
   assert.equal(guardado(), 0);
 });
 
-test('la migración 21 deja el rumbo opcional sin perder posiciones ni índices', () => {
+test('las migraciones 21, 31 y 32 preservan posiciones y progreso de ruta', () => {
   const dir = mkdtempSync(join(tmpdir(), 'yaviene-rumbo-'));
   const ruta = join(dir, 'rumbo.db');
   const modulo = join(__dirname, '..', 'src', 'data', 'database.ts');
@@ -403,7 +447,7 @@ test('la migración 21 deja el rumbo opcional sin perder posiciones ni índices'
       CREATE INDEX idx_positions_route_id ON positions(route_id);
       CREATE INDEX idx_positions_session_id ON positions(session_id);
       CREATE INDEX idx_positions_sequence ON positions(bus_id, sequence);
-      DELETE FROM schema_migrations WHERE version = 21;
+      DELETE FROM schema_migrations WHERE version IN (21, 31, 32);
     `);
     d.prepare(`
       INSERT INTO drivers (phone_number, driver_id, name, route_id, registered_at)
@@ -423,6 +467,8 @@ test('la migración 21 deja el rumbo opcional sin perder posiciones ni índices'
       const columnas = despues.prepare('PRAGMA table_info(positions)').all() as
         { name: string; notnull: number }[];
       assert.equal(columnas.find((c) => c.name === 'heading')?.notnull, 0);
+      assert.ok(columnas.some((c) => c.name === 'route_fraction'));
+      assert.ok(columnas.some((c) => c.name === 'route_direction'));
       const filas = despues.prepare('SELECT bus_id, heading, sentido FROM positions').all() as
         { bus_id: string; heading: number | null; sentido: string | null }[];
       assert.deepEqual(filas.map((f) => [f.bus_id, f.heading, f.sentido]), [['BUS-VIEJO', 45, 'ida']]);

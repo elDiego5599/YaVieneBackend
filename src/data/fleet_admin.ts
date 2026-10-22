@@ -4,7 +4,7 @@
 import { getDb } from './database';
 import { queueLifecycleEvent } from './lifecycle_events';
 import { FleetBus, normalizeSentido } from './bus_types';
-import { getPosition } from './positions_store';
+import { getPosition, resetEstadoVisibilidadTerminal } from './positions_store';
 import { isRouteId } from './routes_store';
 import { revokeSessionsForBus } from './sessions';
 
@@ -110,7 +110,7 @@ export function getBusVisibility(busId: string): boolean {
 export function getFleetPositions(companyId: string): FleetBus[] {
   const db = getDb();
   const rows = db.prepare(`
-    SELECT b.bus_id, b.company_id, b.visible, b.plate_number, b.interno, b.route_id AS bus_route_id,
+    SELECT b.bus_id, b.company_id, b.visible, b.en_terminal, b.plate_number, b.interno, b.route_id AS bus_route_id,
            b.tipologia, b.capacity,
            p.route_id, p.lat, p.lon, p.heading, p.speed_kmh, p.sentido,
            p.timestamp, p.captured_at, p.sequence, p.is_ghost,
@@ -124,6 +124,7 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     bus_id: string;
     company_id: string;
     visible: number;
+    en_terminal: number;
     plate_number: string | null;
     interno: string | null;
     bus_route_id: string | null;
@@ -152,6 +153,7 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     capacidad: typeof row.capacity === 'number' && row.capacity > 0 ? row.capacity : 40,
     driverName: row.driver_name,
     visible: row.visible === 1,
+    enTerminal: row.en_terminal === 1,
     // Una fila en `positions` sólo dice que este bus reportó alguna vez. El
     // barrido marca `is_ghost` cuando lleva GHOST_MS sin publicar, y hasta
     // ahora esos seguían contando como conectados: el panel de la empresa
@@ -265,6 +267,7 @@ export function createBus(
     capacidad,
     driverName: null,
     visible: false,
+    enTerminal: false,
     online: false,
     lat: null,
     lon: null,
@@ -330,7 +333,7 @@ export function updateBus(
     }
     if (routeId !== null) {
       const nueva = routeId || null;
-      db.prepare('UPDATE buses SET route_id = ?, updated_at = ? WHERE bus_id = ?')
+      db.prepare('UPDATE buses SET route_id = ?, en_terminal = 0, updated_at = ? WHERE bus_id = ?')
         .run(nueva, Date.now(), busId);
       // La posición viva lleva su propia ruta, que es la que lee el
       // pasajero. Cambiar sólo la del catálogo dejaba el bus en el mapa de
@@ -343,7 +346,7 @@ export function updateBus(
         .get(busId) as { route_id: string } | undefined;
       if (viva && viva.route_id !== nueva) {
         if (nueva) {
-          db.prepare('UPDATE positions SET route_id = ? WHERE bus_id = ?').run(nueva, busId);
+          db.prepare('UPDATE positions SET route_id = ?, route_fraction = NULL, route_direction = NULL WHERE bus_id = ?').run(nueva, busId);
         } else {
           db.prepare('DELETE FROM positions WHERE bus_id = ?').run(busId);
         }
@@ -502,7 +505,7 @@ function aplicarVisibilidad(
   busId: string,
   visible: boolean,
 ): string {
-  db.prepare('UPDATE buses SET visible = ?, updated_at = ? WHERE bus_id = ?')
+  db.prepare('UPDATE buses SET visible = ?, en_terminal = 0, updated_at = ? WHERE bus_id = ?')
     .run(visible ? 1 : 0, Date.now(), busId);
 
   const position = getPosition(busId);
@@ -510,6 +513,7 @@ function aplicarVisibilidad(
   queueLifecycleEvent(db, visible ? 'bus:visible' : 'bus:hidden', routeId, {
     busId,
     routeId,
+    enTerminal: false,
     ...(visible && position ? { position: { ...position, visible } } : {}),
   });
   return routeId;
@@ -530,6 +534,7 @@ export function setBusVisibility(
 
   visibilityCache.set(busId, visible);
   busCompanyCache.set(busId, companyId);
+  if (visible) resetEstadoVisibilidadTerminal(busId);
   return { busId, routeId, visible };
 }
 
@@ -550,6 +555,7 @@ export function setAllBusVisibility(companyId: string, visible: boolean): number
   for (const bus of buses) {
     visibilityCache.set(bus.bus_id, visible);
     busCompanyCache.set(bus.bus_id, companyId);
+    if (visible) resetEstadoVisibilidadTerminal(bus.bus_id);
   }
   return buses.length;
 }
