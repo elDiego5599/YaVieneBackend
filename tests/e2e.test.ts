@@ -156,7 +156,6 @@ test('conductor -> MQTT -> backend -> Socket.io -> bus queda "sin señal" (is_gh
         MQTT_PORT: String(MQTT_PORT),
         ADMIN_API_KEY,
         PHONE: phone,
-        PIN: '2468',
         BUS_ID: busId,
         ROUTE_ID: 'R-101',
         EMPRESA_ID: 'EMP-01',

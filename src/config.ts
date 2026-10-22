@@ -135,7 +135,7 @@ export function validateConfig(
   if (httpTls === 1) {
     errores.push('HTTP_TLS_CERT_PATH y HTTP_TLS_KEY_PATH van juntas: con una sola el servidor arrancaría sin TLS');
   }
-  // Por el HTTP pasan la contraseña del panel, el PIN del conductor y los
+  // Por el HTTP pasan la contraseña del panel, el secreto del equipo GPS y los
   // tokens: en claro los lee cualquiera en el camino. En producción el
   // servidor arrancaba sin TLS sin decir nada. Ahora hace falta una de dos:
   // el par de rutas TLS propio, o declarar con HTTP_TLS_EXTERNO=1 que el
@@ -182,18 +182,6 @@ export function validateConfig(
         errores.push(`${variable}: «${origen}» no es https; en producción solo se autorizan orígenes cifrados`);
       }
     }
-  }
-
-  // Los buses simulados registran conductores con un PIN y luego inician
-  // sesión con él: hasta ahora el script traía «1234» por omisión. Con la
-  // flota encendida, el PIN tiene que venir del entorno (local.env, o un
-  // secreto en Fly: `fly secrets set PIN=…`, docs/runbook.md) — si falta,
-  // es mejor no arrancar que levantar una flota con una credencial escrita
-  // en el código.
-  if (flotaDemoHabilitada(env) && !env.PIN) {
-    errores.push(
-      'PIN: la flota demo está encendida y el simulador necesita el PIN con el que registra e inicia sesión; define PIN= en el entorno (ya no hay «1234» por omisión)',
-    );
   }
 
   // La flota demo recorre el catálogo de EMP-01 y EMP-03 (`flota_demo.ts`): sin la

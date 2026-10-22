@@ -14,9 +14,7 @@ const JWT_LARGO = 'j'.repeat(64);
 const CLAVE_LARGA = 'k'.repeat(48);
 
 test('validateConfig: el arranque local de siempre (local.env) no da errores', () => {
-  // local.env define PIN: la flota demo viene encendida en desarrollo y
-  // validateConfig no la deja arrancar sin él.
-  const { errores, avisos } = validateConfig({ JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA, PIN: '1234' });
+  const { errores, avisos } = validateConfig({ JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA });
   assert.deepEqual(errores, []);
   assert.deepEqual(avisos, []);
 });
@@ -35,9 +33,7 @@ test('validateConfig: el arranque de Fly (producción, sin CORS, MQTT en loopbac
 });
 
 test('validateConfig: secretos ausentes o en blanco', () => {
-  // Dos errores: JWT_SECRET ausente y la flota demo (encendida por defecto
-  // en desarrollo) sin PIN.
-  assert.equal(validateConfig({}).errores.length, 2);
+  assert.equal(validateConfig({}).errores.length, 1);
   assert.match(validateConfig({ JWT_SECRET: '   ' }).errores[0], /JWT_SECRET/);
   assert.match(validateConfig({ JWT_SECRET: 'x', ADMIN_API_KEY: '  ' }).errores[0], /ADMIN_API_KEY/);
   assert.match(
@@ -59,9 +55,8 @@ test('validateConfig: JWT_SECRET de menos de 32 caracteres no arranca en producc
   const prod = { NODE_ENV: 'production', ADMIN_API_KEY: CLAVE_LARGA, HTTP_TLS_EXTERNO: '1' };
   assert.match(validateConfig({ ...prod, JWT_SECRET: 'j'.repeat(31) }).errores[0], /JWT_SECRET/);
   assert.deepEqual(validateConfig({ ...prod, JWT_SECRET: 'j'.repeat(32) }).errores, []);
-  // Fuera de producción (ngrok, tests) sigue valiendo uno corto. El PIN es
-  // el de la flota demo, que en desarrollo viene encendida.
-  assert.deepEqual(validateConfig({ JWT_SECRET: 'corto', PIN: '1234' }).errores, []);
+  // Fuera de producción (ngrok, tests) sigue valiendo uno corto.
+  assert.deepEqual(validateConfig({ JWT_SECRET: 'corto' }).errores, []);
 });
 
 // La flota simulada publica en el mismo canal que los buses reales: en
@@ -71,7 +66,7 @@ test('validateConfig: JWT_SECRET de menos de 32 caracteres no arranca en producc
 // demo). YA_VIENE_EXPUESTO=1 le pone las guardias de secretos y de CORS sin
 // tocar lo demás.
 test('validateConfig: YA_VIENE_EXPUESTO=1 exige los secretos de producción y nada más', () => {
-  const base = { YA_VIENE_EXPUESTO: '1', PIN: '1234' };
+  const base = { YA_VIENE_EXPUESTO: '1' };
   assert.deepEqual(validateConfig({ ...base, JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA }).errores, []);
   assert.match(
     validateConfig({ ...base, JWT_SECRET: 'j'.repeat(31), ADMIN_API_KEY: CLAVE_LARGA }).errores.join(),
@@ -97,18 +92,15 @@ test('flotaDemoHabilitada: apagada en producción salvo que se pida', () => {
   assert.equal(flotaDemoHabilitada({ YA_VIENE_FLOTA_DEMO: '0' }), false);
 });
 
-// Los buses simulados registran conductores con un PIN y luego inician
-// sesión con él; el script traía «1234» por omisión. Con la flota encendida
-// el PIN tiene que venir del entorno (local.env, fly.toml).
-test('validateConfig: la flota demo encendida exige PIN en el entorno', () => {
+// La flota demo firma sus sesiones en el backend y no usa PIN global.
+test('validateConfig: la flota demo encendida no necesita un PIN global', () => {
   const local = { JWT_SECRET: JWT_LARGO, ADMIN_API_KEY: CLAVE_LARGA };
-  assert.match(validateConfig({ ...local, YA_VIENE_FLOTA_DEMO: '1' }).errores[0], /PIN/);
-  assert.match(validateConfig(local).errores[0], /PIN/, 'en desarrollo la demo viene encendida por defecto');
-  assert.deepEqual(validateConfig({ ...local, PIN: '1234' }).errores, []);
+  assert.deepEqual(validateConfig({ ...local, YA_VIENE_FLOTA_DEMO: '1' }).errores, []);
+  assert.deepEqual(validateConfig(local).errores, [], 'en desarrollo la demo viene encendida por defecto');
   assert.deepEqual(
     validateConfig({ ...local, YA_VIENE_FLOTA_DEMO: '0' }).errores,
     [],
-    'con la flota apagada no hace falta PIN',
+    'con la flota apagada tampoco hace falta PIN',
   );
 });
 
@@ -118,7 +110,7 @@ test('validateConfig: flota demo encendida en producción deja aviso', () => {
   };
   // Con la siembra también encendida (como en fly.toml): sin ella el arranque
   // suma el aviso de «flota demo sin siembra», que prueba `siembra.test.ts`.
-  const encendida = validateConfig({ ...prod, YA_VIENE_FLOTA_DEMO: '1', YA_VIENE_SEED_DEMO: '1', PIN: '1234' });
+  const encendida = validateConfig({ ...prod, YA_VIENE_FLOTA_DEMO: '1', YA_VIENE_SEED_DEMO: '1' });
   assert.deepEqual(encendida.errores, []);
   assert.equal(encendida.avisos.length, 1);
   assert.match(encendida.avisos[0], /flota demo ENCENDIDA en producción/);
@@ -136,13 +128,13 @@ test('validateConfig: TLS a medias no arranca en claro sin avisar', () => {
     /MQTT_TLS_CERT_PATH y MQTT_TLS_KEY_PATH/,
   );
   assert.deepEqual(
-    validateConfig({ JWT_SECRET: 'x', HTTP_TLS_CERT_PATH: '/c.pem', HTTP_TLS_KEY_PATH: '/k.pem', PIN: '1234' }).errores,
+    validateConfig({ JWT_SECRET: 'x', HTTP_TLS_CERT_PATH: '/c.pem', HTTP_TLS_KEY_PATH: '/k.pem' }).errores,
     [],
   );
 });
 
 test('validateConfig: MQTT por TCP fuera de loopback exige TLS en producción', () => {
-  const dev = validateConfig({ JWT_SECRET: 'x', MQTT_HOST: '0.0.0.0', PIN: '1234' });
+  const dev = validateConfig({ JWT_SECRET: 'x', MQTT_HOST: '0.0.0.0' });
   assert.deepEqual(dev.errores, []);
   assert.equal(dev.avisos.length, 1);
   const prod = {
@@ -156,10 +148,10 @@ test('validateConfig: MQTT por TCP fuera de loopback exige TLS en producción', 
 });
 
 test('validateConfig: CORS solo con orígenes exactos, y https en producción', () => {
-  assert.deepEqual(validateConfig({ JWT_SECRET: 'x', CORS_ORIGINS: 'http://localhost:8091', PIN: '1234' }).errores, []);
-  assert.equal(validateConfig({ JWT_SECRET: 'x', CORS_ORIGINS: '*', PIN: '1234' }).errores.length, 1);
+  assert.deepEqual(validateConfig({ JWT_SECRET: 'x', CORS_ORIGINS: 'http://localhost:8091' }).errores, []);
+  assert.equal(validateConfig({ JWT_SECRET: 'x', CORS_ORIGINS: '*' }).errores.length, 1);
   assert.equal(
-    validateConfig({ JWT_SECRET: 'x', CORS_ORIGINS: 'https://yaviene.co/', PIN: '1234' }).errores.length,
+    validateConfig({ JWT_SECRET: 'x', CORS_ORIGINS: 'https://yaviene.co/' }).errores.length,
     1,
     'con barra final no coincide nunca con la cabecera Origin',
   );
@@ -168,7 +160,7 @@ test('validateConfig: CORS solo con orígenes exactos, y https en producción', 
   assert.match(validateConfig({ ...prod, CORS_ORIGINS: 'http://yaviene.co' }).errores[0], /https/);
 });
 
-// Por el HTTP pasan la contraseña del panel y el PIN del conductor. En
+// Por el HTTP pasan la contraseña del panel y el secreto del equipo GPS. En
 // producción arrancaba en claro sin avisar; ahora hace falta el par TLS o
 // declarar que lo termina un proxy delante.
 test('validateConfig: en producción el HTTP no arranca en claro sin decirlo', () => {
@@ -181,7 +173,7 @@ test('validateConfig: en producción el HTTP no arranca en claro sin decirlo', (
     [],
   );
   // El arranque local con ngrok no es producción: sigue sin pedir nada.
-  assert.deepEqual(validateConfig({ JWT_SECRET: JWT_LARGO, PIN: '1234' }).errores, []);
+  assert.deepEqual(validateConfig({ JWT_SECRET: JWT_LARGO }).errores, []);
 });
 
 test('validateConfig: puertos que no son puertos', () => {
@@ -198,7 +190,7 @@ test('hostHttp: sin HTTP_HOST, o vacía, es ::; con ella, la que diga', () => {
 });
 
 test('validateConfig: HTTP_HOST solo acepta una IP, y en producción no una de loopback', () => {
-  const local = { JWT_SECRET: 'x', PIN: '1234' };
+  const local = { JWT_SECRET: 'x' };
   assert.deepEqual(validateConfig({ ...local, HTTP_HOST: '127.0.0.1' }).errores, []);
   assert.deepEqual(validateConfig({ ...local, HTTP_HOST: '0.0.0.0' }).errores, []);
   assert.match(validateConfig({ ...local, HTTP_HOST: 'localhost' }).errores[0], /HTTP_HOST/);

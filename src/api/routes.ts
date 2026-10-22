@@ -285,7 +285,10 @@ function provisionDriver(
     return;
   }
 
-  const phoneNumber = typeof body?.phoneNumber === 'string' ? body.phoneNumber : '';
+  const secureDeviceProvision = typeof body?.identifier === 'string' && typeof body?.secret === 'string';
+  const phoneNumber = secureDeviceProvision
+    ? body.identifier as string
+    : typeof body?.phoneNumber === 'string' ? body.phoneNumber : '';
   const name = typeof body?.name === 'string' ? body.name : phoneNumber;
   const routeId = typeof body?.routeId === 'string' ? body.routeId : '';
   const busId = typeof body?.busId === 'string' ? body.busId : '';
@@ -293,9 +296,18 @@ function provisionDriver(
     ? body.companyId
     : typeof body?.empresaId === 'string' ? body.empresaId : '';
   const pin = typeof body?.pin === 'string' ? body.pin : '';
+  const secret = secureDeviceProvision ? body.secret as string : '';
 
-  if (!phoneNumber || !name || !routeId || !busId || !companyId || !/^\d{4,8}$/.test(pin)) {
-    writeError(res, 400, 'INVALID_DRIVER_PROVISION', 'phoneNumber, name, routeId, busId, companyId and a numeric pin are required');
+  if (!phoneNumber || !name || !routeId || !busId || !companyId
+    || (secureDeviceProvision ? secret.length < 32 : !/^\d{4,8}$/.test(pin))) {
+    writeError(
+      res,
+      400,
+      'INVALID_DRIVER_PROVISION',
+      secureDeviceProvision
+        ? 'identifier, name, routeId, busId, companyId and a secret of at least 32 characters are required'
+        : 'phoneNumber, name, routeId, busId, companyId and a numeric pin are required',
+    );
     return;
   }
   // Formas (auditoría 2026-09, P3-10). Solo se cierra lo que nunca pudo
@@ -313,12 +325,16 @@ function provisionDriver(
     writeError(res, 400, 'INVALID_DRIVER_PROVISION', 'busId and companyId cannot contain /, + or #; routeId must look like a route; phoneNumber and name must be short plain text');
     return;
   }
+  if (!getEmpresa(companyId)) {
+    writeError(res, 404, 'COMPANY_NOT_FOUND', 'Company not found');
+    return;
+  }
 
   const driver = registerDriver(phoneNumber, name, routeId, {
     driverId: getDriver(phoneNumber)?.driverId ?? randomUUID(),
     companyId,
     busId,
-    pinHash: hashPin(pin),
+    pinHash: secureDeviceProvision ? hashSecret(secret) : hashPin(pin),
   });
   // Mismo 409 que el alta desde el panel, sin decir de quién es el bus.
   if (driver === 'taken') {
@@ -358,7 +374,7 @@ function loginDevice(
   }
 
   if (!identifier || !secret) {
-    writeError(res, 400, 'CREDENTIALS_REQUIRED', 'phoneNumber and pin are required');
+    writeError(res, 400, 'CREDENTIALS_REQUIRED', 'El identificador y el secreto son obligatorios');
     return;
   }
 

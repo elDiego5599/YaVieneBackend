@@ -8,12 +8,13 @@
  * Envía posiciones GPS cada 2 segundos recorriendo la geometría real
  * de la ruta (scripts/data/rutas.json, generado desde los KMZ de Sobusa).
  *
- * Variables: BUS_ID, ROUTE_ID, EMPRESA_ID, BACKEND_URL, PIN,
+ * Variables: BUS_ID, ROUTE_ID, EMPRESA_ID, BACKEND_URL, DEVICE_SECRET,
  *            ADMIN_API_KEY, CAPTURE_INTERVAL_MS (demo rápida: 400).
  */
 
 import net, { isIP } from 'net';
 import tls from 'tls';
+import { randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -26,20 +27,12 @@ if (!['http:', 'https:'].includes(backendUrl.protocol)) {
   throw new Error('BACKEND_URL debe usar http:// o https://');
 }
 if (backendUrl.protocol === 'http:' && !hostBackendLocal) {
-  throw new Error('BACKEND_URL remoto debe usar https:// para proteger PIN y x-admin-key');
+  throw new Error('BACKEND_URL remoto debe usar https:// para proteger el secreto del equipo y x-admin-key');
 }
 const MQTT_PORT = parseInt(process.env.MQTT_PORT || '8883', 10);
 const BUS_ID = process.env.BUS_ID || 'BUS-ABC123';
-const PHONE = process.env.PHONE || '3000000000';
-const PIN = process.env.PIN;
-if (!PIN) {
-  console.error(
-    'Falta PIN: el simulador registra al conductor con él y luego inicia sesión. '
-    + 'Exporta PIN=… antes de lanzarlo (el backend de demo también lo exige al arrancar). '
-    + 'Ya no hay «1234» por omisión.',
-  );
-  process.exit(1);
-}
+const PHONE = process.env.PHONE || `sim-${BUS_ID}`;
+const DEVICE_SECRET = process.env.DEVICE_SECRET || randomBytes(32).toString('hex');
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const EMPRESA_ID = process.env.EMPRESA_ID || 'EMP-01';
 const ROUTE_ID = process.env.ROUTE_ID || 'R-101';
@@ -186,26 +179,26 @@ async function postJson(path, payload, extraHeaders = {}) {
   }
 }
 
-async function registerDriver() {
+async function registerDevice() {
   if (!ADMIN_API_KEY) {
-    throw new Error('ADMIN_API_KEY es obligatorio para provisionar el simulador');
+    throw new Error('Falta ADMIN_API_KEY para dar de alta el equipo simulado');
   }
 
-  const registration = await postJson('/api/drivers/register', {
-    phoneNumber: PHONE,
-    name: `Conductor ${PHONE}`,
-    pin: PIN,
+  const registration = await postJson('/api/admin/drivers', {
+    identifier: PHONE,
+    name: `Simulador ${BUS_ID}`,
+    secret: DEVICE_SECRET,
     busId: BUS_ID,
     routeId: ROUTE_ID,
     companyId: EMPRESA_ID,
   }, { 'x-admin-key': ADMIN_API_KEY });
 
   if (registration.statusCode !== 201) {
-    throw new Error(`Registro fallo: ${JSON.stringify(registration.body)}`);
+    throw new Error(`No se pudo dar de alta el equipo (${registration.statusCode}): ${registration.body?.error?.code || 'error desconocido'}`);
   }
 
   await renovarToken();
-  console.log(`[REGISTER] Conductor ${PHONE} provisionado y autenticado. JWT obtenido.`);
+  console.log(`[REGISTER] Equipo ${BUS_ID} provisionado y autenticado. JWT obtenido.`);
 }
 
 /**
@@ -220,15 +213,13 @@ async function registerDriver() {
  * las dos apps. Una flota entera podía morirse así de un día para otro.
  */
 async function renovarToken() {
-  const login = await postJson('/api/auth/login', {
-    phoneNumber: PHONE,
-    pin: PIN,
-    busId: BUS_ID,
-    routeId: ROUTE_ID,
+  const login = await postJson('/api/devices/login', {
+    identifier: PHONE,
+    secret: DEVICE_SECRET,
   });
 
   if (login.statusCode !== 200 || !login.body.token) {
-    throw new Error(`Login fallo: ${JSON.stringify(login.body)}`);
+    throw new Error(`No se pudo iniciar sesión del equipo (${login.statusCode}): ${login.body?.error?.code || 'credenciales rechazadas'}`);
   }
 
   token = login.body.token;
@@ -433,7 +424,7 @@ async function run() {
     console.log('══════════════════════════════════════════\n');
 
     // 1. Registrar conductor y obtener JWT
-    await registerDriver();
+    await registerDevice();
 
     // 2. Conectar MQTT con JWT
     await connectMQTTWithAuth();

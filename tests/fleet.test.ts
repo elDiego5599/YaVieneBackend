@@ -217,11 +217,33 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
       return res.json() as Promise<{ buses: any[] }>;
     }
 
-    await provisionDriver(phone1, bus1, company1);
-    await provisionDriver(phone2, bus2, company2);
     await createAdmin(company1, 'boss1');
     await createAdmin(company2, 'boss2');
-
+    await provisionDriver(phone1, bus1, company1);
+    await provisionDriver(phone2, bus2, company2);
+    const deviceCompany = `EMP-D-${suffix}`;
+    await createAdmin(deviceCompany, `device-${suffix}`);
+    const deviceIdentifier = `sim-${bus1}`;
+    const deviceSecret = 's'.repeat(64);
+    const deviceProvision = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/admin/drivers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
+      body: JSON.stringify({
+        identifier: deviceIdentifier,
+        name: 'Simulador de prueba',
+        secret: deviceSecret,
+        companyId: deviceCompany,
+        busId: `S-${suffix}`,
+        routeId: 'R-101',
+      }),
+    });
+    assert.equal(deviceProvision.status, 201);
+    const deviceLogin = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/devices/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: deviceIdentifier, secret: deviceSecret }),
+    });
+    assert.equal(deviceLogin.status, 200, 'el equipo entra con el secreto que se provisionó');
     assert.equal(
       await createAdminConClave(company1, 'debilucho', 'secret123'),
       400,
@@ -281,7 +303,6 @@ test('fleet: admin por empresa, visibilidad oculta/difunde y aislamiento', { tim
         MQTT_PORT: String(MQTT_PORT),
         ADMIN_API_KEY,
         PHONE: phone1,
-        PIN: '2468',
         BUS_ID: bus1,
         ROUTE_ID: 'R-101',
         EMPRESA_ID: company1,

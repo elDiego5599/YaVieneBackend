@@ -978,7 +978,10 @@ function initSchema(): void {
                  COALESCE(d.pin_hash, ''), 'active', d.name, d.route_id,
                  d.registered_at, d.registered_at
           FROM drivers d
-          WHERE d.company_id IS NOT NULL AND d.bus_id IS NOT NULL;
+          -- Un equipo asociado a un bus inexistente no se migra: gps_devices
+          -- exige que bus_id apunte a un bus real.
+          WHERE d.company_id IS NOT NULL AND d.bus_id IS NOT NULL
+            AND EXISTS (SELECT 1 FROM buses b WHERE b.bus_id = d.bus_id);
 
           CREATE TABLE device_sessions (
             session_id TEXT PRIMARY KEY,

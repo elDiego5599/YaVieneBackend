@@ -70,12 +70,9 @@ Los buses de la demo no se arrancan a mano: el backend mantiene la plantilla de 
 `YA_VIENE_FLOTA_EMPRESA=EMP-01` deja solo las seis rutas de Sobusa). Arrancan
 margen para reintentos. Para apagarlos —tráfico real,
 donde esas posiciones falsas viajarían por el mismo canal que las buenas—
-`YA_VIENE_FLOTA_DEMO=0` delante del arranque. Mientras la flota esté
-encendida, el entorno necesita `PIN` (en `local.env`, y en Fly como secreto):
-es el
-PIN que usaban los simuladores para registrarse e iniciar sesión; ahora la flota
-firma sus JWT dentro del backend y no requiere ese PIN. Sin él, el backend
-backend no arranca (`validateConfig`).
+`YA_VIENE_FLOTA_DEMO=0` delante del arranque. La flota demo firma sus JWT
+dentro del backend y no necesita un PIN global. Si Fly todavía tiene ese
+secreto configurado, quítalo con `fly secrets unset PIN`.
 
 ## Saber que está sano
 
@@ -351,8 +348,9 @@ Desde el panel de la empresa: ocultar un bus, ocultar toda la flota o borrar el
 bus. El equipo del bus puede cerrar su turno con
 `POST /api/buses/:busId/offline`, que además revoca su sesión.
 
-Dar de alta y revocar dispositivos con credencial propia —un secreto por
-equipo, revocable sin tocar el resto— todavía no existe; es la tarea T4.3.
+Los dispositivos se pueden provisionar con credencial propia mediante
+`POST /api/admin/drivers`; cada equipo usa su secreto. La revocación individual
+de credenciales, sin tocar los demás equipos, sigue pendiente (T4.3).
 
 ## Avisos con la app cerrada (push, Android)
 
@@ -516,26 +514,19 @@ geometría válida la regla automática falla abierta. Ver [D16](decisiones/D16-
 ## Fly, el respaldo
 
 No se despliega hasta el día anterior a presentar: es una decisión del dueño, no
-un olvido. Cuando toque, lo mínimo es poner el PIN de la flota demo, desplegar,
-despertar la máquina y dejar provisionadas las cuentas de panel de la demo:
+un olvido. La flota demo ya no necesita un PIN global. Si Fly conserva el
+secreto antiguo, quítalo; luego despliega, despierta la máquina y deja
+provisionadas las cuentas de panel de la demo:
 
 ```bash
-fly secrets set --stage PIN=$(node -e 'console.log(require("crypto").randomInt(1e7, 1e8))')
+fly secrets unset PIN
 fly deploy
 fly scale count 1 --yes && fly machine start
 fly ssh console   # y dentro: node scripts/crear-admin-empresa.mjs <companyId> <username> -
 ```
 
-El PIN de la flota demo es un **secreto de Fly**, no una línea de
-`fly.toml`: con el PIN y los teléfonos de la demo en el repo, cualquiera que
-lo leyera entraba como uno de sus buses. Va aleatorio, de 8 dígitos, y nunca
-`1234`, que queda en el historial de git. Los simuladores dan de alta su
-conductor con él cada vez que arrancan, así que cambiarlo no pide tocar el
-volumen. `--stage` lo guarda sin reiniciar la máquina y lo aplica el
-siguiente `fly deploy`; `fly secrets list` confirma que está (sin enseñar el
-valor). Sin él, con la flota encendida, el backend de Fly no arranca
-(`[Config] PIN: …`). Cuando la flota pase a `"0"` se quita con
-`fly secrets unset PIN`.
+La flota firma sus JWT dentro del backend y no necesita un PIN global. Si
+`PIN` seguía configurado como secreto en Fly, `fly secrets unset PIN` lo quita.
 
 La máquina duerme sola (`auto_stop_machines`) y la despierta la primera
 petición, con un arranque en frío de unos segundos —por eso las apps esperan

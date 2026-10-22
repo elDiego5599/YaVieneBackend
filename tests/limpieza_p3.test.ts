@@ -108,6 +108,12 @@ after(async () => {
 });
 
 test('P3-1: el login del equipo tarda lo mismo exista o no la línea', async () => {
+  const altaEmpresa = await postJson(
+    '/api/admin/empresas/EMP-P3/admin',
+    { username: 'ana-p3', password: 'clave-de-prueba-p3' },
+    { 'x-admin-key': ADMIN_API_KEY },
+  );
+  assert.equal(altaEmpresa.status, 201);
   assert.equal((await provisionar({})).status, 201);
   // Cada intento desde una IP y, los que no existen, con una línea distinta:
   // ningún tope por IP ni por cuenta se mete en la medida.
@@ -185,6 +191,12 @@ test('P3-10: la provisión rechaza identificadores con los que el equipo nunca p
     const res = await provisionar({ phoneNumber: `30080001${bueno.busId.length}`, ...bueno });
     assert.equal(res.status, 201, JSON.stringify(bueno));
   }
+});
+
+test('la provisión rechaza una empresa que no existe', async () => {
+  const res = await provisionar({ companyId: 'EMP-INEXISTENTE-P3' });
+  assert.equal(res.status, 404);
+  assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'COMPANY_NOT_FOUND');
 });
 
 test('P3-7: un token firmado con otro algoritmo no vale aunque la clave sea la buena', () => {

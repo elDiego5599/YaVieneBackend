@@ -71,6 +71,10 @@ legacy.prepare(`INSERT INTO drivers
   (phone_number, driver_id, name, route_id, company_id, bus_id, pin_hash, registered_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
   .run('3000000001', 'GPS-A', 'Equipo A', 'R-101', 'EMP-A', 'BUS-A', 'hash-pin', now);
+legacy.prepare(`INSERT INTO drivers
+  (phone_number, driver_id, name, route_id, company_id, bus_id, pin_hash, registered_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+  .run('3000000003', 'GPS-HUERFANO', 'Equipo sin bus', 'R-103', 'EMP-A', 'BUS-INEXISTENTE', 'hash-pin', now);
 legacy.prepare(`INSERT INTO driver_sessions
   (session_id, driver_id, phone_number, company_id, bus_id, route_id, client_id, status, created_at, last_seen_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -114,6 +118,7 @@ test('la migración copia equipos y sesiones y conserva el esquema y las posicio
     device_id: 'GPS-A', identifier: '3000000001', kind: 'sim',
     secret_hash: 'hash-pin', name: 'Equipo A',
   });
+  assert.equal(d.prepare('SELECT COUNT(*) AS n FROM gps_devices WHERE device_id = ?').get('GPS-HUERFANO')?.n, 0);
   assert.deepEqual(d.prepare('SELECT session_id, device_id, identifier, status FROM device_sessions').get(), {
     session_id: 'SESSION-A', device_id: 'GPS-A', identifier: '3000000001', status: 'active',
   });

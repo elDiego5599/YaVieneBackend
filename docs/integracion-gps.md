@@ -74,6 +74,11 @@ La respuesta trae `token`, y dentro de él van la empresa, el bus, la ruta y
 un `sessionId` nuevo. El token dura **24 horas**; pasado ese tiempo la
 conexión se rechaza y hay que volver a pedirlo.
 
+La flota demo no usa un PIN global: cada proceso simulador crea un secreto
+aleatorio por bus, o toma `DEVICE_SECRET` si se configura. Lo provisiona
+con `POST /api/admin/drivers` y la clave `x-admin-key`; ese secreto no se
+imprime en el registro del simulador.
+
 **10 PIN fallidos en una hora bloquean la línea**, vengan de la IP que
 vengan: **5 minutos** la primera vez, y cada bloqueo que le sigue sin un
 login correcto en medio dura el doble (10, 20, 40… minutos), **hasta 24
