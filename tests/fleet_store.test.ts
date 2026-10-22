@@ -24,7 +24,7 @@ const { addCompanyRoute, removeCompanyRoute, getCompanyRoutes, routeExists } =
   require('../src/data/routes_store') as typeof import('../src/data/routes_store');
 const { upsertPosition, getPosition, getPositionsByRoute } =
   require('../src/data/positions_store') as typeof import('../src/data/positions_store');
-const { createDriverSession, getSession } =
+const { createDeviceSession, getSession } =
   require('../src/data/sessions') as typeof import('../src/data/sessions');
 const { getDb } = require('../src/data/database') as typeof import('../src/data/database');
 
@@ -248,10 +248,10 @@ test('borrar un bus revoca sus sesiones y deja de aceptar sus posiciones', () =>
   addCompanyRoute(empresa, 'R-800', 'Borrable');
   const bus = alta(empresa, 'KKK111', 'R-800');
   conductor(telefono);
-  createDriverSession({
+  createDeviceSession({
     sessionId: 'ses-800',
-    driverId: telefono,
-    phoneNumber: telefono,
+    deviceId: telefono,
+    identifier: telefono,
     companyId: empresa,
     busId: bus.busId,
     routeId: 'R-800',

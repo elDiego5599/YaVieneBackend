@@ -4,7 +4,7 @@ const { execSync } = require('child_process');
 const { monitorEventLoopDelay } = require('perf_hooks');
 
 const dbmod = require('../../dist/data/database.js');
-const { createDriverSession } = require('../../dist/data/sessions.js');
+const { createDeviceSession } = require('../../dist/data/sessions.js');
 const { signToken } = require('../../dist/auth/tokens.js');
 const mqtt = require('mqtt');
 const { io } = require('socket.io-client');
@@ -32,8 +32,8 @@ for (let i = 1; i <= N_BUSES; i++) {
     INSERT OR IGNORE INTO buses (bus_id, company_id, route_id, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(busId, COMPANY_ID, ROUTE_ID, now, now);
-  createDriverSession({
-    sessionId: `h1-${busId}-${now}`, driverId: `d-h1-${i}`, phoneNumber: phone,
+  createDeviceSession({
+    sessionId: `h1-${busId}-${now}`, deviceId: `d-h1-${i}`, identifier: phone,
     companyId: COMPANY_ID, busId, routeId: ROUTE_ID,
   });
   busSpecs.push({

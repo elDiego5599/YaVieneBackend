@@ -5,7 +5,7 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 
 const dbmod = require('../../dist/data/database.js');
-const { createDriverSession } = require('../../dist/data/sessions.js');
+const { createDeviceSession } = require('../../dist/data/sessions.js');
 const { signToken } = require('../../dist/auth/tokens.js');
 const mqtt = require('mqtt');
 
@@ -25,9 +25,9 @@ for (let i = 1; i <= N_BUSES; i++) {
     INSERT OR IGNORE INTO drivers (phone_number, driver_id, name, route_id, company_id, bus_id, pin_hash, registered_at)
     VALUES (?, ?, ?, ?, ?, ?, 'test', ?)
   `).run(`9100${String(i).padStart(6, '0')}`, `d-soak-${i}`, `Soak ${i}`, ROUTE_ID, COMPANY_ID, busId, now);
-  createDriverSession({
-    sessionId: `soak-${busId}-${now}`, driverId: `d-soak-${i}`,
-    phoneNumber: `9100${String(i).padStart(6, '0')}`, companyId: COMPANY_ID,
+  createDeviceSession({
+    sessionId: `soak-${busId}-${now}`, deviceId: `d-soak-${i}`,
+    identifier: `9100${String(i).padStart(6, '0')}`, companyId: COMPANY_ID,
     busId, routeId: ROUTE_ID,
   });
 }

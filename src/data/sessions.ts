@@ -1,9 +1,9 @@
 import { getDb } from './database';
 
-export interface DriverSession {
+export interface DeviceSession {
   sessionId: string;
-  driverId: string;
-  phoneNumber: string;
+  deviceId: string;
+  identifier: string;
   companyId: string;
   busId: string;
   routeId: string;
@@ -14,17 +14,20 @@ export interface DriverSession {
   revokedAt: number | null;
 }
 
-interface CachedSession extends DriverSession {
+interface CachedSession extends DeviceSession {
   persistedSeenAt: number;
 }
 
 const sessionCache = new Map<string, CachedSession>();
+export function invalidateSessionCache(): void {
+  sessionCache.clear();
+}
 const LAST_SEEN_FLUSH_MS = 15_000;
 
-export function createDriverSession(input: {
+export function createDeviceSession(input: {
   sessionId: string;
-  driverId: string;
-  phoneNumber: string;
+  deviceId: string;
+  identifier: string;
   companyId: string;
   busId: string;
   routeId: string;
@@ -37,8 +40,8 @@ export function createDriverSession(input: {
       UPDATE device_sessions
       SET status = 'revoked', revoked_at = ?, client_id = NULL
       WHERE status = 'active'
-        AND (device_id = ? OR bus_id = ?)
-    `).run(now, input.driverId, input.busId);
+        AND (device_id = ? OR (company_id = ? AND bus_id = ?))
+    `).run(now, input.deviceId, input.companyId, input.busId);
 
     db.prepare(`
       INSERT INTO device_sessions (
@@ -47,8 +50,8 @@ export function createDriverSession(input: {
       ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
     `).run(
       input.sessionId,
-      input.driverId,
-      input.phoneNumber,
+      input.deviceId,
+      input.identifier,
       input.companyId,
       input.busId,
       input.routeId,
@@ -65,6 +68,10 @@ export function claimSession(sessionId: string, clientId: string): boolean {
   const db = getDb();
   const cached = sessionCache.get(sessionId);
   if (cached && cached.status === 'active') {
+    if (!sessionDeviceIsCurrent(cached)) {
+      revokeSession(sessionId);
+      return false;
+    }
     if (cached.clientId != null && cached.clientId !== clientId) return false;
     const now = Date.now();
     const result = db.prepare(`
@@ -92,6 +99,10 @@ export function claimSession(sessionId: string, clientId: string): boolean {
   if (result.changes !== 1) return false;
   const session = getSession(sessionId);
   if (!session) return false;
+  if (!sessionDeviceIsCurrent(session)) {
+    revokeSession(sessionId);
+    return false;
+  }
   sessionCache.set(sessionId, { ...session, persistedSeenAt: Date.now() });
   return true;
 }
@@ -101,6 +112,10 @@ export function isSessionAuthorized(sessionId: string, clientId: string): boolea
   const cached = sessionCache.get(sessionId);
   const now = Date.now();
   if (cached && cached.status === 'active' && cached.clientId === clientId) {
+    if (!sessionDeviceIsCurrent(cached)) {
+      revokeSession(sessionId);
+      return false;
+    }
     cached.lastSeenAt = now;
     if (now - cached.persistedSeenAt >= LAST_SEEN_FLUSH_MS) {
       const result = db.prepare(`
@@ -118,6 +133,10 @@ export function isSessionAuthorized(sessionId: string, clientId: string): boolea
   }
 
   const session = getSession(sessionId);
+  if (session?.status === 'active' && !sessionDeviceIsCurrent(session)) {
+    revokeSession(sessionId);
+    return false;
+  }
   if (!session || session.status !== 'active' || session.clientId !== clientId) {
     sessionCache.delete(sessionId);
     return false;
@@ -151,17 +170,17 @@ export function revokeSession(sessionId: string): boolean {
   return result.changes === 1;
 }
 
-export function getSession(sessionId: string): DriverSession | null {
+export function getSession(sessionId: string): DeviceSession | null {
   const db = getDb();
   const row = db.prepare(`
-    SELECT session_id, device_id AS driver_id, identifier AS phone_number, company_id, bus_id, route_id,
+    SELECT session_id, device_id, identifier, company_id, bus_id, route_id,
            client_id, status, created_at, last_seen_at, revoked_at
     FROM device_sessions
     WHERE session_id = ?
   `).get(sessionId) as {
     session_id: string;
-    driver_id: string;
-    phone_number: string;
+    device_id: string;
+    identifier: string;
     company_id: string;
     bus_id: string;
     route_id: string;
@@ -175,8 +194,8 @@ export function getSession(sessionId: string): DriverSession | null {
   if (!row) return null;
   return {
     sessionId: row.session_id,
-    driverId: row.driver_id,
-    phoneNumber: row.phone_number,
+    deviceId: row.device_id,
+    identifier: row.identifier,
     companyId: row.company_id,
     busId: row.bus_id,
     routeId: row.route_id,
@@ -202,13 +221,13 @@ export function cleanupRevokedSessions(retentionMs = 7 * 24 * 60 * 60 * 1000): n
   return result.changes;
 }
 
-export function revokeSessionsForDriver(driverId: string): number {
+export function revokeSessionsForDevice(deviceId: string): number {
   const db = getDb();
   const result = db.prepare(`
     UPDATE device_sessions
     SET status = 'revoked', revoked_at = ?, client_id = NULL
     WHERE device_id = ? AND status = 'active'
-  `).run(Date.now(), driverId);
+  `).run(Date.now(), deviceId);
   sessionCache.clear();
   return result.changes;
 }
@@ -221,13 +240,21 @@ export function revokeSessionsForDriver(driverId: string): number {
  * niega la publicación en el acto (`authorizePublish` consulta la base al
  * vaciarse la caché) y lo desconecta en el siguiente barrido.
  */
-export function revokeSessionsForBus(busId: string): number {
+export function revokeSessionsForBus(companyId: string, busId: string): number {
   const db = getDb();
   const result = db.prepare(`
     UPDATE device_sessions
     SET status = 'revoked', revoked_at = ?, client_id = NULL
-    WHERE bus_id = ? AND status = 'active'
-  `).run(Date.now(), busId);
+    WHERE company_id = ? AND bus_id = ? AND status = 'active'
+  `).run(Date.now(), companyId, busId);
   sessionCache.clear();
   return result.changes;
+}
+
+function sessionDeviceIsCurrent(session: DeviceSession): boolean {
+  return getDb().prepare(`
+    SELECT 1 FROM gps_devices
+    WHERE device_id = ? AND status = 'active'
+      AND company_id = ? AND bus_id = ?
+  `).get(session.deviceId, session.companyId, session.busId) !== undefined;
 }

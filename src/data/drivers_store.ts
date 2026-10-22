@@ -3,6 +3,7 @@
 // el conductor en cada mensaje.
 import { randomUUID } from 'crypto';
 import { getDb } from './database';
+import { invalidateSessionCache } from './sessions';
 import { DriverInfo } from './bus_types';
 import { busCompanyCache } from './fleet_admin';
 
@@ -97,6 +98,7 @@ export function registerDriver(
     pinHash,
   };
   driverCache.set(phoneNumber, driver);
+  invalidateSessionCache();
   return driver;
 }
 

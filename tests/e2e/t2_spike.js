@@ -7,7 +7,7 @@ const { execSync } = require('child_process');
 
 // Preparar drivers sintéticos en la DB (módulo compilado)
 const dbmod = require('../../dist/data/database.js');
-const { createDriverSession } = require('../../dist/data/sessions.js');
+const { createDeviceSession } = require('../../dist/data/sessions.js');
 const { signToken } = require('../../dist/auth/tokens.js');
 const mqtt = require('mqtt');
 const { io } = require('socket.io-client');
@@ -34,8 +34,8 @@ for (let i = 1; i <= N_BUSES; i++) {
 
 const tokens = busIds.map((busId, i) => {
   const sessionId = `spike-${busId}-${now}`;
-  createDriverSession({
-    sessionId, driverId: `d-spike-${i + 1}`, phoneNumber: `9000${String(i + 1).padStart(6, '0')}`,
+  createDeviceSession({
+    sessionId, deviceId: `d-spike-${i + 1}`, identifier: `9000${String(i + 1).padStart(6, '0')}`,
     companyId: COMPANY_ID, busId, routeId: ROUTE_ID,
   });
   return signToken({

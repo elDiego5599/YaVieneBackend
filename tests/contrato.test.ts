@@ -242,7 +242,7 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
   const { getDb, closeDb } = await import('../src/data/database');
   const { createBus } = await import('../src/data/fleet_admin');
   const { registerDriver } = await import('../src/data/drivers_store');
-  const { createDriverSession } = await import('../src/data/sessions');
+  const { createDeviceSession } = await import('../src/data/sessions');
   const { signToken } = await import('../src/auth/tokens');
   const { createOrUpdateCompanyAdmin } = await import('../src/data/empresas');
   const { hashSecret } = await import('../src/auth/passwords');
@@ -254,8 +254,8 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
     const telefono = `399000000${i + 1}`;
     registerDriver(telefono, `Conductor ${i + 1}`, RUTA, { companyId: EMPRESA, busId: bus.busId });
     const sessionId = randomUUID();
-    createDriverSession({
-      sessionId, driverId: telefono, phoneNumber: telefono,
+    createDeviceSession({
+      sessionId, deviceId: telefono, identifier: telefono,
       companyId: EMPRESA, busId: bus.busId, routeId: RUTA,
     });
     const token = signToken({

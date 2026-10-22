@@ -59,6 +59,15 @@ async function llamar(
 
 const comoAdmin = (t: string): Record<string, string> => ({ authorization: `Bearer ${t}` });
 const conClave = (): Record<string, string> => ({ 'x-admin-key': 'api-cob-admin-key-1234567890' });
+function seedDevice(deviceId: string, identifier: string, companyId: string, busId: string): void {
+  const now = Date.now();
+  getDb().prepare(`
+    INSERT INTO gps_devices (
+      device_id, company_id, bus_id, identifier, kind, secret_hash,
+      status, name, route_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'sim', ?, 'active', ?, 'R-900', ?, ?)
+  `).run(deviceId, companyId, busId, identifier, hashSecret(PIN), deviceId, now, now);
+}
 
 test.before(async () => {
   await new Promise<void>((listo) => servidor.listen(0, '127.0.0.1', listo));
@@ -166,6 +175,22 @@ test('login del equipo usa identifier y secret y emite rol device', async () => 
   const payload = verifyToken(response.cuerpo.token as string);
   assert.equal(payload?.role, 'device');
   assert.equal(payload?.identifier, TELEFONO);
+});
+test('login del equipo rechaza bus ausente, bus ajeno y empresa ausente', async () => {
+  getDb().pragma('foreign_keys = OFF');
+  seedDevice('DEV-MISSING-BUS', 'missing-bus-device', EMPRESA, 'BUS-MISSING-LOGIN');
+  getDb().pragma('foreign_keys = ON');
+  seedDevice('DEV-OTHER-BUS', 'other-bus-device', EMPRESA, 'BUS-DUP001');
+
+  const missingCompanyBus = createBus('API-MISSING-COMPANY', 'MIS001', 'R-900');
+  if (typeof missingCompanyBus === 'string') throw new Error(`alta MIS001: ${missingCompanyBus}`);
+  seedDevice('DEV-MISSING-COMPANY', 'missing-company-device', 'API-MISSING-COMPANY', missingCompanyBus.busId);
+
+  for (const identifier of ['missing-bus-device', 'other-bus-device', 'missing-company-device']) {
+    const response = await llamar('POST', '/api/devices/login', { identifier, secret: PIN });
+    assert.equal(response.estado, 401, identifier);
+    assert.equal((response.cuerpo.error as { code: string }).code, 'INVALID_CREDENTIALS');
+  }
 });
 
 test('login de panel: faltantes, malo y bueno', async () => {

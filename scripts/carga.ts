@@ -105,7 +105,7 @@ function metros(a: Punto, b: Punto): number {
 async function provisionar(): Promise<Bus[]> {
   const { getDb, closeDb } = await import('../src/data/database');
   const { registerDriver } = await import('../src/data/drivers_store');
-  const { createDriverSession } = await import('../src/data/sessions');
+  const { createDeviceSession } = await import('../src/data/sessions');
   const { signToken } = await import('../src/auth/tokens');
 
   const rutas = (getDb()
@@ -129,8 +129,8 @@ async function provisionar(): Promise<Bus[]> {
     // Sin PIN: nadie entra por /api/auth/login, el token se firma aquí.
     registerDriver(telefono, `Carga ${sufijo}`, routeId, { companyId: EMPRESA, busId });
     const sessionId = randomUUID();
-    createDriverSession({
-      sessionId, driverId: telefono, phoneNumber: telefono,
+    createDeviceSession({
+      sessionId, deviceId: telefono, identifier: telefono,
       companyId: EMPRESA, busId, routeId,
     });
     const token = signToken({

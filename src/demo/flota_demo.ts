@@ -25,7 +25,7 @@ import { busCompanyCache, busIdFromPlaca, deleteBus, visibilityCache } from '../
 import { resetEstadoVisibilidadTerminal } from '../data/positions_store';
 import { flotaDemoHabilitada } from '../config';
 import { registerDriver } from '../data/drivers_store';
-import { createDriverSession } from '../data/sessions';
+import { createDeviceSession } from '../data/sessions';
 import { signToken } from '../auth/tokens';
 
 /** Un bus simulado: dónde arranca y cada cuánto publica. */
@@ -424,8 +424,8 @@ async function pedirToken(estado: EstadoBus): Promise<string> {
   });
   if (driver === 'taken') throw new Error('bus asignado a otra empresa');
   const sessionId = randomUUID();
-  createDriverSession({
-    sessionId, driverId: driver.driverId, phoneNumber: driver.phoneNumber,
+  createDeviceSession({
+    sessionId, deviceId: driver.driverId, identifier: driver.phoneNumber,
     busId: bus.busId, routeId: bus.routeId, companyId: bus.companyId,
   });
   return signToken({

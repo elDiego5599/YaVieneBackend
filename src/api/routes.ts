@@ -29,7 +29,7 @@ import { authenticateRequest, isAdminRequest, isDeviceForBus, authenticateCompan
 import { hashPin, hashSecret, verifySecretSinDelatar } from '../auth/passwords';
 import { signToken } from '../auth/tokens';
 import { cookieBorrada, cookieDeSesion, esOrigenDelPanel, leerCookiePanel } from '../auth/cookie_panel';
-import { createDriverSession, revokeSession, revokeSessionsForDriver } from '../data/sessions';
+import { createDeviceSession, revokeSession, revokeSessionsForDevice } from '../data/sessions';
 import { getMetrics, incrementMetric } from '../observability/metrics';
 import { MAX_INTERNO, TIPOLOGIAS, MAX_CAPACIDAD, MIN_CAPACIDAD, getBusRouteId, normalizeCapacidad, normalizeTipologia } from '../data/fleet_admin';
 import { esRutaDeEmpresa, isRouteId, MAX_NOMBRE_RUTA } from '../data/routes_store';
@@ -325,7 +325,7 @@ function provisionDriver(
     writeError(res, 409, 'BUS_TAKEN', 'Ese bus ya está registrado en otra empresa');
     return;
   }
-  revokeSessionsForDriver(driver.driverId);
+  revokeSessionsForDevice(driver.driverId);
   // El alta pone un PIN nuevo con la clave de administración: el bloqueo por
   // PIN fallidos de esa línea ya no protege nada y el equipo entra enseguida.
   deviceLoginLockout.levantar(phoneNumber);
@@ -377,7 +377,13 @@ function loginDevice(
   // scrypt corre siempre, exista o no la línea (P3-1): si no, el tiempo de
   // respuesta decía qué teléfonos están dados de alta.
   const pinBueno = verifySecretSinDelatar(secret, device?.pinHash);
-  if (!device || !pinBueno || !device.companyId || !device.busId) {
+  const companyId = device?.companyId;
+  const busId = device?.busId;
+  const company = companyId ? getEmpresa(companyId) : null;
+  const busBelongsToCompany = Boolean(companyId && busId
+    && getDb().prepare('SELECT 1 FROM buses WHERE bus_id = ? AND company_id = ?')
+      .get(busId, companyId));
+  if (!device || !pinBueno || !companyId || !busId || !company || !busBelongsToCompany) {
     const bloqueoMs = deviceLoginLockout.fallo(identifier);
     if (bloqueoMs > 0) {
       incrementMetric('login.cuenta_bloqueada');
@@ -403,18 +409,18 @@ function loginDevice(
     deviceId: device.driverId,
     identifier,
     role: 'device',
-    companyId: device.companyId,
-    busId: device.busId,
+    companyId,
+    busId,
     routeId: device.routeId,
     sessionId,
   });
 
-  createDriverSession({
+  createDeviceSession({
     sessionId,
-    driverId: device.driverId,
-    phoneNumber: device.phoneNumber,
-    companyId: device.companyId,
-    busId: device.busId,
+    deviceId: device.driverId,
+    identifier: device.phoneNumber,
+    companyId,
+    busId,
     routeId: device.routeId,
   });
 

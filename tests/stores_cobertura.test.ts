@@ -45,9 +45,16 @@ function nuevaEmpresa(id: string): void {
 
 // positions.device_id y device_sessions.identifier no tienen FK a
 // drivers(phone_number): sin fila del conductor, el insert falla.
-function registrarConductor(phone: string, driverId: string, busId?: string): void {
+function registrarConductor(phone: string, driverId: string, busId?: string, companyId = 'COB-S'): void {
+  empresas.ensureEmpresa(companyId);
+  if (busId) {
+    getDb().prepare(`
+      INSERT OR IGNORE INTO buses (bus_id, company_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+    `).run(busId, companyId, Date.now(), Date.now());
+  }
   conductores.registerDriver(phone, `N ${driverId}`, 'R-900', {
-    driverId, companyId: 'COB-S', ...(busId ? { busId } : {}),
+    driverId, companyId, ...(busId ? { busId } : {}),
   });
 }
 
@@ -125,8 +132,8 @@ test('rutas: existe por nombre, auto-id, renombre y choques', () => {
 test('sesiones: reclamo, autorización, entrega y revocación', () => {
   const s = (id: string, driver: string, bus: string): void => {
     registrarConductor(`+57${driver}`, driver, bus);
-    sesiones.createDriverSession({
-      sessionId: id, driverId: driver, phoneNumber: `+57${driver}`, companyId: 'COB-S',
+    sesiones.createDeviceSession({
+      sessionId: id, deviceId: driver, identifier: `+57${driver}`, companyId: 'COB-S',
       busId: bus, routeId: 'R-900',
     });
   };
@@ -137,7 +144,7 @@ test('sesiones: reclamo, autorización, entrega y revocación', () => {
   assert.equal(sesiones.isSessionAuthorized('cob-s1', 'A'), true);
   assert.equal(sesiones.isSessionAuthorized('cob-s1', 'B'), false);
 
-  // createDriverSession vacía la caché: el reclamo vuelve por la base.
+  // createDeviceSession vacía la caché: el reclamo vuelve por la base.
   s('cob-s2', 'D2', 'B2');
   assert.equal(sesiones.claimSession('cob-s1', 'B'), false);
   assert.equal(sesiones.claimSession('cob-s1', 'A'), true);
@@ -155,12 +162,33 @@ test('sesiones: reclamo, autorización, entrega y revocación', () => {
   assert.equal(sesiones.revokeSession('cob-s3'), true);
   assert.equal(sesiones.isSessionAuthorized('cob-s3', 'cualquiera'), false);
   assert.equal(sesiones.revokeSession('cob-s3'), false);
+  s('cob-move', 'DMOVE', 'BMOVE');
+  assert.equal(sesiones.claimSession('cob-move', 'move-client'), true);
+  registrarConductor('+57BMOVE2', 'BMOVE2', 'BMOVE-2');
+  getDb().prepare('UPDATE gps_devices SET bus_id = ? WHERE device_id = ?').run('BMOVE-2', 'DMOVE');
+  assert.equal(sesiones.isSessionAuthorized('cob-move', 'move-client'), false);
+  assert.equal(sesiones.getSession('cob-move')?.status, 'revoked');
+  s('cob-disabled', 'DOFF', 'BOFF');
+  assert.equal(sesiones.claimSession('cob-disabled', 'off-client'), true);
+  getDb().prepare("UPDATE gps_devices SET status = 'inactive' WHERE device_id = ?").run('DOFF');
+  assert.equal(sesiones.claimSession('cob-disabled', 'off-client'), false);
+  assert.equal(sesiones.getSession('cob-disabled')?.status, 'revoked');
 
   // El alta nueva revoca la activa anterior del mismo conductor.
   s('cob-s4', 'D1', 'B1');
   assert.equal(sesiones.getSession('cob-s4')?.status, 'active');
-  assert.ok(sesiones.revokeSessionsForDriver('D1') >= 1);
-  assert.ok(sesiones.revokeSessionsForBus('B2') >= 0);
+  assert.ok(sesiones.revokeSessionsForDevice('D1') >= 1);
+  s('scope-a', 'DSCOPEA', 'BUS-SCOPE');
+  empresas.ensureEmpresa('COB-S2');
+  const now = Date.now();
+  getDb().prepare(`
+    INSERT INTO device_sessions (
+      session_id, device_id, identifier, company_id, bus_id, route_id,
+      status, created_at, last_seen_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+  `).run('scope-b', 'DSCOPEB', '+57DSCOPEB', 'COB-S2', 'BUS-SCOPE', 'R-900', now, now);
+  assert.equal(sesiones.revokeSessionsForBus('COB-S', 'BUS-SCOPE'), 1);
+  assert.equal(sesiones.getSession('scope-b')?.status, 'active');
   assert.ok(sesiones.cleanupRevokedSessions(-1) >= 1);
 });
 

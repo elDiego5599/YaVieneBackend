@@ -61,6 +61,9 @@ test.before(async () => {
   const dir = servidor.address();
   base = `http://127.0.0.1:${typeof dir === 'object' && dir ? dir.port : 0}`;
 
+  getDb().prepare(
+    'INSERT OR IGNORE INTO empresas (company_id, name, created_at) VALUES (?, ?, ?)',
+  ).run('EMP-FICHA', 'Empresa ficha', Date.now());
   await alta(PROPIO, 'FICHA-1');
   await alta(AJENO, 'FICHA-2');
   const login = await fetch(`${base}/api/auth/login`, {

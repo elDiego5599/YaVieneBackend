@@ -58,6 +58,6 @@ export function isDeviceForBus(auth: TokenPayload | null, busId: string): boolea
   if (!auth || auth.role !== 'device' || auth.busId !== busId) return false;
   const session = getSession(auth.sessionId);
   return session?.status === 'active' &&
-      session.driverId === auth.deviceId &&
+      session.deviceId === auth.deviceId &&
       session.busId === auth.busId;
 }

@@ -394,7 +394,7 @@ export function deleteBus(busId: string): { busId: string; routeId: string | nul
     db.prepare('DELETE FROM buses WHERE bus_id = ?').run(busId);
     // Dentro de la transacción: si el borrado se deshace, el teléfono
     // conserva su sesión; si se confirma, ya no puede publicar.
-    revokeSessionsForBus(busId);
+    revokeSessionsForBus(companyId, busId);
 
     // La empresa va en el aviso porque al despacharlo el bus ya no existe
     // y no hay de dónde sacarla: sin ella el aviso llegaba al pasajero pero
@@ -434,7 +434,7 @@ export function deleteAllBuses(companyId: string): number {
       }
       // Lo mismo que `deleteBus`: sin esto los teléfonos de la flota
       // borrada seguían publicando.
-      revokeSessionsForBus(bus.bus_id);
+      revokeSessionsForBus(companyId, bus.bus_id);
     }
     db.prepare('DELETE FROM positions WHERE bus_id IN (SELECT bus_id FROM buses WHERE company_id = ?)').run(companyId);
     db.prepare('DELETE FROM turn_assignments WHERE bus_id IN (SELECT bus_id FROM buses WHERE company_id = ?)').run(companyId);

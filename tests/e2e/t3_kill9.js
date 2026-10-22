@@ -5,7 +5,7 @@ const fs = require('fs');
 const mqtt = require('mqtt');
 
 const dbmod = require('../../dist/data/database.js');
-const { createDriverSession } = require('../../dist/data/sessions.js');
+const { createDeviceSession } = require('../../dist/data/sessions.js');
 const { signToken } = require('../../dist/auth/tokens.js');
 const { sleep, record, report } = require('./helpers');
 
@@ -24,8 +24,8 @@ for (let i = 1; i <= N_BUSES; i++) {
     INSERT OR IGNORE INTO drivers (phone_number, driver_id, name, route_id, company_id, bus_id, pin_hash, registered_at)
     VALUES (?, ?, ?, ?, ?, ?, 'test', ?)
   `).run(phone, `d-kill-${i}`, `Kill ${i}`, ROUTE_ID, COMPANY_ID, busId, now);
-  createDriverSession({
-    sessionId: `kill-${busId}-${now}`, driverId: `d-kill-${i}`, phoneNumber: phone,
+  createDeviceSession({
+    sessionId: `kill-${busId}-${now}`, deviceId: `d-kill-${i}`, identifier: phone,
     companyId: COMPANY_ID, busId, routeId: ROUTE_ID,
   });
   tokens.push(signToken({
