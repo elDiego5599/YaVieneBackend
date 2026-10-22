@@ -59,6 +59,11 @@ export class SlidingWindowRateLimiter {
     return removed;
   }
 
+  /** Olvida una clave al terminar su sesión, sin esperar al barrido. */
+  delete(key: string): void {
+    this.entries.delete(key);
+  }
+
   /** Claves actualmente recordadas (uso en tests y métricas). */
   get size(): number {
     return this.entries.size;

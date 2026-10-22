@@ -62,7 +62,7 @@ const EMPRESAS = (process.env.YA_VIENE_FLOTA_EMPRESA || 'EMP-01,EMP-03')
 // igual de fluido con la interpolación de la app y deja toda la flota simulada
 // cabiendo en un portátil.
 const RUTA_DESTACADA = process.env.YA_VIENE_FLOTA_RUTA || 'R-106';
-const INTERVALO_RAPIDO = process.env.CAPTURE_INTERVAL_MS || '400';
+export const INTERVALO_RAPIDO = process.env.CAPTURE_INTERVAL_MS || '400';
 const INTERVALO_LENTO = process.env.CAPTURE_INTERVAL_MS_RESTO || '1500';
 
 // Dieciséis buses por ruta: ocho en servicio y ocho esperando en terminal.

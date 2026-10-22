@@ -69,6 +69,10 @@ Tres candados, en `src/mqtt/broker.ts`:
    Publicar en otro cierra la conexión y queda en el registro. Suscribirse,
    solo al propio `ack`.
 
+Además, cada `sessionId` tiene una cuota de 5 publicaciones en 1 s y 180
+por minuto. El broker la aplica en `authorizePublish`, antes del parseo,
+SQLite y fan-out; al excederla rechaza ese publish y conserva la conexión.
+
 ## 2. Se valida
 
 En dos capas, y en este orden (`src/index.ts`, el manejador que recibe

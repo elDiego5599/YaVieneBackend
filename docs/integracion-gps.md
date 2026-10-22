@@ -46,6 +46,14 @@ anónimo no le llene la memoria:
   reconectan todos en el mismo instante. El equipo que recibe `429` tiene
   que reintentar unos segundos después, como con cualquier corte.
 
+Una vez autenticado, cada sesión tiene una cuota de **5 publicaciones en 1 s
+y 180 publicaciones por minuto por sesión**. El equipo real normalmente
+envía una posición cada 1 a 15 s mientras el bus se mueve; la demo puede
+publicar cada 400 ms. Las publicaciones por encima de la cuota se rechazan
+antes de procesar la posición y el servidor cierra la conexión. El cupo se conserva
+al reconectar hasta que vence su ventana; el equipo debe esperar antes de
+reintentarlo.
+
 ## Credenciales
 
 El equipo se conecta con usuario vacío y **el JWT como contraseña MQTT**. El
@@ -274,13 +282,13 @@ mensaje; las demás, de lo que dice el mensaje:
 | `NO_CAPTURE_TIME_DELTA` | Dos posiciones con exactamente el mismo `capturedAt`. |
 | `SANITY_REJECTED` | La velocidad **calculada** contra la posición anterior pasa de 120 km/h: el bus habría saltado. |
 
-Un rechazo no cierra la conexión. Lo que sí la cierra, sin ack de por medio,
-es publicar en un topic ajeno, publicar sin token válido o publicar con una
-sesión que otro equipo ya reclamó.
+Un rechazo de validación de posición no cierra la conexión. Sí la cierra,
+sin ack de por medio, publicar en un topic ajeno, publicar sin token válido,
+usar una sesión que otro equipo ya reclamó o exceder la cuota de publicaciones.
 
 ## Cadencia
 
-Una posición cada **5 a 15 segundos** mientras el bus se mueve.
+Una posición cada **1 a 15 segundos** mientras el bus se mueve.
 
 Los límites de los dos lados:
 

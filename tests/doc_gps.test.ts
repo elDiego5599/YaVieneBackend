@@ -18,7 +18,8 @@ import {
   MAX_SPEED_KMH,
 } from '../src/security/physics';
 import { ZONA } from '../src/security/zona';
-import { MAX_MQTT_ANONIMAS_POR_IP, MAX_PAQUETE_MQTT, MQTT_CONNECT_TIMEOUT_MS } from '../src/mqtt/guardia';
+import { MAX_MQTT_ANONIMAS_POR_IP, MAX_PAQUETE_MQTT, MQTT_CONNECT_TIMEOUT_MS, MAX_PUBLICACIONES_MQTT_POR_MINUTO, MAX_RAFAGA_MQTT_POR_SESION, VENTANA_RAFAGA_MQTT_MS } from '../src/mqtt/guardia';
+import { INTERVALO_RAPIDO } from '../src/demo/flota_demo';
 import { BLOQUEO_PIN_BASE_MS, BLOQUEO_PIN_TOPE_MS, MAX_FALLOS_PIN_POR_CUENTA, VENTANA_FALLOS_PIN_MS } from '../src/security/rate_limiter';
 
 const raiz = join(__dirname, '..');
@@ -67,6 +68,8 @@ test('doc GPS: los límites que dice el documento son los del código', () => {
     doc.includes(`${MAX_MQTT_ANONIMAS_POR_IP} conexiones abiertas sin autenticar`),
     'falta el tope de conexiones anónimas por IP',
   );
+  assert.ok(doc.includes(`${MAX_PUBLICACIONES_MQTT_POR_MINUTO} publicaciones por minuto por sesión`), 'falta la cuota sostenida MQTT');
+  assert.ok(doc.includes(`${MAX_RAFAGA_MQTT_POR_SESION} publicaciones en ${VENTANA_RAFAGA_MQTT_MS / 1000} s`), 'falta el tope de ráfaga MQTT');
   // El bloqueo de PIN por línea (P2-3): el documento lo dice en horas.
   assert.equal(VENTANA_FALLOS_PIN_MS, 3_600_000, 'el documento dice «en una hora»');
   assert.ok(
@@ -78,6 +81,14 @@ test('doc GPS: los límites que dice el documento son los del código', () => {
   for (const numero of [ZONA.latMin, ZONA.latMax, ZONA.lonMin, ZONA.lonMax]) {
     assert.ok(doc.includes(String(numero)), `la zona del documento no dice ${numero}`);
   }
+});
+
+test('doc GPS: la cuota sostenida deja margen sobre la cadencia rápida de la demo', () => {
+  const publicacionesPorMinuto = 60_000 / Number(INTERVALO_RAPIDO);
+  assert.ok(
+    MAX_PUBLICACIONES_MQTT_POR_MINUTO >= publicacionesPorMinuto * 1.2,
+    `${MAX_PUBLICACIONES_MQTT_POR_MINUTO}/min no deja 20 % de margen sobre ${INTERVALO_RAPIDO} ms`,
+  );
 });
 
 test('doc GPS: los topics son los que el broker autoriza', () => {

@@ -18,6 +18,19 @@
  */
 export const MAX_PAQUETE_MQTT = 16 * 1024;
 
+// La demo publica cada 400 ms (2,5/s): 180/min equivale a 3/s y deja 20 %
+// de margen. Cinco en 1 s admiten un lote breve al reconectar sin permitir
+// ráfagas sostenidas; los equipos reales reportan cada 1–15 s (AUD16-05).
+// Las ventanas se pueden acortar en pruebas de integración.
+function numeroPositivoO(valor: string | undefined, defecto: number): number {
+  const n = Number(valor);
+  return Number.isFinite(n) && n > 0 ? n : defecto;
+}
+export const MAX_PUBLICACIONES_MQTT_POR_MINUTO = numeroPositivoO(process.env.YA_VIENE_MQTT_CUOTA_MINUTO, 180);
+export const VENTANA_CUOTA_MQTT_MS = numeroPositivoO(process.env.YA_VIENE_MQTT_VENTANA_MS, 60_000);
+export const MAX_RAFAGA_MQTT_POR_SESION = numeroPositivoO(process.env.YA_VIENE_MQTT_RAFAGA, 5);
+export const VENTANA_RAFAGA_MQTT_MS = numeroPositivoO(process.env.YA_VIENE_MQTT_RAFAGA_MS, 1_000);
+
 /**
  * Tope de cada mensaje WebSocket en `/mqtt`. `ws` junta el mensaje entero
  * antes de entregarlo, así que es lo máximo que una conexión retiene antes

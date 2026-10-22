@@ -14,12 +14,16 @@ import {
 import { DeviceTokenPayload, verifyToken } from '../auth/tokens';
 import { claimSession, getSession, isSessionAuthorized, releaseSession } from '../data/sessions';
 import { incrementMetric } from '../observability/metrics';
-import { requestKey } from '../security/rate_limiter';
+import { requestKey, SlidingWindowRateLimiter } from '../security/rate_limiter';
 import {
   CupoPorClave,
   MAX_MENSAJE_WS_MQTT,
   MAX_MQTT_ANONIMAS_POR_IP,
   MAX_PAQUETE_MQTT,
+  MAX_PUBLICACIONES_MQTT_POR_MINUTO,
+  VENTANA_CUOTA_MQTT_MS,
+  MAX_RAFAGA_MQTT_POR_SESION,
+  VENTANA_RAFAGA_MQTT_MS,
   MQTT_CONNECT_TIMEOUT_MS,
   MedidorPaquetesMqtt,
 } from './guardia';
@@ -156,6 +160,10 @@ export function startBroker(
 ): Promise<Server> {
   const broker: AedesBroker = new aedes({ connectTimeout: MQTT_CONNECT_TIMEOUT_MS });
   aedesInstance = broker;
+  // El sessionId cambia al renovar autorización; deviceId mezclaría una
+  // sesión nueva con la anterior del mismo equipo.
+  const cuotaPorMinuto = new SlidingWindowRateLimiter(MAX_PUBLICACIONES_MQTT_POR_MINUTO, VENTANA_CUOTA_MQTT_MS);
+  const cuotaRafaga = new SlidingWindowRateLimiter(MAX_RAFAGA_MQTT_POR_SESION, VENTANA_RAFAGA_MQTT_MS);
   const debugLogs = process.env.MQTT_DEBUG_LOGS === 'true';
 
   // ── Candado 1: JWT authentication ──────────────────────────────────
@@ -252,6 +260,19 @@ export function startBroker(
       return callback(denyPublish(`topic no autorizado: ${topic}`));
     }
 
+    // Debe quedar antes del callback exitoso: aedes solo entonces reparte
+    // el paquete y dispara parseo, SQLite y sockets.
+    if (!cuotaRafaga.allow(payload.sessionId) || !cuotaPorMinuto.allow(payload.sessionId)) {
+      incrementMetric('mqtt.publish.rejected_quota');
+      console.warn('[MQTT] Publicación rechazada: cuota por sesión excedida');
+      // En Aedes 0.51.3, devolver Error desde authorizePublish frena el
+      // procesamiento del paquete pero no cierra de forma fiable QoS 0.
+      // Cerramos explícitamente para que no siga recibiendo la ráfaga; la
+      // cuota queda hasta caducar y reconectar no permite repetirla.
+      client.close(() => {});
+      return callback(denyPublish('cuota de publicaciones excedida'));
+    }
+
     incrementMetric('mqtt.publish.authorized');
     callback(null);
   };
@@ -342,6 +363,8 @@ export function startBroker(
 
   // ── Sweep de sesiones: cierra clientes cuya sesión fue revocada (2º celular) ──
   sessionSweepTimer = setInterval(() => {
+    cuotaPorMinuto.sweep();
+    cuotaRafaga.sweep();
     for (const client of Object.values(clientsOf(broker))) {
       const payload = client ? clientAuth.get(client) : undefined;
       if (!payload) continue;

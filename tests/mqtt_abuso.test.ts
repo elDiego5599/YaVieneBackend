@@ -38,6 +38,7 @@ const DB_PATH = `/tmp/yaviene-mqtt-abuso-${process.pid}-${Date.now()}.db`;
 const TOPE_PAQUETE = 16 * 1024;
 const ANONIMAS_POR_IP = 20;
 const PLAZO_CONNECT_MS = 10_000;
+const CUOTA_RAFAGA = 5;
 
 let backend: ChildProcess;
 
@@ -113,13 +114,12 @@ function largoMqtt(n: number): number[] {
   return bytes;
 }
 
-async function tokenDeConductor(): Promise<string> {
-  const phoneNumber = '3007770001';
+async function tokenDeConductor(phoneNumber = '3007770001', busId = 'B-MQTTWS'): Promise<string> {
   const alta = await fetch(`${BASE}/api/admin/drivers`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-admin-key': ADMIN_API_KEY },
     body: JSON.stringify({
-      phoneNumber, name: 'Equipo WS', pin: '2468', companyId: 'EMP-01', busId: 'B-MQTTWS', routeId: 'R-101',
+      phoneNumber, name: 'Equipo WS', pin: '2468', companyId: 'EMP-01', busId, routeId: 'R-101',
     }),
   });
   assert.equal(alta.status, 201);
@@ -141,6 +141,10 @@ before(async () => {
       JWT_SECRET: 'mqtt-abuso-jwt-secret',
       ADMIN_API_KEY,
       MQTT_DEBUG_LOGS: 'false',
+      YA_VIENE_MQTT_CUOTA_MINUTO: '180',
+      YA_VIENE_MQTT_VENTANA_MS: '5500',
+      YA_VIENE_MQTT_RAFAGA: String(CUOTA_RAFAGA),
+      YA_VIENE_MQTT_RAFAGA_MS: '5000',
       YA_VIENE_FLOTA_DEMO: '0',
       YA_VIENE_DB_PATH: DB_PATH,
     },
@@ -249,6 +253,79 @@ test('mqtt: una conexión que no manda CONNECT se cierra a los 10 s', { timeout:
   const cerrada = await cierraAntesDe(ws, PLAZO_CONNECT_MS + 3000);
   ws.terminate();
   assert.equal(cerrada, true, `sigue abierta ${Date.now() - inicio} ms después sin CONNECT`);
+});
+
+test('mqtt: la cuota de publicaciones es por sesión y se recupera al vencer la ventana', { timeout: 20_000 }, async () => {
+  const token = await tokenDeConductor('3007770003', 'B-MQTTWS-CUOTA');
+  const conectarEquipo = (clientId: string, jwt: string) => new Promise<mqtt.MqttClient>((resolve, reject) => {
+    const c = mqtt.connect(URL_MQTT, { clientId, username: '', password: jwt, reconnectPeriod: 0 });
+    c.once('connect', () => resolve(c));
+    c.once('error', reject);
+  });
+  let primero: mqtt.MqttClient | undefined;
+  let segundo: mqtt.MqttClient | undefined;
+  const capturas = new Map<string, number>();
+  const siguienteCaptura = (busId: string): number => {
+    const capturedAt = Math.max(Date.now(), (capturas.get(busId) ?? 0) + 1);
+    capturas.set(busId, capturedAt);
+    return capturedAt;
+  };
+  const payloadPosicion = (busId: string, sequence: number) => JSON.stringify({
+    protocolVersion: 1,
+    sequence,
+    capturedAt: siguienteCaptura(busId),
+    lat: 10.9,
+    lon: -74.8,
+  });
+  const publicar = (cliente: mqtt.MqttClient, busId: string, sequence: number) => new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('el callback MQTT no llegó a tiempo')), 1500);
+    cliente.publish(`empresa/EMP-01/bus/${busId}/posicion`, payloadPosicion(busId, sequence), { qos: 0 }, (error) => {
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  const esperarCierre = (cliente: mqtt.MqttClient) => new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Aedes no cerró el cliente tras exceder la cuota')), 2500);
+    cliente.once('close', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+  try {
+    primero = await conectarEquipo('cuota-uno', token);
+    const tokenOtro = await tokenDeConductor('3007770004', 'B-MQTTWS-OTRO');
+    segundo = await conectarEquipo('cuota-dos', tokenOtro);
+    const antes = await fetch(`${BASE}/api/metrics`, { headers: { 'x-admin-key': ADMIN_API_KEY } });
+    assert.equal(antes.status, 200);
+    const metricasAntes = (await antes.json() as { counters: Record<string, number> }).counters;
+    for (let i = 1; i <= CUOTA_RAFAGA; i++) await publicar(primero, 'B-MQTTWS-CUOTA', i);
+    for (let i = 1; i <= CUOTA_RAFAGA; i++) await publicar(segundo, 'B-MQTTWS-OTRO', i);
+    // El broker cierra explícitamente al exceder la cuota. No esperamos el
+    // callback del sexto publish: esperamos el cierre del cliente.
+    const cierre = esperarCierre(primero);
+    primero.publish('empresa/EMP-01/bus/B-MQTTWS-CUOTA/posicion', payloadPosicion('B-MQTTWS-CUOTA', CUOTA_RAFAGA + 1), { qos: 0 });
+    await cierre;
+    // La reconexión dentro de la misma ventana tampoco renueva el cupo.
+    primero = await conectarEquipo('cuota-uno-reintento', token);
+    const segundoCierre = esperarCierre(primero);
+    primero.publish('empresa/EMP-01/bus/B-MQTTWS-CUOTA/posicion', payloadPosicion('B-MQTTWS-CUOTA', CUOTA_RAFAGA + 2), { qos: 0 });
+    await segundoCierre;
+    await new Promise((resolve) => setTimeout(resolve, 5600));
+    primero = await conectarEquipo('cuota-uno-recuperado', token);
+    await publicar(primero, 'B-MQTTWS-CUOTA', CUOTA_RAFAGA + 3);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const despues = await fetch(`${BASE}/api/metrics`, { headers: { 'x-admin-key': ADMIN_API_KEY } });
+    assert.equal(despues.status, 200);
+    const metricas = (await despues.json() as { counters: Record<string, number> }).counters;
+    assert.equal((metricas['mqtt.publish.authorized'] ?? 0) - (metricasAntes['mqtt.publish.authorized'] ?? 0), CUOTA_RAFAGA * 2 + 1);
+    assert.equal((metricas['mqtt.publish.rejected_quota'] ?? 0) - (metricasAntes['mqtt.publish.rejected_quota'] ?? 0), 2);
+    assert.equal((metricas['position.accepted'] ?? 0) - (metricasAntes['position.accepted'] ?? 0), CUOTA_RAFAGA * 2 + 1);
+    assert.equal(segundo.connected, true, 'el cliente de la otra sesión sigue conectado');
+  } finally {
+    primero?.end(true);
+    segundo?.end(true);
+  }
 });
 
 test('mqtt: cada corte queda contado en /api/metrics', async () => {
