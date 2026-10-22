@@ -80,7 +80,7 @@ export interface PositionRow {
   speed_kmh: number;
   sentido: string | null;
   timestamp: number;
-  driver_phone: string;
+  device_id: string;
   session_id: string | null;
   captured_at: number | null;
   sequence: number | null;

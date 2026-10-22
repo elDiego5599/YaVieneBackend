@@ -40,7 +40,7 @@ function sembrarBusViejo(busId: string, routeId: string, telefono: string): void
   d.prepare(`INSERT INTO drivers (phone_number, driver_id, name, route_id, company_id, bus_id, registered_at)
              VALUES (?, ?, ?, ?, 'EMP-01', ?, ?)`)
     .run(telefono, `drv-${telefono}`, `Conductor ${telefono}`, routeId, busId, ahora);
-  d.prepare(`INSERT INTO positions (bus_id, route_id, lat, lon, heading, speed_kmh, timestamp, driver_phone, sequence)
+  d.prepare(`INSERT INTO positions (bus_id, route_id, lat, lon, heading, speed_kmh, timestamp, device_id, sequence)
              VALUES (?, ?, 10.99, -74.79, 0, 20, ?, ?, 1)`)
     .run(busId, routeId, ahora, telefono);
 }
@@ -106,7 +106,7 @@ test('arrancar sobre base vieja oculta sobrantes demo y deja 8 activos y 8 en te
       d.prepare(`INSERT INTO drivers (phone_number, driver_id, name, route_id, company_id, bus_id, registered_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?)`)
         .run(telefono, `drv-${telefono}`, `Conductor ${telefono}`, ruta, bus.companyId, bus.busId, ahora);
-      d.prepare(`INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, driver_phone, route_fraction, route_direction)
+      d.prepare(`INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, device_id, route_fraction, route_direction)
                  VALUES (?, ?, 10.99, -74.79, 0, ?, ?, 0.98, 'ida')`)
         .run(bus.busId, ruta, ahora, telefono);
     });

@@ -42,6 +42,14 @@ function sembrarFantasma(id: string): void {
   d.prepare(`INSERT OR IGNORE INTO drivers (phone_number, driver_id, name, route_id, company_id, bus_id, registered_at)
              VALUES (?, ?, ?, 'R-101', ?, ?, ?)`)
     .run(`300${id}`, `drv-${id}`, 'Fleet Driver', id, `${id}-BUS`, ahora);
+  d.prepare(`INSERT OR IGNORE INTO gps_devices
+             (device_id, company_id, bus_id, identifier, kind, secret_hash, name, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'sim', '', 'Fleet Device', ?, ?)`)
+    .run(`drv-${id}`, id, `${id}-BUS`, `300${id}`, ahora, ahora);
+  d.prepare(`INSERT OR IGNORE INTO device_sessions
+             (session_id, device_id, identifier, company_id, bus_id, route_id, created_at, last_seen_at)
+             VALUES (?, ?, ?, ?, ?, 'R-101', ?, ?)`)
+    .run(`session-${id}`, `drv-${id}`, `300${id}`, id, `${id}-BUS`, ahora, ahora);
   d.prepare(`INSERT OR IGNORE INTO turn_assignments (assignment_id, driver_id, bus_id, company_id, route_id, started_at, status)
              VALUES (?, ?, ?, ?, 'R-101', ?, 'active')`)
     .run(`turno-${id}`, `drv-${id}`, `${id}-BUS`, id, ahora);
@@ -58,7 +66,7 @@ test('la empresa fantasma desaparece del catálogo con todo lo que colgaba de el
   assert.deepEqual(eliminarEmpresasFantasma(d), ['EMP-FANTASMA']);
 
   assert.equal(getEmpresas().some((e) => e.companyId === 'EMP-FANTASMA'), false);
-  for (const tabla of ['buses', 'drivers', 'company_routes', 'turn_assignments']) {
+  for (const tabla of ['buses', 'drivers', 'gps_devices', 'device_sessions', 'company_routes', 'turn_assignments']) {
     const { n } = d.prepare(`SELECT COUNT(*) AS n FROM ${tabla} WHERE company_id = ?`)
       .get('EMP-FANTASMA') as { n: number };
     assert.equal(n, 0, `quedaron ${n} filas huérfanas en ${tabla}`);

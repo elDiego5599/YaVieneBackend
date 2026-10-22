@@ -117,7 +117,7 @@ export function getFleetPositions(companyId: string): FleetBus[] {
            d.name AS driver_name
     FROM buses b
     LEFT JOIN positions p ON p.bus_id = b.bus_id
-    LEFT JOIN drivers d ON d.phone_number = p.driver_phone
+    LEFT JOIN gps_devices d ON d.device_id = p.device_id
     WHERE b.company_id = ?
     ORDER BY b.bus_id ASC
   `).all(companyId) as {

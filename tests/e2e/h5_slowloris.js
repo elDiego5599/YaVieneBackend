@@ -156,6 +156,6 @@ function rawSocketioClient(routeId) {
   for (const w of slows) { try { w.terminate(); } catch {} }
   db.prepare("DELETE FROM driver_sessions WHERE session_id LIKE 'h5-%'").run();
   db.prepare("DELETE FROM drivers WHERE phone_number LIKE '9500%'").run();
-  db.prepare("DELETE FROM positions WHERE driver_phone LIKE '9500%'").run();
+  db.prepare("DELETE FROM positions WHERE device_id LIKE '9500%'").run();
   report('H-5');
 })().catch((e) => { console.error('FATAL', e); process.exit(1); });

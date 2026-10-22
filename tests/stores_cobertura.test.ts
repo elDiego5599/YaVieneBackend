@@ -43,7 +43,7 @@ function nuevaEmpresa(id: string): void {
   ).run(id, `Empresa ${id}`, Date.now());
 }
 
-// positions.driver_phone y driver_sessions.phone_number tienen FK a
+// positions.device_id y device_sessions.identifier no tienen FK a
 // drivers(phone_number): sin fila del conductor, el insert falla.
 function registrarConductor(phone: string, driverId: string, busId?: string): void {
   conductores.registerDriver(phone, `N ${driverId}`, 'R-900', {

@@ -21,7 +21,7 @@ export function getDb(): Database.Database {
     db.pragma('busy_timeout = 5000');
     initSchema();
     db.prepare(`
-      UPDATE driver_sessions SET client_id = NULL WHERE status = 'active'
+      UPDATE device_sessions SET client_id = NULL WHERE status = 'active'
     `).run();
     console.log(`[DB] SQLite abierta en ${DB_PATH} (WAL mode)`);
   }
@@ -952,6 +952,85 @@ function initSchema(): void {
         ensureColumn(d, 'buses', 'is_demo', 'INTEGER NOT NULL DEFAULT 0');
       },
     },
+    {
+      version: 35,
+      apply: () => {
+        d.exec(`
+          CREATE TABLE gps_devices (
+            device_id TEXT PRIMARY KEY,
+            company_id TEXT NOT NULL,
+            bus_id TEXT NOT NULL,
+            identifier TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL CHECK (kind IN ('sim', 'imei', 'serial')),
+            secret_hash TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            name TEXT,
+            route_id TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (bus_id) REFERENCES buses(bus_id) ON DELETE CASCADE
+          );
+          INSERT INTO gps_devices (
+            device_id, company_id, bus_id, identifier, kind, secret_hash,
+            status, name, route_id, created_at, updated_at
+          )
+          SELECT d.driver_id, d.company_id, d.bus_id, d.phone_number, 'sim',
+                 COALESCE(d.pin_hash, ''), 'active', d.name, d.route_id,
+                 d.registered_at, d.registered_at
+          FROM drivers d
+          WHERE d.company_id IS NOT NULL AND d.bus_id IS NOT NULL;
+
+          CREATE TABLE device_sessions (
+            session_id TEXT PRIMARY KEY,
+            device_id TEXT NOT NULL,
+            identifier TEXT NOT NULL,
+            company_id TEXT NOT NULL,
+            bus_id TEXT NOT NULL,
+            route_id TEXT NOT NULL,
+            client_id TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at INTEGER NOT NULL,
+            last_seen_at INTEGER NOT NULL,
+            revoked_at INTEGER
+          );
+          INSERT OR IGNORE INTO device_sessions (
+            session_id, device_id, identifier, company_id, bus_id, route_id,
+            client_id, status, created_at, last_seen_at, revoked_at
+          )
+          SELECT s.session_id, s.driver_id, s.phone_number, s.company_id,
+                 s.bus_id, s.route_id, s.client_id, s.status, s.created_at,
+                 s.last_seen_at, s.revoked_at
+          FROM driver_sessions s;
+          CREATE INDEX IF NOT EXISTS idx_device_sessions_bus_status
+            ON device_sessions(bus_id, status);
+          CREATE INDEX IF NOT EXISTS idx_device_sessions_device_status
+            ON device_sessions(device_id, status);
+          CREATE INDEX IF NOT EXISTS idx_device_sessions_revoked_at
+            ON device_sessions(revoked_at) WHERE status = 'revoked';
+        `);
+
+        // Mantener todas las columnas que las migraciones posteriores añadieron
+        // y recrear todos los índices de positions sin la FK al identificador.
+        const columnas = (d.pragma('table_info(positions)') as { name: string }[]).map((c) => c.name);
+        const indices = (d.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'positions' AND sql IS NOT NULL").all() as { sql: string }[]).map((r) => r.sql);
+        const original = d.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'positions'").get() as { sql: string };
+        const tablaNueva = original.sql
+          .replace(/CREATE TABLE(?: IF NOT EXISTS)?\s+["']?positions["']?/i, 'CREATE TABLE positions_nueva')
+          .replace(/driver_phone/g, 'device_id')
+          .replace(/,?\s*FOREIGN KEY \(device_id\) REFERENCES drivers\(phone_number\) ON DELETE CASCADE/i, '');
+        const destino = columnas.map((c) => `"${c === 'driver_phone' ? 'device_id' : c}"`).join(', ');
+        const origen = columnas.map((c) => c === 'driver_phone'
+          ? `COALESCE((SELECT driver_id FROM drivers WHERE phone_number = positions.driver_phone), positions.driver_phone)`
+          : `"${c}"`).join(', ');
+        d.exec(`
+          ${tablaNueva};
+          INSERT INTO positions_nueva (${destino}) SELECT ${origen} FROM positions;
+          DROP TABLE positions;
+          ALTER TABLE positions_nueva RENAME TO positions;
+        `);
+        for (const sql of indices) d.exec(sql);
+      },
+    },
   ];
 
   for (const migration of migrations) {
@@ -1013,17 +1092,25 @@ export function eliminarEmpresasFantasma(d: Database.Database): string[] {
       )
   `).all() as { company_id: string }[];
 
-  // El orden importa: `positions` y `driver_sessions` tienen FOREIGN KEY a
-  // `drivers(phone_number)` con ON DELETE CASCADE, así que los hijos salen
-  // antes que sus padres y ningún borrado arrastra de más.
-  const borrar = [
-    'DELETE FROM turn_assignments WHERE company_id = ?',
-    'DELETE FROM driver_sessions WHERE company_id = ?',
-    'DELETE FROM drivers WHERE company_id = ?',
-    'DELETE FROM buses WHERE company_id = ?',
-    'DELETE FROM company_routes WHERE company_id = ?',
-    'DELETE FROM empresas WHERE company_id = ?',
-  ].map((sql) => d.prepare(sql));
+  // El orden deja sesiones, equipos y posiciones fuera antes de borrar los
+  // buses; `positions` ya no depende del identificador del equipo y se limpia
+  // por la flota propietaria.
+  const tables = new Set((d.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table'",
+  ).all() as { name: string }[]).map((row) => row.name));
+  const deleteSql = [
+    'turn_assignments', 'device_sessions', 'driver_sessions',
+    'gps_devices', 'drivers',
+  ].filter((table) => tables.has(table)).map((table) =>
+    `DELETE FROM ${table} WHERE company_id = ?`,
+  );
+  if (tables.has('positions') && tables.has('buses')) {
+    deleteSql.push('DELETE FROM positions WHERE bus_id IN (SELECT bus_id FROM buses WHERE company_id = ?)');
+  }
+  deleteSql.push('DELETE FROM buses WHERE company_id = ?');
+  if (tables.has('company_routes')) deleteSql.push('DELETE FROM company_routes WHERE company_id = ?');
+  deleteSql.push('DELETE FROM empresas WHERE company_id = ?');
+  const borrar = deleteSql.map((sql) => d.prepare(sql));
 
   const borradas: string[] = [];
   for (const { company_id: companyId } of fantasmas) {

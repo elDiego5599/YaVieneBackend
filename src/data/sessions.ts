@@ -34,15 +34,15 @@ export function createDriverSession(input: {
 
   const create = db.transaction(() => {
     db.prepare(`
-      UPDATE driver_sessions
+      UPDATE device_sessions
       SET status = 'revoked', revoked_at = ?, client_id = NULL
       WHERE status = 'active'
-        AND (driver_id = ? OR bus_id = ?)
+        AND (device_id = ? OR bus_id = ?)
     `).run(now, input.driverId, input.busId);
 
     db.prepare(`
-      INSERT INTO driver_sessions (
-        session_id, driver_id, phone_number, company_id, bus_id, route_id,
+      INSERT INTO device_sessions (
+        session_id, device_id, identifier, company_id, bus_id, route_id,
         status, created_at, last_seen_at
       ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
     `).run(
@@ -68,7 +68,7 @@ export function claimSession(sessionId: string, clientId: string): boolean {
     if (cached.clientId != null && cached.clientId !== clientId) return false;
     const now = Date.now();
     const result = db.prepare(`
-      UPDATE driver_sessions
+      UPDATE device_sessions
       SET client_id = ?, last_seen_at = ?
       WHERE session_id = ? AND status = 'active'
     `).run(clientId, now, sessionId);
@@ -83,7 +83,7 @@ export function claimSession(sessionId: string, clientId: string): boolean {
   }
 
   const result = db.prepare(`
-    UPDATE driver_sessions
+    UPDATE device_sessions
     SET client_id = ?, last_seen_at = ?
     WHERE session_id = ?
       AND status = 'active'
@@ -104,7 +104,7 @@ export function isSessionAuthorized(sessionId: string, clientId: string): boolea
     cached.lastSeenAt = now;
     if (now - cached.persistedSeenAt >= LAST_SEEN_FLUSH_MS) {
       const result = db.prepare(`
-        UPDATE driver_sessions
+        UPDATE device_sessions
         SET last_seen_at = ?
         WHERE session_id = ? AND status = 'active' AND client_id = ?
       `).run(now, sessionId, clientId);
@@ -129,7 +129,7 @@ export function isSessionAuthorized(sessionId: string, clientId: string): boolea
 export function releaseSession(sessionId: string, clientId: string): boolean {
   const db = getDb();
   const result = db.prepare(`
-    UPDATE driver_sessions
+    UPDATE device_sessions
     SET client_id = NULL, last_seen_at = ?
     WHERE session_id = ?
       AND status = 'active'
@@ -142,7 +142,7 @@ export function releaseSession(sessionId: string, clientId: string): boolean {
 export function revokeSession(sessionId: string): boolean {
   const db = getDb();
   const result = db.prepare(`
-    UPDATE driver_sessions
+    UPDATE device_sessions
     SET status = 'revoked', revoked_at = ?, client_id = NULL
     WHERE session_id = ?
       AND status = 'active'
@@ -154,9 +154,9 @@ export function revokeSession(sessionId: string): boolean {
 export function getSession(sessionId: string): DriverSession | null {
   const db = getDb();
   const row = db.prepare(`
-    SELECT session_id, driver_id, phone_number, company_id, bus_id, route_id,
+    SELECT session_id, device_id AS driver_id, identifier AS phone_number, company_id, bus_id, route_id,
            client_id, status, created_at, last_seen_at, revoked_at
-    FROM driver_sessions
+    FROM device_sessions
     WHERE session_id = ?
   `).get(sessionId) as {
     session_id: string;
@@ -191,7 +191,7 @@ export function getSession(sessionId: string): DriverSession | null {
 export function cleanupRevokedSessions(retentionMs = 7 * 24 * 60 * 60 * 1000): number {
   const db = getDb();
   const result = db.prepare(`
-    DELETE FROM driver_sessions
+    DELETE FROM device_sessions
     WHERE status = 'revoked'
       AND revoked_at IS NOT NULL
       AND revoked_at < ?
@@ -205,9 +205,9 @@ export function cleanupRevokedSessions(retentionMs = 7 * 24 * 60 * 60 * 1000): n
 export function revokeSessionsForDriver(driverId: string): number {
   const db = getDb();
   const result = db.prepare(`
-    UPDATE driver_sessions
+    UPDATE device_sessions
     SET status = 'revoked', revoked_at = ?, client_id = NULL
-    WHERE driver_id = ? AND status = 'active'
+    WHERE device_id = ? AND status = 'active'
   `).run(Date.now(), driverId);
   sessionCache.clear();
   return result.changes;
@@ -224,7 +224,7 @@ export function revokeSessionsForDriver(driverId: string): number {
 export function revokeSessionsForBus(busId: string): number {
   const db = getDb();
   const result = db.prepare(`
-    UPDATE driver_sessions
+    UPDATE device_sessions
     SET status = 'revoked', revoked_at = ?, client_id = NULL
     WHERE bus_id = ? AND status = 'active'
   `).run(Date.now(), busId);

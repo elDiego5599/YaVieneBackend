@@ -148,7 +148,7 @@ function busDePrueba(busId: string, routeId: string): void {
     INSERT OR IGNORE INTO buses (bus_id, company_id, plate_number, created_at, updated_at, visible, route_id)
     VALUES (?, 'EMP-OUT', ?, ?, ?, 1, ?)
   `).run(busId, busId, ahora, ahora, routeId);
-  // `positions.driver_phone` apunta al equipo GPS del bus: sin esa fila la
+  // `positions.device_id` apunta al equipo GPS del bus: sin esa fila la
   // inserción de la posición se cae por clave foránea.
   db.prepare(`
     INSERT OR IGNORE INTO drivers (phone_number, name, route_id, company_id, bus_id, registered_at)

@@ -129,7 +129,7 @@ test('una base que ya tenía A2 la pierde, con sus buses de la demo', () => {
                 VALUES (?, ?, ?, 'EMP-03', ?, 'R-108', ?, ?)`).run(`s-${telefono}`, `drv-${telefono}`, telefono, busId, ahora, ahora);
     db.prepare(`INSERT INTO turn_assignments (assignment_id, driver_id, bus_id, company_id, route_id, started_at)
                 VALUES (?, ?, ?, 'EMP-03', 'R-108', ?)`).run(`t-${telefono}`, `drv-${telefono}`, busId, ahora);
-    db.prepare(`INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, driver_phone)
+    db.prepare(`INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, device_id)
                 VALUES (?, 'R-108', 10.99, -74.79, 20, ?, ?)`).run(busId, ahora, telefono);
   }
   db.prepare(`INSERT INTO avisos_push (id, token, bus_id, route_id, lat, lon, creado, vence)

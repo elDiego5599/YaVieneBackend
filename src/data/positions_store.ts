@@ -54,7 +54,7 @@ export function rowToPosition(row: PositionRow): BusPosition {
     capturedAt: row.captured_at ?? row.timestamp,
     receivedAt: row.timestamp,
     sequence: row.sequence,
-    driverPhone: row.driver_phone,
+    driverPhone: row.device_id,
     companyId: row.bus_company_id ?? '',
     isGhost: row.is_ghost === 1,
   };
@@ -98,7 +98,7 @@ export function upsertPosition(phoneNumber: string, data: {
 }): BusPosition | null {
   const db = getDb();
 
-  const driver = data.driverValidated ? undefined : getDriver(phoneNumber);
+  const driver = getDriver(phoneNumber);
   if (!data.driverValidated && !driver) return null;
 
   // Sólo publica un bus que está en el catálogo. Sin esto, el teléfono de un
@@ -165,7 +165,7 @@ export function upsertPosition(phoneNumber: string, data: {
 
   const result = db.prepare(`
     INSERT INTO positions (
-      bus_id, route_id, lat, lon, heading, speed_kmh, sentido, timestamp, driver_phone,
+      bus_id, route_id, lat, lon, heading, speed_kmh, sentido, timestamp, device_id,
       session_id, captured_at, sequence, is_ghost, route_fraction, route_direction
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     ON CONFLICT(bus_id) DO UPDATE SET
@@ -176,7 +176,7 @@ export function upsertPosition(phoneNumber: string, data: {
       speed_kmh = excluded.speed_kmh,
       sentido = excluded.sentido,
       timestamp = excluded.timestamp,
-      driver_phone = excluded.driver_phone,
+      device_id = excluded.device_id,
       session_id = excluded.session_id,
       captured_at = excluded.captured_at,
       sequence = excluded.sequence,
@@ -195,7 +195,7 @@ export function upsertPosition(phoneNumber: string, data: {
     speedKmh,
     sentido,
     now,
-    phoneNumber,
+    driver?.driverId ?? phoneNumber,
     data.sessionId ?? null,
     data.capturedAt ?? now,
     data.sequence ?? null,

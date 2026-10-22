@@ -42,20 +42,6 @@ export function registerDriver(
       if (bus && bus.company_id !== companyId) return 'taken';
     }
 
-    db.prepare(`
-      INSERT INTO drivers (
-        phone_number, driver_id, name, route_id, company_id, bus_id, pin_hash, registered_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(phone_number) DO UPDATE SET
-        driver_id = excluded.driver_id,
-        name = excluded.name,
-        route_id = excluded.route_id,
-        company_id = excluded.company_id,
-        bus_id = excluded.bus_id,
-        pin_hash = excluded.pin_hash,
-        registered_at = excluded.registered_at
-    `).run(phoneNumber, driverId, name, routeId, companyId, busId, pinHash, now);
-
     if (companyId && busId) {
       db.prepare(`
         INSERT INTO buses (bus_id, company_id, created_at, updated_at)
@@ -63,6 +49,21 @@ export function registerDriver(
         ON CONFLICT(bus_id) DO UPDATE SET
           updated_at = excluded.updated_at
       `).run(busId, companyId, now, now);
+
+      db.prepare(`
+        INSERT INTO gps_devices (
+          device_id, company_id, bus_id, identifier, kind, secret_hash,
+          status, name, route_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'sim', ?, 'active', ?, ?, ?, ?)
+        ON CONFLICT(identifier) DO UPDATE SET
+          device_id = excluded.device_id,
+          name = excluded.name,
+          route_id = excluded.route_id,
+          company_id = excluded.company_id,
+          bus_id = excluded.bus_id,
+          secret_hash = excluded.secret_hash,
+          updated_at = excluded.updated_at
+      `).run(driverId, companyId, busId, phoneNumber, pinHash ?? '', name, routeId, now, now);
 
       db.prepare(`
         UPDATE turn_assignments
@@ -103,18 +104,13 @@ export function getDriver(phoneNumber: string): DriverInfo | null {
   if (cached) return cached;
   const db = getDb();
   const row = db.prepare(`
-    SELECT driver_id, phone_number, name, route_id, company_id, bus_id, pin_hash, registered_at
-    FROM drivers
-    WHERE phone_number = ?
+    SELECT device_id AS driver_id, identifier AS phone_number, name AS name,
+           route_id, company_id, bus_id, secret_hash AS pin_hash, created_at AS registered_at
+    FROM gps_devices
+    WHERE identifier = ?
   `).get(phoneNumber) as {
-    driver_id: string;
-    phone_number: string;
-    name: string;
-    route_id: string;
-    company_id: string | null;
-    bus_id: string | null;
-    pin_hash: string | null;
-    registered_at: number;
+    driver_id: string; phone_number: string; name: string; route_id: string;
+    company_id: string; bus_id: string; pin_hash: string; registered_at: number;
   } | undefined;
   if (!row) return null;
   const driver = {
@@ -133,7 +129,7 @@ export function getDriver(phoneNumber: string): DriverInfo | null {
 
 export function getDriverById(driverId: string): DriverInfo | null {
   const db = getDb();
-  const row = db.prepare('SELECT phone_number FROM drivers WHERE driver_id = ?')
+  const row = db.prepare('SELECT identifier AS phone_number FROM gps_devices WHERE device_id = ?')
     .get(driverId) as { phone_number: string } | undefined;
   return row ? getDriver(row.phone_number) : null;
 }

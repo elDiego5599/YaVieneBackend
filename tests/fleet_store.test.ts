@@ -559,7 +559,7 @@ test('las consultas calientes buscan por índice, sin recorrer tablas', () => {
     getFleetPositions: [`
       SELECT b.bus_id FROM buses b
       LEFT JOIN positions p ON p.bus_id = b.bus_id
-      LEFT JOIN drivers d ON d.phone_number = p.driver_phone
+      LEFT JOIN gps_devices d ON d.device_id = p.device_id
       WHERE b.company_id = ?
       ORDER BY b.bus_id ASC`, ['EMP-1']],
     // fleet_admin.ts · borrado y «ocultar todos» por empresa

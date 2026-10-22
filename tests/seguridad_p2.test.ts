@@ -227,7 +227,7 @@ test('P1-2, segunda barrera: la lista de una ruta solo trae buses de su dueña',
     base.prepare("UPDATE buses SET route_id = 'R-501', visible = 1 WHERE bus_id = 'BUS-BBB601'").run();
     base.prepare("UPDATE buses SET visible = 1 WHERE bus_id IN ('BUS-AAA501', 'BUS-VIEJO688')").run();
     const posicion = base.prepare(`
-      INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, driver_phone, captured_at)
+      INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, device_id, captured_at)
       VALUES (?, ?, 10.98, -74.8, 20, ?, ?, ?)
       ON CONFLICT(bus_id) DO UPDATE SET route_id = excluded.route_id, timestamp = excluded.timestamp
     `);
@@ -289,7 +289,7 @@ test('un bus oculto no sale en la lista de su empresa ni en su ruta, por REST ni
   const base = new Database(DB_PATH);
   try {
     const posicion = base.prepare(`
-      INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, driver_phone, captured_at)
+      INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, device_id, captured_at)
       VALUES (?, 'R-502', 10.98, -74.8, 20, ?, ?, ?)
     `);
     const ahora = Date.now();

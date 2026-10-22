@@ -158,7 +158,7 @@ for (let i = 1; i <= N_BUSES; i++) {
   db.prepare("DELETE FROM driver_sessions WHERE session_id LIKE 'h1-%'").run();
   db.prepare("DELETE FROM drivers WHERE phone_number LIKE '9300%'").run();
   db.prepare("DELETE FROM buses WHERE bus_id LIKE 'H1-%'").run();
-  db.prepare("DELETE FROM positions WHERE driver_phone LIKE '9300%'").run();
+  db.prepare("DELETE FROM positions WHERE device_id LIKE '9300%'").run();
   for (const c of clients) c.end(true);
   passenger.disconnect();
   report('H-1');
