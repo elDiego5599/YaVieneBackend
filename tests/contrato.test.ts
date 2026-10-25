@@ -398,6 +398,18 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
     });
     assert.equal(busqueda.status, 204);
     guardar('rest-busqueda-registrada', { status: busqueda.status });
+    // Completa K=5 en la misma ruta y celda para que el mapa de calor tenga
+    // al menos una celda visible. Cinco POST caben holgadamente en 120/min.
+    for (let i = 0; i < 4; i += 1) {
+      const repetida = await fetch(`${BASE}/api/busquedas`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ routeId: RUTA, celda: { lat: 10.99035, lng: -74.78967 } }),
+      });
+      assert.equal(repetida.status, 204);
+    }
+    const rango = '?desde=2000-01-01T00:00:00.000Z&hasta=2100-01-01T00:00:00.000Z';
+    guardar('rest-panel-busquedas', await pedir('GET', `/api/panel/busquedas${rango}`, undefined, admin));
+    guardar('rest-panel-busquedas-calor', await pedir('GET', `/api/panel/busquedas/${RUTA}/calor${rango}`, undefined, admin));
     guardar('rest-fleet-positions', await pedir('GET', '/api/fleet/positions', undefined, admin));
     guardar('rest-fleet-routes', await pedir('GET', '/api/fleet/routes', undefined, admin));
 
