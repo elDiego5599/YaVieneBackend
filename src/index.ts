@@ -26,7 +26,8 @@ import {
   loadBusCompanyCache,
   loadVisibilityCache,
 } from './data/buses';
-import { closeDb } from './data/database';
+import { closeDb, getDb } from './data/database';
+import { sembrarBusquedasDemo } from './demo/busquedas_demo';
 import { cleanupRevokedSessions } from './data/sessions';
 import { dispatchBusEvents } from './data/despacho';
 import { LifecycleEvent } from './data/lifecycle_events';
@@ -137,6 +138,10 @@ const server = HTTP_TLS_CERT_PATH && HTTP_TLS_KEY_PATH
       key: fs.readFileSync(HTTP_TLS_KEY_PATH),
     }, requestHandler)
   : http.createServer(requestHandler);
+
+// initSchema completa el catálogo demo antes de devolver la base.
+getDb();
+sembrarBusquedasDemo();
 
 setupSocketServer(server);
 

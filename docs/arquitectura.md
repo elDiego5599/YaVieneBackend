@@ -112,11 +112,11 @@ importan para este camino:
 es dónde está el bus ahora, y un historial creciendo sin tope en el disco
 del Mac que sirve la demo es un problema de operación sin nadie que lo lea.
 
-La base **se abre la primera vez que alguien la pide** (`getDb()` en
-`src/data/database.ts`), no al arrancar. Eso importa al escribir guiones:
-`/api/ready` contesta sin tocarla, así que un script que arranca el backend
-y escribe en la base directamente puede encontrarse un archivo vacío si no
-hizo antes alguna lectura por HTTP.
+Con `YA_VIENE_SEED_DEMO` activa, el arranque puede agregar búsquedas sintéticas a rutas demo vacías usando su geometría. `YA_VIENE_SEED_BUSQUEDAS_DEMO` las controla por separado (por defecto sigue la siembra demo); las rutas con actividad existente se conservan. Las pruebas apagan esta siembra salvo el caso que la comprueba explícitamente.
+
+El arranque del backend abre la base (`getDb()` en `src/index.ts`) y aplica
+las migraciones antes de sembrar el calor demo. `/api/ready` puede contestar
+sin consultar la base cuando se ejecuta fuera del servidor.
 
 ## 4. Se reparte
 

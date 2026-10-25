@@ -101,6 +101,43 @@ test('encender la siembra después llena una base que nació vacía', () => {
   assert.deepEqual(sembrada.rutas, CATALOGO);
 });
 
+test('siembra calor demo al arrancar, respeta búsquedas reales y es idempotente', () => {
+  const ahoraFijo = Date.parse('2026-10-25T12:00:00Z');
+  const ejecutar = (base: string, env: Record<string, string>) => {
+    const hijo = spawnSync(process.execPath, ['--import', 'tsx', join(__dirname, 'fixtures', 'calor_demo.ts')], {
+      encoding: 'utf8', env: { PATH: process.env.PATH ?? '', YA_VIENE_DB_PATH: join(tmp, base), SEED_NOW: String(ahoraFijo), ...env },
+    });
+    assert.equal(hijo.status, 0, hijo.stderr);
+    return JSON.parse(hijo.stdout.trim().split('\n').at(-1) ?? '');
+  };
+  const primera = ejecutar('calor.db', { YA_VIENE_SEED_DEMO: '1', YA_VIENE_SEED_BUSQUEDAS_DEMO: '1' });
+  const segunda = ejecutar('calor.db', { REAL_ROUTE: 'R-101', YA_VIENE_SEED_DEMO: '1', YA_VIENE_SEED_BUSQUEDAS_DEMO: '1' });
+  assert.ok(primera.counts['R-101'] > 0);
+  assert.equal(segunda.counts['R-101'], 1);
+  assert.ok(segunda.counts['R-102'] > 0);
+  for (const [routeId, total] of Object.entries(segunda.totals) as Array<[string, number]>) {
+    if (routeId === 'R-101') continue;
+    assert.ok(total >= 2_500 && total <= 6_000, `total fuera de rango: ${total}`);
+  }
+  for (const [routeId, horas] of Object.entries(segunda.activeHours) as Array<[string, number]>) {
+    if (routeId === 'R-101') continue;
+    assert.ok(horas >= 14, `solo ${horas} horas distintas`);
+  }
+  const reiniciada = ejecutar('calor.db', { YA_VIENE_SEED_DEMO: '1', YA_VIENE_SEED_BUSQUEDAS_DEMO: '1' });
+  assert.deepEqual(reiniciada.counts, segunda.counts);
+  assert.deepEqual(reiniciada.totals, segunda.totals);
+  const ruta = segunda.seeded.find((r: { routeId: string }) => r.routeId === 'R-102');
+  assert.ok(ruta.heat.length > 0);
+  assert.ok(ruta.heat.every((c: { count: number }) => c.count >= 5));
+  const conteos = ruta.heat.map((c: { count: number }) => c.count).sort((a: number, b: number) => a - b);
+  const mediana = conteos[Math.floor(conteos.length / 2)];
+  assert.ok(conteos.at(-1)! >= 8 * mediana, `foco ${conteos.at(-1)} / banda mediana ${mediana}`);
+  const apagada = ejecutar('sin-calor.db', { YA_VIENE_SEED_DEMO: '1', YA_VIENE_SEED_BUSQUEDAS_DEMO: '0' });
+  assert.ok(Object.values(apagada.counts).every((n: unknown) => n === 0));
+  const sinSiembraDemo = ejecutar('sin-demo.db', { YA_VIENE_SEED_DEMO: '0', YA_VIENE_SEED_BUSQUEDAS_DEMO: '1' });
+  assert.ok(Object.values(sinSiembraDemo.counts).every((n: unknown) => n === 0));
+});
+
 test('apagar la siembra no borra una base ya sembrada', () => {
   abrir('ya-sembrada.db', {});
   const despues = abrir('ya-sembrada.db', { NODE_ENV: 'production' });

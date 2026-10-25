@@ -250,3 +250,9 @@ export function siembraDemoHabilitada(env: NodeJS.ProcessEnv = process.env): boo
   const valor = env.YA_VIENE_SEED_DEMO ?? (env.NODE_ENV === 'production' ? '0' : '1');
   return valor !== '0';
 }
+
+/** Las búsquedas sintéticas acompañan por defecto a la siembra demo, pero tienen interruptor propio. */
+export function siembraBusquedasDemoHabilitada(env: NodeJS.ProcessEnv = process.env): boolean {
+  const valor = env.YA_VIENE_SEED_BUSQUEDAS_DEMO ?? (siembraDemoHabilitada(env) ? '1' : '0');
+  return siembraDemoHabilitada(env) && valor !== '0';
+}

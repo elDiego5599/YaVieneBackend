@@ -12,6 +12,7 @@
 import { HOST_PRUEBAS } from './red_pruebas';
 
 process.env.YA_VIENE_SEED_DEMO = '1';
+process.env.YA_VIENE_SEED_BUSQUEDAS_DEMO = '0';
 
 // Los backends de la suite escuchan en 127.0.0.1 y no en '::' (el valor sin
 // la variable): hay máquinas sin IPv6 —el contenedor de la nube— donde
