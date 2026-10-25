@@ -218,7 +218,7 @@ El equipo la lee y la borra por `/api/admin/lanzamiento`. La web entra por
 | Cliente | Qué es | Cómo habla |
 |---------|--------|------------|
 | `app_pasajero` | Flutter, Android e iOS | REST para el catálogo, socket para las posiciones, `/api/avisos` y FCM para avisar con la app cerrada (Android), `/api/reportes` para el buzón. Sin cuenta. |
-| `app_control` | Flutter, macOS y Windows (y web) | `POST /api/admin/login`, después REST y socket con el token; en web, con la cookie `yv_panel` (README, «Panel de empresa»); el backend sirve esa build en `/panel/`, mismo origen que la API (`api/panel_web.ts`). |
+| `app_control` | Flutter, macOS y Windows (y web) | `POST /api/admin/login`, renovación con `POST /api/fleet/renovar` y cierre con `POST /api/fleet/logout`; después REST y socket con el token; en web, con la cookie `yv_panel` (README, «Panel de empresa»), que también se renueva; el backend sirve esa build en `/panel/`, mismo origen que la API (`api/panel_web.ts`). |
 | `YaVieneWeb` | la landing | solo `POST /api/lanzamiento`, el «Avísame cuando salga» del hero, desde un origen de `WEB_ORIGINS`; su mapa es una simulación, rotulada. |
 
 Ojo: el login del panel acepta como suyo un `Origin` con el mismo

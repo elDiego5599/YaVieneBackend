@@ -302,6 +302,8 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
       ...process.env,
       HTTP_PORT: String(HTTP_PORT),
       MQTT_PORT: String(MQTT_PORT),
+      NODE_ENV: 'test',
+      YA_VIENE_TEST_NOW_MS: String(Date.UTC(2026, 9, 25, 21)),
       JWT_SECRET,
       ADMIN_API_KEY: randomBytes(24).toString('hex'),
       MQTT_DEBUG_LOGS: 'false',
@@ -343,6 +345,7 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
     };
     guardar('rest-admin-login', login);
     const admin = login.token;
+    guardar('rest-panel-renovar', await pedir('POST', '/api/fleet/renovar', undefined, admin));
 
     const pasajero = oyente('pasajero');
     const panel = oyente('panel', { token: admin });

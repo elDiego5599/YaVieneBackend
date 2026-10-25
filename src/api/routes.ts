@@ -96,6 +96,30 @@ function writeError(res: ServerResponse, status: number, code: string, message: 
   writeJson(res, status, { error: { code, message } });
 }
 
+function firmarTokenAdmin(admin: { adminId: string; companyId: string; username: string; tokenVersion: number }): string {
+  return signToken({
+    sub: admin.adminId,
+    role: 'admin',
+    companyId: admin.companyId,
+    username: admin.username,
+    tv: admin.tokenVersion,
+  });
+}
+
+function responderSesionAdmin(
+  res: ServerResponse,
+  web: boolean,
+  token: string,
+  company: { companyId: string; name: string },
+): void {
+  if (web) {
+    res.setHeader('Set-Cookie', cookieDeSesion(token));
+    writeJson(res, 200, { company });
+    return;
+  }
+  writeJson(res, 200, { token, company });
+}
+
 /**
  * Guarda de lecturas públicas: el catálogo y las posiciones son GET abiertos
  * a internet que la app consulta cada pocos segundos. 120/min por IP deja
@@ -503,13 +527,7 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
     return;
   }
 
-  const token = signToken({
-    sub: admin.adminId,
-    role: 'admin',
-    companyId: admin.companyId,
-    username: admin.username,
-    tv: admin.tokenVersion,
-  });
+  const token = firmarTokenAdmin(admin);
 
   const company = {
     companyId: admin.companyId,
@@ -517,12 +535,30 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
   };
   // En el navegador el token va solo en la cookie HttpOnly: si además
   // viajara en el cuerpo, un script inyectado lo leería al entrar.
-  if (web) {
-    res.setHeader('Set-Cookie', cookieDeSesion(token));
-    writeJson(res, 200, { company });
+  responderSesionAdmin(res, web, token, company);
+});
+
+// Renovar conserva la identidad y la versión de la credencial: authenticateCompanyAdmin
+// ya descarta tokens vencidos o revocados antes de llegar aquí.
+addRoute('POST', '/api/fleet/renovar', (req, res) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) {
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
     return;
   }
-  writeJson(res, 200, { token, company });
+  if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
+
+  const token = firmarTokenAdmin({
+    adminId: auth.sub,
+    companyId: auth.companyId,
+    username: auth.username,
+    tokenVersion: auth.tv,
+  });
+  const company = {
+    companyId: auth.companyId,
+    name: getEmpresa(auth.companyId)?.name ?? auth.companyId,
+  };
+  responderSesionAdmin(res, leerCookiePanel(req.headers) !== null, token, company);
 });
 
 // Con qué empresa está abierta la sesión del panel web. El panel no puede
@@ -1128,7 +1164,10 @@ addRoute('POST', '/api/busquedas', (req, res, _params, body) => {
     }
     lat = Number(alignedLat.toFixed(8)); lng = Number(alignedLng.toFixed(8));
   }
-  registrarBusqueda(body.routeId, lat, lng);
+  const ahoraPrueba = process.env.NODE_ENV === 'test'
+    ? Number(process.env.YA_VIENE_TEST_NOW_MS)
+    : Number.NaN;
+  registrarBusqueda(body.routeId, lat, lng, Number.isFinite(ahoraPrueba) ? ahoraPrueba : undefined);
   res.writeHead(204); res.end();
 });
 
