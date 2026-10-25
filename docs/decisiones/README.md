@@ -31,3 +31,4 @@ cuándo.
 | [D14](D14-buzon.md) | El buzón del pasajero llega al correo del equipo, por el backend | backend, apps | decidida, falta la contraseña del dueño |
 | [D15](D15-lista-lanzamiento.md) | La lista de «Avísame cuando salga» la guarda el backend | backend, web | decidida, falta `WEB_ORIGINS` al publicar la web |
 | [D16](D16-visibilidad-terminal.md) | El backend oculta al pasajero los buses quietos en terminal | backend, apps | decidida |
+| [D17](D17-reportes-busquedas.md) | Los reportes cuentan búsquedas como agregados por ruta, hora y celda | backend, app pasajero, panel | decidida, aviso legal pendiente con el abogado |

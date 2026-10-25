@@ -1034,6 +1034,22 @@ function initSchema(): void {
         for (const sql of indices) d.exec(sql);
       },
     },
+    {
+      version: 36,
+      apply: () => d.exec(`
+        CREATE TABLE busquedas (
+          route_id TEXT NOT NULL,
+          hora INTEGER NOT NULL,
+          celda_key TEXT NOT NULL,
+          celda_lat REAL,
+          celda_lng REAL,
+          count INTEGER NOT NULL CHECK (count > 0),
+          CHECK ((celda_lat IS NULL) = (celda_lng IS NULL)),
+          PRIMARY KEY (route_id, hora, celda_key)
+        );
+        CREATE INDEX idx_busquedas_hora ON busquedas(hora);
+      `),
+    },
   ];
 
   for (const migration of migrations) {

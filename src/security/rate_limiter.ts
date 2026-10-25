@@ -116,6 +116,7 @@ export const reportesRateLimiter = new SlidingWindowRateLimiter(5, 10 * 60_000);
  * para una familia detrás del mismo router y no dejan llenar la lista.
  */
 export const lanzamientoRateLimiter = new SlidingWindowRateLimiter(5, 10 * 60_000);
+export const busquedasRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
 
 /**
  * Bloqueo temporal de una cuenta tras muchos fallos seguidos (auditoría
@@ -240,6 +241,7 @@ const LIMITADORES: Record<string, { readonly size: number }> = {
   avisos: avisosRateLimiter,
   reportes: reportesRateLimiter,
   lanzamiento: lanzamientoRateLimiter,
+  busquedas: busquedasRateLimiter,
 };
 
 // La memoria de cada limitador está acotada por el barrido, pero nadie la

@@ -44,6 +44,7 @@ import {
   readRateLimiter,
   reportesRateLimiter,
   lanzamientoRateLimiter,
+  busquedasRateLimiter,
   requestKey,
   SlidingWindowRateLimiter,
 } from '../security/rate_limiter';
@@ -58,6 +59,7 @@ import {
 import { busInCatalog } from '../data/positions_store';
 import { getBusVisibility } from '../data/fleet_admin';
 import { dentroDeZona } from '../security/zona';
+import { calorBusquedas, PASO_LAT, PASO_LNG, rankingBusquedas, registrarBusqueda } from '../data/busquedas';
 import { emisorPush } from '../push/fcm';
 import { isBrokerReady } from '../mqtt/broker';
 import {
@@ -1100,6 +1102,61 @@ addRoute('POST', '/api/lanzamiento', (req, res, _params, body) => {
     return;
   }
   writeJson(res, 201, { recibido: true });
+});
+
+// Conteo agregado para analítica. requestKey solo se usa dentro del limitador;
+// ninguna identidad ni dirección se entrega a registrarBusqueda.
+addRoute('POST', '/api/busquedas', (req, res, _params, body) => {
+  if (!guardRate(busquedasRateLimiter, req, res, 'busquedas')) return;
+  if (!body || Buffer.byteLength(JSON.stringify(body)) > 1024 || typeof body.routeId !== 'string') {
+    writeError(res, 400, 'INVALID_INPUT', 'Cuerpo de búsqueda inválido'); return;
+  }
+  const ruta = getDb().prepare('SELECT 1 FROM company_routes WHERE route_id = ?').get(body.routeId);
+  if (!ruta) { writeError(res, 400, 'INVALID_ROUTE', 'La ruta no existe o no está visible'); return; }
+  let lat: number | null = null; let lng: number | null = null;
+  if (body.celda !== undefined) {
+    const celda = body.celda as Record<string, unknown>;
+    if (!celda || typeof celda !== 'object' || !Number.isFinite(celda.lat) || !Number.isFinite(celda.lng)) {
+      writeError(res, 400, 'INVALID_CELL', 'celda debe traer lat y lng finitos'); return;
+    }
+    const rawLat = celda.lat as number; const rawLng = celda.lng as number;
+    if (!dentroDeZona(rawLat, rawLng)) { writeError(res, 400, 'INVALID_CELL', 'celda fuera del área de servicio'); return; }
+    const alignedLat = Math.round(rawLat / PASO_LAT) * PASO_LAT;
+    const alignedLng = Math.round(rawLng / PASO_LNG) * PASO_LNG;
+    if (Math.abs(rawLat - alignedLat) > 1e-7 || Math.abs(rawLng - alignedLng) > 1e-7) {
+      writeError(res, 400, 'INVALID_CELL', 'celda debe coincidir con la rejilla'); return;
+    }
+    lat = Number(alignedLat.toFixed(8)); lng = Number(alignedLng.toFixed(8));
+  }
+  registrarBusqueda(body.routeId, lat, lng);
+  res.writeHead(204); res.end();
+});
+
+function rangoBusquedas(req: IncomingMessage) {
+  const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+  const ahora = Date.now();
+  const desde = params.has('desde') ? Date.parse(params.get('desde')!) : ahora - 30 * 24 * 60 * 60_000;
+  const hasta = params.has('hasta') ? Date.parse(params.get('hasta')!) : ahora + 1;
+  const horaTxt = params.get('hora'); const hora = horaTxt === null ? undefined : Number(horaTxt);
+  if (!Number.isFinite(desde) || !Number.isFinite(hasta) || desde >= hasta
+    || (hora !== undefined && (!Number.isInteger(hora) || hora < 0 || hora > 23))) return null;
+  return { desde, hasta, hora };
+}
+addRoute('GET', '/api/panel/busquedas', (req, res) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company admin authentication is required'); return; }
+  const rango = rangoBusquedas(req);
+  if (!rango) { writeError(res, 400, 'INVALID_INPUT', 'Rango u hora inválidos'); return; }
+  writeJson(res, 200, { rutas: rankingBusquedas(auth.companyId, rango.desde, rango.hasta, rango.hora) });
+});
+addRoute('GET', '/api/panel/busquedas/:routeId/calor', (req, res, params) => {
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company admin authentication is required'); return; }
+  const rango = rangoBusquedas(req);
+  if (!rango) { writeError(res, 400, 'INVALID_INPUT', 'Rango u hora inválidos'); return; }
+  const celdas = calorBusquedas(auth.companyId, params.routeId, rango.desde, rango.hasta, rango.hora);
+  if (celdas === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found'); return; }
+  writeJson(res, 200, { routeId: params.routeId, celdas });
 });
 
 /** Las rutas del equipo: el tope va antes de la clave, como en las demás. */

@@ -392,6 +392,12 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
     guardar('rest-companies', await pedir('GET', '/api/companies'));
     guardar('rest-company-routes', await pedir('GET', `/api/companies/${EMPRESA}/routes`));
     guardar('rest-route-positions', await pedir('GET', `/api/routes/${RUTA}/positions`));
+    const busqueda = await fetch(`${BASE}/api/busquedas`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ routeId: RUTA, celda: { lat: 10.99035, lng: -74.78967 } }),
+    });
+    assert.equal(busqueda.status, 204);
+    guardar('rest-busqueda-registrada', { status: busqueda.status });
     guardar('rest-fleet-positions', await pedir('GET', '/api/fleet/positions', undefined, admin));
     guardar('rest-fleet-routes', await pedir('GET', '/api/fleet/routes', undefined, admin));
 

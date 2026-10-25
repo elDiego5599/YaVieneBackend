@@ -40,6 +40,7 @@ import { emisorPush } from './push/fcm';
 import { revisarAvisos } from './data/avisos_push';
 import { configCorreoDesdeEntorno } from './buzon/correo';
 import { enviarReportes } from './data/reportes';
+import { limpiarBusquedas } from './data/busquedas';
 import {
   setupSocketServer,
   closeSocketServer,
@@ -264,6 +265,11 @@ const buzonTimer = correo
   : null;
 buzonTimer?.unref();
 if (!correo) console.log('[Buzón] Sin YA_VIENE_CORREO_USUARIO/CLAVE: los reportes esperan en la cola');
+
+// Retención de contadores agregados, al arrancar y una vez al día.
+limpiarBusquedas();
+const busquedasLimpiezaTimer = setInterval(() => limpiarBusquedas(), 24 * 60 * 60_000);
+busquedasLimpiezaTimer.unref();
 
 startBroker(
   (_clientId: string, auth: DeviceTokenPayload, topic, payload): PositionHandlingResult | void => {
