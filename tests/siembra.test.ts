@@ -205,7 +205,7 @@ test('calor de demo varía, se completa por hora y reemplaza su versión sin toc
   assert.equal(hijo.status, 0, hijo.stderr);
   const dato = JSON.parse(hijo.stdout.trim().split('\n').at(-1) ?? '') as {
     firstCount: number; secondCount: number; thirdCount: number; sentinel: number; realCount: number;
-    daily: Array<{ day: string; n: number }>; visiblePeak: number; visibleHours: number[]; offRouteVisible: number; rawOffRoute: number; beyondLimit: number; maxHour: number; minHour: number; peaksByCompany: number[]; addedRows: number; nextHourRows: number;
+    daily: Array<{ day: string; n: number }>; visiblePeak: number; visibleHours: number[]; maxVisibleDistance: number; semanaContraMes: number; fueraDeCalle: number; celdasCalientes: number; tramosConCalor: number; offRouteVisible: number; rawOffRoute: number; beyondLimit: number; maxHour: number; minHour: number; peaksByCompany: number[]; addedRows: number; nextHourRows: number;
     totals: Array<{ routeId: string; total: number }>; peakCells: { n: number; max: number }; todayRank: { routeId: string; horaPico: number | null }; localMidnight: number;
   };
   assert.equal(dato.secondCount, dato.firstCount);
@@ -218,7 +218,19 @@ test('calor de demo varía, se completa por hora y reemplaza su versión sin toc
   assert.ok(Math.max(...totals) / Math.min(...totals) >= 3);
   assert.ok(dato.visiblePeak >= 15, `celdas visibles en pico: ${dato.visiblePeak}; datos=${JSON.stringify(dato.peakCells)} ruta=${JSON.stringify(dato.todayRank)}`);
   assert.ok(dato.visibleHours.every(n => n >= 30), `visibles por hora 6-21: ${dato.visibleHours.join(",")}`);
-  assert.ok(dato.offRouteVisible > 0, `celdas fuera de ruta visibles=${dato.offRouteVisible}; raw=${dato.rawOffRoute}, visibles=${dato.visibleHours.join(",")}`);
+  // El calor va por donde pasa la ruta, nunca lejos (dueño, 2026-10-26:
+  // una mancha en el agua no va), pero no como un hilo parejo: parches
+  // variados con huecos entre ellos, que se abren un poco a los lados de la
+  // calle, y focos anchos que llegan a amarillo, naranja y rojo.
+  assert.equal(dato.offRouteVisible, 0, `celdas lejos de la ruta: ${dato.offRouteVisible}`);
+  // 400 m: dos celdas de 150 m a cada lado de la calle, más media diagonal.
+  assert.ok(dato.maxVisibleDistance <= 400, `celda visible a ${Math.round(dato.maxVisibleDistance)} m de la ruta`);
+  assert.ok(dato.fueraDeCalle >= 0.15, `celdas a un lado de la calle: ${dato.fueraDeCalle}`);
+  assert.ok(dato.tramosConCalor >= 0.4 && dato.tramosConCalor <= 0.85, `tramos con calor: ${dato.tramosConCalor}`);
+  // 7 y 30 días no se calcan (dueño, 2026-10-26): al menos un cuarto del
+  // calor cambia de sitio entre la última semana y el mes.
+  assert.ok(dato.semanaContraMes >= 0.25, `semana contra mes: ${dato.semanaContraMes}`);
+  assert.ok(dato.celdasCalientes >= 0.2, `celdas sobre un cuarto del máximo: ${dato.celdasCalientes}`);
   assert.equal(dato.beyondLimit, 0);
   assert.ok(dato.peaksByCompany.reduce((sum, n) => sum + n, 0) >= 3, `picos distintos por empresa: ${dato.peaksByCompany}`);
   const weekend = dato.daily.filter(row => new Date(`${row.day}T12:00:00Z`).getUTCDay() === 0 || new Date(`${row.day}T12:00:00Z`).getUTCDay() === 6);

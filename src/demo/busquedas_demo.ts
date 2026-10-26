@@ -8,7 +8,7 @@ import { dentroDeZona } from '../security/zona';
 type Punto = { lat: number; lon: number };
 type Ruta = { routeId: string; name?: string; waypoints: Punto[] };
 type Celda = Punto & { key: string };
-const VERSION = 'busquedas-demo-v2';
+const VERSION = 'busquedas-demo-v4';
 const HORA = 3_600_000;
 const DIA = 24 * HORA;
 const MLAT = 111_320;
@@ -28,55 +28,55 @@ function celdasRuta(points: Punto[]): Celda[] {
   }
   return [...result.values()];
 }
+// Los focos caen sobre la ruta (dueño, 2026-10-26): parches de fuerza
+// variada, con huecos entre ellos, nunca manchas lejos del recorrido.
+// 2,5 deja una quinta parte de las celdas en caliente y la hora pico a la vista.
+const EXPONENTE = 2.5;
 function focosRuta(routeId: string, points: Punto[]) {
-  const seed = hash(routeId);
-  return Array.from({ length: 5 }, (_, i) => {
-    const origin = points[Math.floor(i * (points.length - 1) / 4)];
-    const radius = 650 + (hash(`${routeId}:radio:${i}`) % 1_700);
-    const startAngle = ((seed >>> (i % 16)) % 360) * Math.PI / 180;
-    const candidatos = Array.from({ length: 16 }, (_, j) => {
-      const angle = startAngle + j * Math.PI / 8;
-      return { lat: origin.lat + Math.sin(angle) * radius / MLAT, lon: origin.lon + Math.cos(angle) * radius / MLNG };
-    });
-    const center = candidatos.find(candidate => dentroDeZona(candidate.lat, candidate.lon)
-      && Math.min(...points.map(point => distancia(candidate, point))) >= 500
-      && Math.min(...points.map(point => distancia(candidate, point))) <= 2_500) ?? candidatos[0];
+  const n = 7;
+  return Array.from({ length: n }, (_, i) => {
+    const desfase = (hash(`${routeId}:sitio:${i}`) % 61 - 30) / 100;
+    const indice = Math.round((i + 0.5 + desfase) * (points.length - 1) / n);
     return {
-      center,
-      sigma: 200 + hash(`${routeId}:sigma:${i}`) % 401,
-      weight: 0.7 + (hash(`${routeId}:peso:${i}`) % 61) / 100,
+      center: points[Math.min(points.length - 1, Math.max(0, indice))],
+      sigma: 300 + hash(`${routeId}:sigma:${i}`) % 401,
+      weight: 0.2 + (hash(`${routeId}:peso:${i}`) % 131) / 100,
     };
   });
 }
-function celdasConFocos(routeId: string, points: Punto[]): Celda[] {
-  const referencias = points.filter((_, index) => index % 5 === 0);
-  if (referencias.at(-1) !== points.at(-1)) referencias.push(points.at(-1)!);
-  const cells = new Map(celdasRuta(points).map(c => [c.key, c]));
-  const focos = focosRuta(routeId, points);
-  for (const { center, sigma } of focos) {
-    const reach = 3 * sigma;
-    const latSteps = Math.ceil(reach / (PASO_LAT * MLAT));
-    const lonSteps = Math.ceil(reach / (PASO_LNG * MLNG));
-    for (let y = -latSteps; y <= latSteps; y++) for (let x = -lonSteps; x <= lonSteps; x++) {
-      const lat = Math.round((center.lat + y * PASO_LAT) / PASO_LAT) * PASO_LAT;
-      const lon = Math.round((center.lon + x * PASO_LNG) / PASO_LNG) * PASO_LNG;
-      const cell = { lat, lon };
-      if (!dentroDeZona(lat, lon) || Math.min(...referencias.map(p => distancia(cell, p))) > 2_750) continue;
-      cells.set(key(lat, lon), { ...cell, key: key(lat, lon) });
+
+// La ruta y dos celdas a cada lado: quien busca el bus suele estar a una o
+// dos cuadras de la calle por donde pasa, no encima. Cada celda guarda su
+// distancia a la calle (la de la celda de la ruta más cercana).
+function celdasCerca(ruta: Celda[]): Array<Celda & { aCalle: number }> {
+  const result = new Map<string, Celda & { aCalle: number }>();
+  for (const c of ruta) {
+    for (let di = -2; di <= 2; di++) {
+      for (let dj = -2; dj <= 2; dj++) {
+        const lat = c.lat + di * PASO_LAT, lon = c.lon + dj * PASO_LNG;
+        const k = key(lat, lon), aCalle = distancia({ lat, lon }, c), antes = result.get(k);
+        // 280 m al centro de la celda de la ruta: con su media diagonal, nada
+        // queda a más de 400 m de la calle.
+        if (!dentroDeZona(lat, lon) || aCalle > 280) continue;
+        if (!antes || aCalle < antes.aCalle) result.set(k, { lat, lon, key: k, aCalle });
+      }
     }
   }
-  return [...cells.values()];
+  return [...result.values()];
 }
 
+// Reparto sistemático: cada celda recibe en promedio su parte exacta, también
+// las del corredor con parte menor a una búsqueda por hora (con el resto
+// mayor primero nunca les tocaba y la ruta quedaba en manchas sueltas).
 function repartir(total: number, pesos: number[], semilla: number): number[] {
   const suma = pesos.reduce((a, b) => a + b, 0);
-  const exactos = pesos.map(peso => total * peso / suma);
-  const resultado = exactos.map(Math.floor);
-  let faltan = total - resultado.reduce((a, b) => a + b, 0);
-  const orden = exactos.map((valor, i) => ({ i, resto: valor - resultado[i], desempate: hash(`${semilla}:${i}`) }))
-    .sort((a, b) => b.resto - a.resto || a.desempate - b.desempate);
-  for (let i = 0; i < faltan; i++) resultado[orden[i].i]++;
-  return resultado;
+  const desfase = (hash(`${semilla}:desfase`) % 1_000_000) / 1_000_000;
+  let acumulado = 0;
+  return pesos.map(peso => {
+    const antes = acumulado;
+    acumulado += total * peso / suma;
+    return Math.floor(acumulado + desfase) - Math.floor(antes + desfase);
+  });
 }
 
 function perfil(routeId: string, nombre?: string): number[] {
@@ -113,25 +113,30 @@ export function sembrarBusquedasDemo(ahora = Date.now()): void {
     for (const { route_id } of demo) {
       const route = rutasJson.rutas.find(r => r.routeId === route_id);
       if (!route || route.waypoints.length < 2) continue;
-      const cells = celdasConFocos(route_id, route.waypoints), weights = perfil(route_id, route.name);
+      const cells = celdasCerca(celdasRuta(route.waypoints)), weights = perfil(route_id, route.name);
       const foci = focosRuta(route_id, route.waypoints);
-      const referencias = route.waypoints.filter((_, index) => index % 5 === 0);
-      if (referencias.at(-1) !== route.waypoints.at(-1)) referencias.push(route.waypoints.at(-1)!);
-      for (const foco of foci) {
-        const lat = Math.round(foco.center.lat / PASO_LAT) * PASO_LAT;
-        const lon = Math.round(foco.center.lon / PASO_LNG) * PASO_LNG;
-        if (dentroDeZona(lat, lon) && Math.min(...referencias.map(point => distancia({ lat, lon }, point))) <= 2_750) {
-          cells.push({ lat, lon, key: key(lat, lon) });
-        }
-      }
       const routeSeed = hash(route_id);
       const routeRank = demo.findIndex(item => item.route_id === route_id);
       const daily = 300 + (demo.length - routeRank - 1) * 175 + routeSeed % 80;
-      const centers = [...new Map(cells.map(cell => [cell.key, cell])).values()].map((c, i) => ({ c, i, w: 0.000001 + foci.reduce((sum, foco) => {
-        const d = distancia(c, foco.center);
-        return sum + (d <= foco.sigma * 0.5 ? foco.weight * Math.exp(-(d ** 2) / (2 * foco.sigma ** 2)) : 0);
-      }, 0) }));
-      const sw = centers.reduce((a, b) => a + b.w, 0);
+      // Sin piso: entre focos la ruta queda sin calor, y a los lados de la
+      // calle se apaga en unos 250 m. Al cubo, para que la hora pico junte
+      // sus búsquedas en el foco y se vea (K_BUSQUEDAS por celda).
+      const cerca = cells.map(c => ({ c, lado: Math.exp(-(c.aCalle ** 2) / (2 * 250 ** 2)),
+        aporte: foci.map(foco => foco.weight * Math.exp(-(distancia(c, foco.center) ** 2) / (2 * foco.sigma ** 2))) }))
+        .filter(({ lado, aporte }) => (lado * aporte.reduce((a, b) => a + b, 0)) ** EXPONENTE >= 0.002);
+      // Cada foco sube o baja por semana (dueño, 2026-10-26: 7 y 30 días se
+      // veían iguales): la última semana no calca el mes. La semana se toma
+      // de la fecha, así cada hora sembrada da lo mismo al repetirla.
+      const porSemana = new Map<number, number[]>();
+      const pesosSemana = (semana: number) => {
+        let pesos = porSemana.get(semana);
+        if (!pesos) {
+          const fuerza = foci.map((_, f) => 0.15 + (hash(`${route_id}:foco:${f}:semana:${semana}`) % 171) / 100);
+          pesos = cerca.map(({ lado, aporte }) => (lado * aporte.reduce((sum, a, f) => sum + a * fuerza[f], 0)) ** EXPONENTE);
+          porSemana.set(semana, pesos);
+        }
+        return pesos;
+      };
       for (let hour = start; hour < until; hour += HORA) {
         const localDate = new Date(hour - 5 * HORA), day = localDate.getUTCDay(), localHour = localDate.getUTCHours();
         const baseDay = day === 0 ? 0.35 : day === 6 ? 0.6 : 1;
@@ -139,16 +144,10 @@ export function sembrarBusquedasDemo(ahora = Date.now()): void {
         const noise = 0.75 + hash(`${route_id}:${hour}:daily`) % 51 / 100;
         const rain = hash(`${route_id}:${localDate.toISOString().slice(0,10)}:lluvia`) % 19 === 0 ? 1.4 : 1;
         const total = daily * baseDay * noise * rain * weights[shifted] / weights.reduce((a,b) => a+b,0);
-        const porCelda = repartir(Math.round(total), centers.map(center => center.w), hash(`${route_id}:${hour}`));
-        for (let i = 0; i < centers.length; i++) {
-          const { c } = centers[i], count = porCelda[i];
+        const porCelda = repartir(Math.round(total), pesosSemana(Math.floor((hour - 5 * HORA) / (7 * 24 * HORA))), hash(`${route_id}:${hour}`));
+        for (let i = 0; i < cerca.length; i++) {
+          const { c } = cerca[i], count = porCelda[i];
           if (count > 0) insert.run(route_id, hour, c.key, c.lat, c.lon, count);
-        }
-        for (const foco of foci) {
-          const lat = Math.round(foco.center.lat / PASO_LAT) * PASO_LAT;
-          const lon = Math.round(foco.center.lon / PASO_LNG) * PASO_LNG;
-          if (!dentroDeZona(lat, lon) || Math.min(...referencias.map(point => distancia({ lat, lon }, point))) <= 300 || Math.min(...referencias.map(point => distancia({ lat, lon }, point))) > 2_750) continue;
-          insert.run(route_id, hour, key(lat, lon), lat, lon, 1);
         }
       }
     }
