@@ -28,6 +28,7 @@ import {
 } from './data/buses';
 import { closeDb, getDb } from './data/database';
 import { sembrarBusquedasDemo } from './demo/busquedas_demo';
+import { siembraBusquedasDemoHabilitada } from './config';
 import { cleanupRevokedSessions } from './data/sessions';
 import { dispatchBusEvents } from './data/despacho';
 import { LifecycleEvent } from './data/lifecycle_events';
@@ -141,7 +142,11 @@ const server = HTTP_TLS_CERT_PATH && HTTP_TLS_KEY_PATH
 
 // initSchema completa el catálogo demo antes de devolver la base.
 getDb();
-sembrarBusquedasDemo();
+if (siembraBusquedasDemoHabilitada()) {
+  sembrarBusquedasDemo();
+  const busquedasDemoTimer = setInterval(() => sembrarBusquedasDemo(), 60 * 60_000);
+  busquedasDemoTimer.unref();
+}
 
 setupSocketServer(server);
 

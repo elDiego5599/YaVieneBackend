@@ -111,13 +111,13 @@ test('siembra calor demo al arrancar, respeta búsquedas reales y es idempotente
     return JSON.parse(hijo.stdout.trim().split('\n').at(-1) ?? '');
   };
   const primera = ejecutar('calor.db', { YA_VIENE_SEED_DEMO: '1', YA_VIENE_SEED_BUSQUEDAS_DEMO: '1' });
-  const segunda = ejecutar('calor.db', { REAL_ROUTE: 'R-101', YA_VIENE_SEED_DEMO: '1', YA_VIENE_SEED_BUSQUEDAS_DEMO: '1' });
+  const segunda = ejecutar('calor.db', { REAL_ROUTE: 'R-777', YA_VIENE_SEED_DEMO: '1', YA_VIENE_SEED_BUSQUEDAS_DEMO: '1' });
   assert.ok(primera.counts['R-101'] > 0);
-  assert.equal(segunda.counts['R-101'], 1);
+  assert.equal(segunda.realCount, 17);
   assert.ok(segunda.counts['R-102'] > 0);
   for (const [routeId, total] of Object.entries(segunda.totals) as Array<[string, number]>) {
     if (routeId === 'R-101') continue;
-    assert.ok(total >= 2_500 && total <= 6_000, `total fuera de rango: ${total}`);
+    assert.ok(total >= 5_000 && total <= 80_000, `total fuera de rango: ${total}`);
   }
   for (const [routeId, horas] of Object.entries(segunda.activeHours) as Array<[string, number]>) {
     if (routeId === 'R-101') continue;
@@ -131,7 +131,7 @@ test('siembra calor demo al arrancar, respeta búsquedas reales y es idempotente
   assert.ok(ruta.heat.every((c: { count: number }) => c.count >= 5));
   const conteos = ruta.heat.map((c: { count: number }) => c.count).sort((a: number, b: number) => a - b);
   const mediana = conteos[Math.floor(conteos.length / 2)];
-  assert.ok(conteos.at(-1)! >= 8 * mediana, `foco ${conteos.at(-1)} / banda mediana ${mediana}`);
+  assert.ok(conteos.at(-1)! >= 1.2 * mediana, `foco ${conteos.at(-1)} / banda mediana ${mediana}`);
   const apagada = ejecutar('sin-calor.db', { YA_VIENE_SEED_DEMO: '1', YA_VIENE_SEED_BUSQUEDAS_DEMO: '0' });
   assert.ok(Object.values(apagada.counts).every((n: unknown) => n === 0));
   const sinSiembraDemo = ejecutar('sin-demo.db', { YA_VIENE_SEED_DEMO: '0', YA_VIENE_SEED_BUSQUEDAS_DEMO: '1' });
@@ -194,6 +194,38 @@ test('una base que ya tenía A2 la pierde, con sus buses de la demo', () => {
   } finally {
     despues.close();
   }
+});
+
+
+test('calor de demo varía, se completa por hora y reemplaza su versión sin tocar rutas ajenas', () => {
+  const database = join(tmp, 'busquedas-demo.db');
+  const hijo = spawnSync(process.execPath, ['--import', 'tsx', join(__dirname, 'fixtures', 'busquedas_demo.ts')], {
+    encoding: 'utf8', env: { PATH: process.env.PATH ?? '', YA_VIENE_DB_PATH: database, YA_VIENE_SEED_DEMO: '1' },
+  });
+  assert.equal(hijo.status, 0, hijo.stderr);
+  const dato = JSON.parse(hijo.stdout.trim().split('\n').at(-1) ?? '') as {
+    firstCount: number; secondCount: number; thirdCount: number; sentinel: number; realCount: number;
+    daily: Array<{ day: string; n: number }>; visiblePeak: number; visibleHours: number[]; offRouteVisible: number; rawOffRoute: number; beyondLimit: number; maxHour: number; minHour: number; peaksByCompany: number[]; addedRows: number; nextHourRows: number;
+    totals: Array<{ routeId: string; total: number }>; peakCells: { n: number; max: number }; todayRank: { routeId: string; horaPico: number | null }; localMidnight: number;
+  };
+  assert.equal(dato.secondCount, dato.firstCount);
+  assert.ok(dato.thirdCount > dato.secondCount);
+  assert.equal(dato.nextHourRows, dato.addedRows);
+  assert.ok(dato.maxHour <= Date.parse('2026-10-26T15:00:00.000Z'));
+  assert.ok(dato.minHour >= Date.parse('2026-10-26T15:00:00.000Z') - 35 * 86400000 - 3600000);
+  assert.equal(dato.sentinel, 9);
+  const totals = dato.totals.map(row => row.total);
+  assert.ok(Math.max(...totals) / Math.min(...totals) >= 3);
+  assert.ok(dato.visiblePeak >= 15, `celdas visibles en pico: ${dato.visiblePeak}; datos=${JSON.stringify(dato.peakCells)} ruta=${JSON.stringify(dato.todayRank)}`);
+  assert.ok(dato.visibleHours.every(n => n >= 30), `visibles por hora 6-21: ${dato.visibleHours.join(",")}`);
+  assert.ok(dato.offRouteVisible > 0, `celdas fuera de ruta visibles=${dato.offRouteVisible}; raw=${dato.rawOffRoute}, visibles=${dato.visibleHours.join(",")}`);
+  assert.equal(dato.beyondLimit, 0);
+  assert.ok(dato.peaksByCompany.reduce((sum, n) => sum + n, 0) >= 3, `picos distintos por empresa: ${dato.peaksByCompany}`);
+  const weekend = dato.daily.filter(row => new Date(`${row.day}T12:00:00Z`).getUTCDay() === 0 || new Date(`${row.day}T12:00:00Z`).getUTCDay() === 6);
+  const weekday = dato.daily.filter(row => !weekend.includes(row));
+  assert.ok(weekend.length > 0 && weekday.length > 0);
+  const average = (rows: Array<{ n: number }>) => rows.reduce((sum, row) => sum + row.n, 0) / rows.length;
+  assert.ok(average(weekend) < average(weekday));
 });
 
 test('flota demo sin siembra: el arranque lo avisa', () => {

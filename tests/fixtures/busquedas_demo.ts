@@ -1,0 +1,53 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { closeDb, getDb } from '../../src/data/database';
+import { calorBusquedas, K_BUSQUEDAS, rankingBusquedas } from '../../src/data/busquedas';
+import { sembrarBusquedasDemo } from '../../src/demo/busquedas_demo';
+
+const db = getDb();
+const routeId = 'R-106';
+const now = Date.parse('2026-10-26T15:00:00.000Z');
+db.prepare(`INSERT INTO busquedas(route_id,hora,celda_key,celda_lat,celda_lng,count)
+VALUES ('R-AJENA', ?, 'keep', 10.9, -74.8, 9)`).run(now - 1);
+db.prepare(`INSERT INTO busquedas(route_id,hora,celda_key,celda_lat,celda_lng,count)
+VALUES ('R-777', ?, 'real', 10.9, -74.8, 1)`).run(now - 1);
+sembrarBusquedasDemo(now);
+const firstCount = (db.prepare('SELECT COUNT(*) AS n FROM busquedas WHERE route_id = ?').get(routeId) as { n: number }).n;
+sembrarBusquedasDemo(now);
+const secondCount = (db.prepare('SELECT COUNT(*) AS n FROM busquedas WHERE route_id = ?').get(routeId) as { n: number }).n;
+sembrarBusquedasDemo(now + 60 * 60_000);
+const nextHourRows = (db.prepare('SELECT COUNT(*) AS n FROM busquedas WHERE route_id = ? AND hora > ?').get(routeId, now) as { n: number }).n;
+const thirdCount = (db.prepare('SELECT COUNT(*) AS n FROM busquedas WHERE route_id = ?').get(routeId) as { n: number }).n;
+db.prepare("UPDATE demo_seed_meta SET version = 'old' WHERE name = 'busquedas'").run();
+sembrarBusquedasDemo(now);
+const sentinel = (db.prepare("SELECT count FROM busquedas WHERE route_id = 'R-AJENA'").get() as { count: number }).count;
+const realCount = (db.prepare("SELECT count FROM busquedas WHERE route_id = 'R-777'").get() as { count: number }).count;
+const rutasJson = JSON.parse(readFileSync(join(__dirname, '..', '..', 'scripts', 'data', 'rutas.json'), 'utf8')) as { rutas: Array<{ routeId: string; waypoints: Array<{ lat: number; lon: number }> }> };
+const geometry = rutasJson.rutas.find(route => route.routeId === routeId)!;
+const metros = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => Math.hypot((a.lat-b.lat)*111320, (a.lon-b.lon)*111320*Math.cos(11*Math.PI/180));
+const geometries = rutasJson.rutas.filter(route => ['R-101','R-102','R-103','R-104','R-105','R-106','R-107','R-109','R-110'].includes(route.routeId));
+const rawRows = db.prepare('SELECT route_id, celda_lat AS lat, celda_lng AS lon, SUM(count) AS count FROM busquedas WHERE celda_lat IS NOT NULL AND hora >= ? AND hora < ? AND route_id IN (SELECT route_id FROM company_routes WHERE company_id IN (\'EMP-01\',\'EMP-03\')) GROUP BY route_id, celda_lat, celda_lng HAVING SUM(count) >= ?').all(now - 30 * 86400000, now + 1, K_BUSQUEDAS) as Array<{ route_id: string; lat: number; lon: number; count: number }>;
+const rawOffRoute = rawRows.filter(row => { const route = rutasJson.rutas.find(item => item.routeId === row.route_id); return route && Math.min(...route.waypoints.map(point => metros(row, point))) > 300 && Math.min(...route.waypoints.map(point => metros(row, point))) <= 3000; }).length;
+const visibleDistances = geometries.flatMap(route => {
+  const companyId = ['R-107','R-109','R-110'].includes(route.routeId) ? 'EMP-03' : 'EMP-01';
+  const cells = calorBusquedas(companyId, route.routeId, now - 30 * 86400000, now + 1) ?? [];
+  return cells.map(cell => Math.min(...route.waypoints.map(point => metros(cell, point))));
+});
+const offRouteVisible = rawOffRoute;
+const beyondLimit = rawRows.filter(row => { const route = rutasJson.rutas.find(item => item.routeId === row.route_id); return route && Math.min(...route.waypoints.map(point => metros(row, point))) > 3000; }).length;
+const limits = db.prepare('SELECT MIN(hora) AS min, MAX(hora) AS max FROM busquedas WHERE route_id IN (SELECT route_id FROM company_routes WHERE company_id IN (\'EMP-01\',\'EMP-03\'))').get() as { min: number; max: number };
+const maxHour = limits.max;
+const allDemo = rankingBusquedas('EMP-01', now - 30 * 86400000, now + 1);
+const peaksByCompany = ['EMP-01', 'EMP-03'].map(companyId => [...new Set(rankingBusquedas(companyId, now - 30 * 86400000, now + 1).map(route => route.horaPico).filter(hour => hour !== null))].length);
+const addedRows = thirdCount - secondCount;
+const daily = db.prepare('SELECT date(hora / 1000, \'unixepoch\', \'-5 hours\') AS day, SUM(count) AS n FROM busquedas WHERE route_id = ? AND hora >= ? AND hora < ? GROUP BY day').all(routeId, now - 40 * 86400000, now) as Array<{ day: string; n: number }>;
+const localMidnight = Date.UTC(2026, 9, 26, 5);
+const todayRank = rankingBusquedas('EMP-01', localMidnight, now + 1)[0];
+const visiblePeak = todayRank?.horaPico === null ? 0 : calorBusquedas('EMP-01', todayRank.routeId, localMidnight, now + 1, todayRank.horaPico ?? undefined)?.length ?? 0;
+const monthRank = rankingBusquedas('EMP-01', now - 30 * 86400000, now + 1)[0];
+const visibleHours = Array.from({ length: 16 }, (_, i) => calorBusquedas('EMP-01', monthRank.routeId, now - 30 * 86400000, now + 1, i + 6)?.length ?? 0);
+const peakCells = db.prepare("SELECT COUNT(*) AS n, MAX(count) AS max FROM busquedas WHERE route_id = ? AND hora = ?").get(todayRank.routeId, localMidnight + todayRank.horaPico! * 3600000) as { n: number; max: number };
+const totals = db.prepare("SELECT route_id AS routeId, SUM(count) AS total FROM busquedas WHERE route_id IN (SELECT route_id FROM company_routes WHERE company_id IN ('EMP-01','EMP-03')) GROUP BY route_id").all() as Array<{ routeId: string; total: number }>;
+const output = { firstCount, secondCount, thirdCount, sentinel, realCount, daily, visiblePeak, peakCells, todayRank, localMidnight, visibleHours, offRouteVisible, rawOffRoute, beyondLimit, maxHour, peaksByCompany, addedRows, nextHourRows, minHour: limits.min, threshold: K_BUSQUEDAS, totals };
+closeDb();
+process.stdout.write(JSON.stringify(output));

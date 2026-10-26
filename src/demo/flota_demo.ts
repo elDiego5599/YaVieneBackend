@@ -313,18 +313,15 @@ export function prepararFlota(flota: BusDemo[]): BusDemo[] {
       listos.push(bus);
     }
   })();
-  const idsActivos = listos.map((bus) => bus.busId);
-  const placeholders = idsActivos.map(() => '?').join(',');
-  db.prepare(`UPDATE buses SET visible = 0, en_terminal = 0 WHERE is_demo = 1
-    AND company_id IN (${EMPRESAS.map(() => '?').join(',')})
-    AND bus_id NOT IN (${placeholders})`).run(...EMPRESAS, ...idsActivos);
+  // Los demo que ya no están en el plan (otra generación, una ruta que cambió
+  // de orden) se retiran: ocultos se quedaban en el panel donde los dejó la
+  // última posición, a mitad de ruta y sin señal (dueño, 2026-10-26).
+  const placeholders = listos.map(() => '?').join(',');
   const antiguos = db.prepare(`SELECT bus_id FROM buses WHERE is_demo = 1
     AND company_id IN (${EMPRESAS.map(() => '?').join(',')}) AND bus_id NOT IN (${placeholders})`)
-    .all(...EMPRESAS, ...idsActivos) as Array<{ bus_id: string }>;
-  for (const fila of antiguos) {
-    visibilityCache.set(fila.bus_id, false);
-    resetEstadoVisibilidadTerminal(fila.bus_id);
-  }
+    .all(...EMPRESAS, ...listos.map((bus) => bus.busId)) as Array<{ bus_id: string }>;
+  for (const fila of antiguos) deleteBus(fila.bus_id);
+  if (antiguos.length > 0) console.log(`[FLOTA] Retirados ${antiguos.length} buses demo sobrantes.`);
   for (const bus of listos) {
     busCompanyCache.set(bus.busId, bus.companyId);
     visibilityCache.set(bus.busId, bus.activo);
@@ -371,19 +368,19 @@ const espera = new Map<string, number>();
 let apagando = false;
 let temporizador: NodeJS.Timeout | undefined;
 let geometria: Map<string, RutaGeometria> | undefined;
-const llegadasTerminal = new Map<string, string[]>();
 const busesEnTerminal = new Map<string, string[]>();
 
 const ESPERA_MINIMA_MS = 5_000;
 const ESPERA_MAXIMA_MS = 60_000;
 
-/** Coordina el relevo cuando dos buses alcanzan juntos el mismo terminal. */
-export function relevoTerminal(llegadas: string[], busId: string, esperando: string[]): { retirar: string[]; salen: string[] } | null {
-  if (!llegadas.includes(busId)) llegadas.push(busId);
-  if (llegadas.length < 2) return null;
-  const retirar = llegadas.splice(0, 2);
-  esperando.push(...retirar);
-  return { retirar, salen: esperando.splice(0, 2) };
+/**
+ * Relevo en la terminal: el que llega se forma al final y sale el que más
+ * lleva esperando. Uno por uno, la salida hereda la separación con que
+ * llegaron; de a dos salían pegados (dueño, 2026-10-26).
+ */
+export function relevoTerminal(busId: string, esperando: string[]): { retirar: string; sale: string } {
+  esperando.push(busId);
+  return { retirar: busId, sale: esperando.shift()! };
 }
 
 function cargarGeometrias(): Map<string, RutaGeometria> {
@@ -509,38 +506,24 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
     estado.progreso = terminal === 'A' ? 0 : estado.longitud;
     estado.esperandoTerminal = true;
     const clave = `${estado.bus.routeId}:${terminal}`;
-    const llegadas = llegadasTerminal.get(clave) ?? [];
-    if (llegadas.includes(estado.bus.busId)) return;
-    llegadas.push(estado.bus.busId);
-    llegadasTerminal.set(clave, llegadas);
-    if (llegadas.length >= 2) {
-      const esperando = busesEnTerminal.get(clave) ?? [];
-      const relevo = relevoTerminal(llegadas, estado.bus.busId, esperando);
-      busesEnTerminal.set(clave, esperando);
-      if (!relevo) return;
-      for (const id of relevo.retirar) {
-        const llegado = estados.get(id)!;
-        llegado.iniciado = true;
-        llegado.esperandoTerminal = true;
-        llegado.bus.activo = false;
-        llegado.bus.fraccion = terminal === 'A'
-          ? (llegado.sentido === 'ida' ? 0 : 1)
-          : (llegado.sentido === 'ida' ? 1 : 0);
-      }
-      for (const id of relevo.salen) {
-        const nuevo = estados.get(id)!;
-        nuevo.cliente?.end(true);
-        nuevo.cliente = undefined;
-        nuevo.sentido = terminal === 'A' ? 'ida' : 'venida';
-        nuevo.bus.activo = true;
-        nuevo.esperandoTerminal = false;
-        nuevo.progreso = terminal === 'A' ? 0 : nuevo.longitud;
-        nuevo.iniciado = true;
-        nuevo.siguiente = ahora;
-        nuevo.capturedAt = ahora;
-        void conectarBus(nuevo);
-      }
-    }
+    const esperando = busesEnTerminal.get(clave) ?? [];
+    busesEnTerminal.set(clave, esperando);
+    const relevo = relevoTerminal(estado.bus.busId, esperando);
+    estado.bus.activo = false;
+    estado.bus.fraccion = terminal === 'A'
+      ? (estado.sentido === 'ida' ? 0 : 1)
+      : (estado.sentido === 'ida' ? 1 : 0);
+    const nuevo = estados.get(relevo.sale)!;
+    nuevo.cliente?.end(true);
+    nuevo.cliente = undefined;
+    nuevo.sentido = terminal === 'A' ? 'ida' : 'venida';
+    nuevo.bus.activo = true;
+    nuevo.esperandoTerminal = false;
+    nuevo.progreso = terminal === 'A' ? 0 : nuevo.longitud;
+    nuevo.iniciado = true;
+    nuevo.siguiente = ahora;
+    nuevo.capturedAt = ahora;
+    void conectarBus(nuevo);
     return;
   }
   let acumulado = 0;

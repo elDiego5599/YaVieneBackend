@@ -23,6 +23,7 @@ const salida = {
     (db.prepare('SELECT COUNT(*) AS n FROM busquedas WHERE route_id = ?').get(route_id) as { n: number }).n])),
   totals: Object.fromEntries(rutas.map(({ route_id }) => [route_id,
     (db.prepare('SELECT COALESCE(SUM(count), 0) AS n FROM busquedas WHERE route_id = ?').get(route_id) as { n: number }).n])),
+  realCount: process.env.REAL_ROUTE ? (db.prepare('SELECT count FROM busquedas WHERE route_id = ?').get(process.env.REAL_ROUTE) as { count: number }).count : null,
   activeHours: Object.fromEntries(rutas.map(({ route_id }) => [route_id,
     (db.prepare("SELECT COUNT(DISTINCT strftime('%H', datetime(hora / 1000, 'unixepoch', '-5 hours'))) AS n FROM busquedas WHERE route_id = ?").get(route_id) as { n: number }).n])),
 };

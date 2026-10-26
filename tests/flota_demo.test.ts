@@ -82,7 +82,7 @@ test('cada ruta conserva dieciséis placas: ocho rodando y ocho en espera termin
   }
 });
 
-test('arrancar sobre base vieja oculta sobrantes demo y deja 8 activos y 8 en terminal', () => {
+test('arrancar sobre base vieja retira sobrantes demo y deja 8 activos y 8 en terminal', () => {
   const d = getDb();
   const flota = construirFlota();
   const ahora = Date.now();
@@ -94,6 +94,9 @@ test('arrancar sobre base vieja oculta sobrantes demo y deja 8 activos y 8 en te
   d.prepare(`INSERT INTO buses (bus_id, company_id, plate_number, route_id, visible, en_terminal, is_demo, created_at, updated_at)
              VALUES ('BUS-SOBRANTE1', 'EMP-01', 'QZX991', 'R-101', 1, 0, 1, ?, ?)`)
     .run(ahora, ahora);
+  d.prepare(`INSERT INTO positions (bus_id, route_id, lat, lon, speed_kmh, timestamp, device_id, route_fraction)
+             VALUES ('BUS-SOBRANTE1', 'R-101', 10.99, -74.79, 0, ?, 'sobrante', 0.5)`)
+    .run(ahora - 86_400_000);
   for (const ruta of new Set(flota.map((bus) => bus.routeId))) {
     const anteriores = flota.filter((bus) => bus.routeId === ruta).slice(0, 12);
     assert.equal(anteriores.length, 12, ruta);
@@ -138,12 +141,12 @@ test('arrancar sobre base vieja oculta sobrantes demo y deja 8 activos y 8 en te
       .get(ruta) as { total: number; visibles: number; terminal: number };
     assert.equal(conteo.visibles, 8, `${ruta}: visibles`);
     assert.equal(conteo.terminal, 8, `${ruta}: terminal`);
-    assert.equal(conteo.total, ruta === 'R-101' ? 17 : 16, `${ruta}: total`);
+    assert.equal(conteo.total, 16, `${ruta}: total`);
   }
-  assert.deepEqual(
-    d.prepare("SELECT visible, en_terminal FROM buses WHERE bus_id = 'BUS-SOBRANTE1'").get(),
-    { visible: 0, en_terminal: 0 },
-  );
+  // Un sobrante de una generación anterior se retira con su posición: oculto
+  // se quedaba en el panel a mitad de ruta y sin señal (dueño, 2026-10-26).
+  assert.equal(d.prepare("SELECT 1 FROM buses WHERE bus_id = 'BUS-SOBRANTE1'").get(), undefined);
+  assert.equal(d.prepare("SELECT 1 FROM positions WHERE bus_id = 'BUS-SOBRANTE1'").get(), undefined);
   assert.equal((d.prepare("SELECT COUNT(*) AS total FROM buses WHERE bus_id = 'BUS-AJENO-1'").get() as { total: number }).total, 1);
 });
 
@@ -232,16 +235,21 @@ test('los primeros ocho buses arrancan de inmediato sin esperar el limitador HTT
   assert.deepEqual(arranques, Array(40).fill(0));
 });
 
-test('un relevo espera dos llegadas al mismo terminal y despacha dos buses juntos', () => {
-  const llegadas: string[] = [];
+// Uno llega y uno sale: el relevo de a dos dejaba al primero quieto en la
+// terminal esperando pareja y despachaba dos buses juntos, que rodaban
+// pegados toda la vuelta (dueño, 2026-10-26: «hay 8 en el mismo lugar»).
+test('un relevo despacha un bus por cada llegada, el que más lleva esperando', () => {
   const esperando = ['BUS-ESP001', 'BUS-ESP002'];
-  assert.equal(relevoTerminal(llegadas, 'BUS-LLE001', esperando), null);
-  assert.deepEqual(relevoTerminal(llegadas, 'BUS-LLE002', esperando), {
-    retirar: ['BUS-LLE001', 'BUS-LLE002'],
-    salen: ['BUS-ESP001', 'BUS-ESP002'],
-  });
-  assert.deepEqual(llegadas, []);
+  assert.deepEqual(relevoTerminal('BUS-LLE001', esperando), { retirar: 'BUS-LLE001', sale: 'BUS-ESP001' });
+  assert.deepEqual(esperando, ['BUS-ESP002', 'BUS-LLE001']);
+  assert.deepEqual(relevoTerminal('BUS-LLE002', esperando), { retirar: 'BUS-LLE002', sale: 'BUS-ESP002' });
   assert.deepEqual(esperando, ['BUS-LLE001', 'BUS-LLE002']);
+});
+
+test('sin nadie esperando, el que llega da la vuelta solo', () => {
+  const esperando: string[] = [];
+  assert.deepEqual(relevoTerminal('BUS-LLE001', esperando), { retirar: 'BUS-LLE001', sale: 'BUS-LLE001' });
+  assert.deepEqual(esperando, []);
 });
 
 test('la velocidad demo respeta rectas, curvas y frenadas suaves deterministas', () => {
