@@ -74,6 +74,8 @@ const mes = reparto(monthCells), semana = reparto(semanaCells);
 // Distancia de variación total: la mitad de lo que difieren los repartos.
 const semanaContraMes = [...new Set([...mes.keys(), ...semana.keys()])]
   .reduce((sum, k) => sum + Math.abs((mes.get(k) ?? 0) - (semana.get(k) ?? 0)), 0) / 2;
-const output = { semanaContraMes, celdasCalientes, fueraDeCalle, maxVisibleDistance, tramosConCalor, firstCount, secondCount, thirdCount, sentinel, realCount, daily, visiblePeak, peakCells, todayRank, localMidnight, visibleHours, offRouteVisible, rawOffRoute, beyondLimit, maxHour, peaksByCompany, addedRows, nextHourRows, minHour: limits.min, threshold: K_BUSQUEDAS, totals };
+const formas = ['EMP-01', 'EMP-03'].flatMap(companyId => rankingBusquedas(companyId, now - 30 * 86400000, now + 1)
+  .map(route => ({ routeId: route.routeId, horaPico: route.horaPico, porHora: route.porHora })));
+const output = { formas, semanaContraMes, celdasCalientes, fueraDeCalle, maxVisibleDistance, tramosConCalor, firstCount, secondCount, thirdCount, sentinel, realCount, daily, visiblePeak, peakCells, todayRank, localMidnight, visibleHours, offRouteVisible, rawOffRoute, beyondLimit, maxHour, peaksByCompany, addedRows, nextHourRows, minHour: limits.min, threshold: K_BUSQUEDAS, totals };
 closeDb();
 process.stdout.write(JSON.stringify(output));

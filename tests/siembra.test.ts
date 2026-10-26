@@ -206,6 +206,7 @@ test('calor de demo varía, se completa por hora y reemplaza su versión sin toc
   const dato = JSON.parse(hijo.stdout.trim().split('\n').at(-1) ?? '') as {
     firstCount: number; secondCount: number; thirdCount: number; sentinel: number; realCount: number;
     daily: Array<{ day: string; n: number }>; visiblePeak: number; visibleHours: number[]; maxVisibleDistance: number; semanaContraMes: number; fueraDeCalle: number; celdasCalientes: number; tramosConCalor: number; offRouteVisible: number; rawOffRoute: number; beyondLimit: number; maxHour: number; minHour: number; peaksByCompany: number[]; addedRows: number; nextHourRows: number;
+    formas: Array<{ routeId: string; horaPico: number | null; porHora: number[] }>;
     totals: Array<{ routeId: string; total: number }>; peakCells: { n: number; max: number }; todayRank: { routeId: string; horaPico: number | null }; localMidnight: number;
   };
   assert.equal(dato.secondCount, dato.firstCount);
@@ -216,6 +217,26 @@ test('calor de demo varía, se completa por hora y reemplaza su versión sin toc
   assert.equal(dato.sentinel, 9);
   const totals = dato.totals.map(row => row.total);
   assert.ok(Math.max(...totals) / Math.min(...totals) >= 3);
+  // Toda ruta se llena en hora pico (6 a 9 a. m. o 4 a 8 p. m.), pero cada
+  // una a su manera (dueño, 2026-10-26): ninguna es la curva de otra
+  // escalada, y a las 5 a. m. ya hay quien busca.
+  const forma = (porHora: number[]) => porHora.map(n => n / Math.max(...porHora));
+  for (const ruta of dato.formas) {
+    assert.ok(ruta.horaPico !== null && ((ruta.horaPico >= 6 && ruta.horaPico <= 8) || (ruta.horaPico >= 16 && ruta.horaPico <= 19)),
+      `${ruta.routeId} con pico a las ${ruta.horaPico}`);
+    assert.ok(forma(ruta.porHora)[5] >= 0.05, `${ruta.routeId} sin nadie a las 5 a. m.`);
+  }
+  for (let i = 0; i < dato.formas.length; i++) {
+    for (let j = i + 1; j < dato.formas.length; j++) {
+      const a = forma(dato.formas[i].porHora), b = forma(dato.formas[j].porHora);
+      const mayor = Math.max(...a.map((v, h) => Math.abs(v - b[h])));
+      assert.ok(mayor >= 0.12, `${dato.formas[i].routeId} y ${dato.formas[j].routeId} difieren ${mayor.toFixed(2)}`);
+    }
+  }
+  // El total de cada ruta no sube en escalera pareja.
+  const orden = [...totals].sort((a, b) => b - a);
+  const saltos = orden.slice(1).map((t, i) => orden[i] - t);
+  assert.ok(Math.max(...saltos) >= 2 * Math.min(...saltos), `saltos: ${saltos.join(',')}`);
   assert.ok(dato.visiblePeak >= 15, `celdas visibles en pico: ${dato.visiblePeak}; datos=${JSON.stringify(dato.peakCells)} ruta=${JSON.stringify(dato.todayRank)}`);
   assert.ok(dato.visibleHours.every(n => n >= 30), `visibles por hora 6-21: ${dato.visibleHours.join(",")}`);
   // El calor va por donde pasa la ruta, nunca lejos (dueño, 2026-10-26:

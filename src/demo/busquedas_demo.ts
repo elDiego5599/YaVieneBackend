@@ -8,7 +8,7 @@ import { dentroDeZona } from '../security/zona';
 type Punto = { lat: number; lon: number };
 type Ruta = { routeId: string; name?: string; waypoints: Punto[] };
 type Celda = Punto & { key: string };
-const VERSION = 'busquedas-demo-v4';
+const VERSION = 'busquedas-demo-v5';
 const HORA = 3_600_000;
 const DIA = 24 * HORA;
 const MLAT = 111_320;
@@ -79,20 +79,27 @@ function repartir(total: number, pesos: number[], semilla: number): number[] {
   });
 }
 
+// Toda ruta se llena en la mañana (6 a 8) y en la tarde (4 a 6 y media),
+// pero cada una a su hora, con su alto y su ancho, un mediodía propio y un
+// valle que no es plano (dueño, 2026-10-26: las rutas se veían calcadas).
+// La de Uninorte suma el mediodía de los estudiantes, sin pasar la punta.
 function perfil(routeId: string, nombre?: string): number[] {
-  const weights = Array.from({ length: 24 }, (_, h) => h >= 6 && h <= 21 ? 0.6 : 0.01) as number[];
-  if (nombre?.toLocaleLowerCase('es').includes('uninorte')) {
-    for (const [hora, peso] of [[6, 3.4], [7, 1.9], [12, 3.1], [13, 1.8], [17, 3.3], [18, 1.9]] as Array<[number, number]>) weights[hora] += peso;
-    return weights;
-  }
-  const seed = hash(`${routeId}:perfil`), windows: Array<[number, number]> = [[5, 7], [7, 9], [12, 14], [17, 19], [19, 21]];
-  const first = seed % windows.length;
-  for (let i = 0; i < 3; i++) {
-    const [start, end] = windows[(first + i) % windows.length];
-    const height = i === 0 ? 5.5 : 1.4 + ((seed >>> (i * 5)) % 8) / 10;
-    for (let h = start; h <= end; h++) weights[h] += height * (h === start || h === end ? 0.72 : 1);
-  }
-  return weights;
+  const azar = (que: string) => (hash(`${routeId}:perfil:${que}`) % 1001) / 1000;
+  const campana = (h: number, centro: number, ancho: number) => Math.exp(-((h - centro) ** 2) / (2 * ancho ** 2));
+  const manana = 6.5 + 1.5 * azar('mañana'), tarde = 16.5 + 2 * azar('tarde');
+  const altoManana = 2.5 + 3 * azar('alto mañana'), altoTarde = 2.5 + 3 * azar('alto tarde');
+  const anchoManana = 0.7 + 0.6 * azar('ancho mañana'), anchoTarde = 0.8 + 0.7 * azar('ancho tarde');
+  const uninorte = nombre?.toLocaleLowerCase('es').includes('uninorte') ?? false;
+  const mediodia = 12 + azar('mediodía');
+  const altoMediodia = uninorte ? 0.75 * Math.min(altoManana, altoTarde) : 0.3 + 1.2 * azar('alto mediodía');
+  const valle = 0.3 + 0.3 * azar('valle');
+  return Array.from({ length: 24 }, (_, h) => {
+    if (h < 5 || h > 22) return 0.01;
+    // A las 5 ya sale la gente del primer turno; a las 10 de la noche quedan pocos.
+    const servicio = h === 22 ? 0.5 : 1;
+    return (valle * servicio + altoManana * campana(h, manana, anchoManana) + altoMediodia * campana(h, mediodia, 0.8)
+      + altoTarde * campana(h, tarde, anchoTarde)) * (0.88 + azar(`hora ${h}`) * 0.24);
+  });
 }
 
 /** Agrega calor de demo idempotente por hora y celda. */
@@ -117,7 +124,9 @@ export function sembrarBusquedasDemo(ahora = Date.now()): void {
       const foci = focosRuta(route_id, route.waypoints);
       const routeSeed = hash(route_id);
       const routeRank = demo.findIndex(item => item.route_id === route_id);
-      const daily = 300 + (demo.length - routeRank - 1) * 175 + routeSeed % 80;
+      // Por orden, pero sin escalera pareja: cada ruta suma de 0 a 150 al día,
+      // menos que el paso de 175, así el orden queda y los saltos no se calcan.
+      const daily = 300 + (demo.length - routeRank - 1) * 175 + routeSeed % 151;
       // Sin piso: entre focos la ruta queda sin calor, y a los lados de la
       // calle se apaga en unos 250 m. Al cubo, para que la hora pico junte
       // sus búsquedas en el foco y se vea (K_BUSQUEDAS por celda).
