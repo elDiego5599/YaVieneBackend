@@ -192,6 +192,11 @@ export function decidirVisibilidadTerminal(
   // desde el origen del viaje anterior. Reancla el umbral al primer punto
   // observado con el nuevo sentido; después exige dos fijaciones con avance.
   if (cambioSentido) siguiente.fraccionAlOcultar = orientada;
+  // La terminal es el primer punto del recorrido: ocultarse al cerrar la
+  // vuelta es estar al inicio de la siguiente.
+  if (siguiente.fraccionAlOcultar !== undefined && siguiente.fraccionAlOcultar >= FRACCION_LLEGADA) {
+    siguiente.fraccionAlOcultar = 0;
+  }
   const referenciaSalida = siguiente.fraccionAlOcultar;
   if (referenciaSalida === undefined && orientada <= FRACCION_INICIO) {
     siguiente.fraccionAlOcultar = orientada;

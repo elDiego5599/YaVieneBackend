@@ -168,3 +168,21 @@ test('ruta, terminal, geometría o sentido ausentes fallan abiertos y explícito
   const sentidoInferido = decidirVisibilidadTerminal(enRecta(0.6, { sentido: undefined, capturedAt: 2_000 }), mitadSinSentido.estado);
   assert.equal(sentidoInferido.estado.sentido, 'ida');
 });
+
+// «La terminal siempre es el primer punto del recorrido» (dueño,
+// 2026-10-27): en una ruta de vuelta, el bus que se oculta al cerrar la
+// vuelta está en la misma terminal donde empieza la siguiente.
+test('en ruta de vuelta, el bus oculto al cerrar la vuelta reaparece al salir del primer punto', () => {
+  const vuelta: PuntoRuta[] = [A, { lat: 10.01, lon: -74 }, { lat: 10.01, lon: -74.01 },
+    { lat: 10, lon: -74.01 }, A];
+  const punto: EntradaVisibilidad = {
+    busId: 'BUS-V', routeId: 'R-V', lat: 10, lon: -74.0003,
+    speedKmh: 0, capturedAt: 1_000, sentido: 'ida', geometria: vuelta,
+  };
+  const llega = decidirVisibilidadTerminal(punto, estado(true, 0.97, 'R-V'));
+  const oculto = decidirVisibilidadTerminal({ ...punto, capturedAt: 2_100 }, llega.estado);
+  assert.equal(oculto.visible, false, 'quieto al cerrar la vuelta');
+  const parte = decidirVisibilidadTerminal({ ...punto, lat: 10.0015, lon: -74, capturedAt: 3_000, speedKmh: 25 }, oculto.estado);
+  const sale = decidirVisibilidadTerminal({ ...punto, lat: 10.002, lon: -74, capturedAt: 3_400, speedKmh: 25 }, parte.estado);
+  assert.equal(sale.visible, true, 'ya salió de la terminal en la vuelta nueva');
+});
