@@ -37,7 +37,7 @@ for (let i = 1; i <= N_BUSES; i++) {
   busSpecs.push({
     busId, phone,
     token: signToken({
-      sub: `d-h5-${i}`, driverId: `d-h5-${i}`, phoneNumber: phone, role: 'driver',
+      sub: `d-h5-${i}`, deviceId: `d-h5-${i}`, identifier: phone, role: 'device',
       companyId: COMPANY_ID, busId, routeId: ROUTE_ID, sessionId: `h5-${busId}-${now}`,
     }),
   });

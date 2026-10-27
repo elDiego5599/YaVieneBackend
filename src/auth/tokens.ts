@@ -84,18 +84,11 @@ export function verifyToken(token: string): TokenPayload | null {
       return decoded as AdminTokenPayload;
     }
 
-    const isLegacyDriver = decoded.role === 'driver';
-    const requiredStrings = isLegacyDriver
-      ? ['sub', 'driverId', 'phoneNumber', 'companyId', 'busId', 'routeId', 'sessionId']
-      : ['sub', 'deviceId', 'identifier', 'companyId', 'busId', 'routeId', 'sessionId'];
+    const requiredStrings = ['sub', 'deviceId', 'identifier', 'companyId', 'busId', 'routeId', 'sessionId'];
     if (!requiredStrings.every((key) => typeof decoded[key] === 'string' && decoded[key])) {
       return null;
     }
-    if (decoded.role !== 'device' && !isLegacyDriver) return null;
-    if (isLegacyDriver) {
-      const { driverId, phoneNumber, ...claims } = decoded;
-      return { ...claims, deviceId: driverId, identifier: phoneNumber, role: 'device' } as DeviceTokenPayload;
-    }
+    if (decoded.role !== 'device') return null;
     return decoded as DeviceTokenPayload;
   } catch {
     return null;

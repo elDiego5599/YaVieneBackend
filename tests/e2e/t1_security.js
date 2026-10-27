@@ -122,7 +122,7 @@ async function t1_4_jwt_and_session() {
 
   // 2. JWT expirado (firmado con expiresIn negativo)
   const expired = jwt.sign({
-    sub: 'd1', driverId: 'd1', phoneNumber: DRIVER_A, role: 'driver',
+    sub: 'd1', deviceId: 'd1', identifier: DRIVER_A, role: 'device',
     companyId: 'EMP-01', busId: 'BUS-WFK042', routeId: 'R-101', sessionId: 'expired-sess',
   }, SECRET, { expiresIn: '-60s', issuer: 'ya-viene-backend', audience: 'ya-viene-mqtt' });
   const bad2 = await new Promise((resolve) => {

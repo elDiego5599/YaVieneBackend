@@ -128,7 +128,7 @@ Socket.io en la ruta `/ws` (`src/socket/handler.ts`). Dos clases de sala:
 | `admin:<companyId>` | el panel, con su token de admin | todos los buses de su empresa |
 
 Lo que sale por cada una **no es lo mismo**: al pasajero se le quita el
-teléfono del conductor y el identificador de empresa (`toPublicPosition`).
+identificador del equipo y el de la empresa (`toPublicPosition`).
 El panel sí los ve, porque son suyos.
 
 La foto de una ruta (`positions:batch` y `GET /api/routes/:routeId/positions`,
@@ -231,9 +231,10 @@ sesión del panel. Habría que sacarla a otro origen o volver a exigir
 ## Las tres cosas que más sorprenden
 
 1. **No hay app de conductor y no va a haberla.** El GPS es hardware montado
-   en el bus. Lo que queda en el código con nombre de conductor —la tabla
-   `drivers`, `driver_sessions`, el `role: 'device'` del token— es la
-   credencial del equipo, no de una persona.
+   en el bus. Lo que queda en el código con nombre de conductor —las tablas
+   `drivers` y `driver_sessions`— es la credencial del equipo, no de una
+   persona. El token lleva `role: 'device'`; el viejo `role: 'driver'` ya no
+   entra.
 2. **Una desconexión no borra el bus.** Se queda donde estaba y pasa a «sin
    señal» a los 5 minutos. Un bus quieto en un trancón no tiene posición
    nueva que mandar y no por eso está apagado.

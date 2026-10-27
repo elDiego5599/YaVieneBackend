@@ -66,7 +66,7 @@ Content-Type: application/json
 {"identifier": "<identificador del equipo>", "secret": "<secreto del equipo>"}
 ```
 
-`POST /api/auth/login` sigue disponible durante la transición y acepta el
+`POST /api/auth/login` sigue disponible para el equipo con línea y PIN (D2) y acepta el
 cuerpo anterior `{ "phoneNumber": "…", "pin": "…" }` (también `busId` y
 `routeId` opcionales). Ambos endpoints emiten un token con rol `device`.
 

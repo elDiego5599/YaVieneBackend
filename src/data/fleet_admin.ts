@@ -113,11 +113,9 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     SELECT b.bus_id, b.company_id, b.visible, b.en_terminal, b.plate_number, b.interno, b.route_id AS bus_route_id,
            b.tipologia, b.capacity,
            p.route_id, p.lat, p.lon, p.heading, p.speed_kmh, p.sentido,
-           p.timestamp, p.captured_at, p.sequence, p.is_ghost,
-           d.name AS driver_name
+           p.timestamp, p.captured_at, p.sequence, p.is_ghost
     FROM buses b
     LEFT JOIN positions p ON p.bus_id = b.bus_id
-    LEFT JOIN gps_devices d ON d.device_id = p.device_id
     WHERE b.company_id = ?
     ORDER BY b.bus_id ASC
   `).all(companyId) as {
@@ -140,7 +138,6 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     captured_at: number | null;
     sequence: number | null;
     is_ghost: number | null;
-    driver_name: string | null;
   }[];
 
   return rows.map((row) => ({
@@ -151,7 +148,6 @@ export function getFleetPositions(companyId: string): FleetBus[] {
     interno: row.interno ?? '',
     tipologia: row.tipologia ?? 'SENCILLO',
     capacidad: typeof row.capacity === 'number' && row.capacity > 0 ? row.capacity : 40,
-    driverName: row.driver_name,
     visible: row.visible === 1,
     enTerminal: row.en_terminal === 1,
     // Una fila en `positions` sólo dice que este bus reportó alguna vez. El
@@ -265,7 +261,6 @@ export function createBus(
     interno: resolvedInterno,
     tipologia,
     capacidad,
-    driverName: null,
     visible: false,
     enTerminal: false,
     online: false,

@@ -197,7 +197,7 @@ test('JWT validates canonical claims and rejects tampering', () => {
   assert.equal(verifyToken(`${token}tampered`), null);
 });
 
-test('JWT de equipo y token legado normalizan la identidad; rechaza claims incompletos', () => {
+test('JWT de equipo normaliza la identidad; rechaza el rol driver y claims incompletos', () => {
   const device = signToken({
     sub: 'device-1', deviceId: 'device-1', identifier: 'gps-001', role: 'device',
     companyId: 'EMP-01', busId: 'BUS-WFK042', routeId: 'R-101', sessionId: 'session-1',
@@ -214,11 +214,8 @@ test('JWT de equipo y token legado normalizan la identidad; rechaza claims incom
   }, process.env.JWT_SECRET!, {
     algorithm: 'HS256', issuer: 'ya-viene-backend', audience: 'ya-viene-mqtt', expiresIn: '24h',
   });
-  const verifiedLegacy = verifyToken(legacy);
-  assert.equal(verifiedLegacy?.role, 'device');
-  assert.equal(verifiedLegacy?.deviceId, 'device-1');
-  assert.equal(verifiedLegacy?.identifier, 'gps-001');
-  assert.equal(verifiedLegacy?.sessionId, 'session-1');
+  // No hay app de conductor: el token viejo con rol driver ya no entra.
+  assert.equal(verifyToken(legacy), null);
 
   const incomplete = jwt.sign({ sub: 'device-1', role: 'device' }, process.env.JWT_SECRET!, {
     algorithm: 'HS256', issuer: 'ya-viene-backend', audience: 'ya-viene-mqtt', expiresIn: '24h',

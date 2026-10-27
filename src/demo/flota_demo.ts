@@ -197,7 +197,7 @@ export function construirFlota(): BusDemo[] {
   return flota;
 }
 
-/** Marca generaciones anteriores solo con su firma de conductor simulada. */
+/** Marca generaciones anteriores solo con la firma de su equipo simulado (antes «Conductor», hoy «Equipo»). */
 function marcarFlotaAnterior(flota: BusDemo[]): void {
   if (flota.length === 0 || EMPRESAS.length === 0) return;
   const rutas = [...new Map(flota.map((bus) => [`${bus.companyId}:${bus.routeId}`, {
@@ -222,7 +222,7 @@ function marcarFlotaAnterior(flota: BusDemo[]): void {
     FROM buses b JOIN drivers d ON d.bus_id = b.bus_id
     WHERE b.company_id IN (${EMPRESAS.map(() => '?').join(',')})
       AND d.company_id = b.company_id AND d.route_id = b.route_id
-      AND d.name = 'Conductor ' || d.phone_number
+      AND d.name IN ('Equipo ' || d.phone_number, 'Conductor ' || d.phone_number)
   `).all(...EMPRESAS) as Array<{ bus_id: string; company_id: string; route_id: string; phone_number: string }>;
   const marcar = getDb().prepare('UPDATE buses SET is_demo = 1 WHERE bus_id = ? AND company_id = ?');
   for (const fila of filas) {
@@ -264,11 +264,11 @@ function resolverColisiones(flota: BusDemo[]): BusDemo[] {
  * Retira los ids viejos de las empresas demo con `deleteBus`, que también
  * avisa a los pasajeros y a los paneles que los tenían en pantalla. Y da de
  * alta cada bus con su placa antes de que el simulador se registre: el
- * registro del conductor solo crea el bus por su id, y sin `plate_number` el
+ * registro del equipo solo crea el bus por su id, y sin `plate_number` el
  * panel enseñaba «BUS-ABC123». Una placa ya cambiada desde el panel se
  * respeta. La columna `is_demo` conserva la procedencia aunque el ID sea una
  * placa normal; las generaciones anteriores se reconocen por su teléfono y
- * nombre de conductor deterministas. Una colisión con un bus ajeno recibe
+ * nombre de equipo deterministas. Una colisión con un bus ajeno recibe
  * otra placa para mantener los ocho activos y ocho relevos.
  */
 export function prepararFlota(flota: BusDemo[]): BusDemo[] {
@@ -416,7 +416,7 @@ function geometriaBus(bus: BusDemo): Pick<EstadoBus, 'puntos' | 'tramos' | 'long
 
 async function pedirToken(estado: EstadoBus): Promise<string> {
   const { bus } = estado;
-  const driver = registerDriver(bus.telefono, `Conductor ${bus.telefono}`, bus.routeId, {
+  const driver = registerDriver(bus.telefono, `Equipo ${bus.telefono}`, bus.routeId, {
     companyId: bus.companyId, busId: bus.busId,
   });
   if (driver === 'taken') throw new Error('bus asignado a otra empresa');

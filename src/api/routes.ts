@@ -279,7 +279,7 @@ addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
   removePositionOwned(params.busId, auth.sessionId);
   revokeSession(auth.sessionId);
   endAssignment(auth.deviceId, params.busId);
-  console.log(`[API] Bus ${params.busId} marcado offline por el conductor`);
+  console.log(`[API] Bus ${params.busId} marcado offline por su equipo`);
   writeJson(res, 200, { status: 'offline', busId: params.busId });
 });
 
@@ -379,7 +379,6 @@ function provisionDriver(
 }
 
 addRoute('POST', '/api/admin/drivers', provisionDriver);
-addRoute('POST', '/api/drivers/register', provisionDriver);
 
 function loginDevice(
   req: IncomingMessage,
@@ -431,17 +430,17 @@ function loginDevice(
       incrementMetric('login.cuenta_bloqueada');
       console.warn(`[Auth] Cuenta …${identifier.slice(-4)} bloqueada ${Math.round(bloqueoMs / 60_000)} min tras ${MAX_FALLOS_PIN_POR_CUENTA} PIN fallidos`);
     }
-    writeError(res, 401, 'INVALID_CREDENTIALS', 'Invalid driver credentials');
+    writeError(res, 401, 'INVALID_CREDENTIALS', 'Invalid device credentials');
     return;
   }
   deviceLoginLockout.acierto(identifier);
 
   if (requestedBusId && requestedBusId !== device.busId) {
-    writeError(res, 403, 'BUS_FORBIDDEN', 'The driver is not assigned to this bus');
+    writeError(res, 403, 'BUS_FORBIDDEN', 'The device is not assigned to this bus');
     return;
   }
   if (requestedRouteId && requestedRouteId !== device.routeId) {
-    writeError(res, 403, 'ROUTE_FORBIDDEN', 'The driver is not assigned to this route');
+    writeError(res, 403, 'ROUTE_FORBIDDEN', 'The device is not assigned to this route');
     return;
   }
 

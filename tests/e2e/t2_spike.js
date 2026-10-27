@@ -39,8 +39,8 @@ const tokens = busIds.map((busId, i) => {
     companyId: COMPANY_ID, busId, routeId: ROUTE_ID,
   });
   return signToken({
-    sub: `d-spike-${i + 1}`, driverId: `d-spike-${i + 1}`, phoneNumber: `9000${String(i + 1).padStart(6, '0')}`,
-    role: 'driver', companyId: COMPANY_ID, busId, routeId: ROUTE_ID, sessionId,
+    sub: `d-spike-${i + 1}`, deviceId: `d-spike-${i + 1}`, identifier: `9000${String(i + 1).padStart(6, '0')}`,
+    role: 'device', companyId: COMPANY_ID, busId, routeId: ROUTE_ID, sessionId,
   });
 });
 

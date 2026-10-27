@@ -34,7 +34,6 @@ export interface FleetBus {
   /** Aforo aprox. del bus (sentados + de pie). Lo pone el panel al dar de
    * alta el bus; cada bus lleva el suyo aunque comparta tipología. */
   capacidad: number;
-  driverName: string | null;
   visible: boolean;
   /** Oculto automáticamente por estar quieto en el terminal de su ruta. */
   enTerminal: boolean;

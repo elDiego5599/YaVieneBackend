@@ -29,7 +29,7 @@ for (let i = 1; i <= N_BUSES; i++) {
     companyId: COMPANY_ID, busId, routeId: ROUTE_ID,
   });
   tokens.push(signToken({
-    sub: `d-kill-${i}`, driverId: `d-kill-${i}`, phoneNumber: phone, role: 'driver',
+    sub: `d-kill-${i}`, deviceId: `d-kill-${i}`, identifier: phone, role: 'device',
     companyId: COMPANY_ID, busId, routeId: ROUTE_ID, sessionId: `kill-${busId}-${now}`,
   }));
 }

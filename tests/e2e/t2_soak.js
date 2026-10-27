@@ -42,8 +42,8 @@ for (let i = 1; i <= N_BUSES; i++) {
     const busId = `SOAK-${String(i).padStart(3, '0')}`;
     const auth = { phoneNumber: `9100${String(i).padStart(6, '0')}`, busId, companyId: COMPANY_ID, routeId: ROUTE_ID };
     const token = signToken({
-      sub: `d-soak-${i}`, driverId: `d-soak-${i}`, phoneNumber: auth.phoneNumber,
-      role: 'driver', companyId: COMPANY_ID, busId, routeId: ROUTE_ID,
+      sub: `d-soak-${i}`, deviceId: `d-soak-${i}`, identifier: auth.phoneNumber,
+      role: 'device', companyId: COMPANY_ID, busId, routeId: ROUTE_ID,
       sessionId: `soak-${busId}-${now}`,
     });
     clients.push(new Promise((resolve, reject) => {

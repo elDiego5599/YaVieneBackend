@@ -42,7 +42,7 @@ YA_VIENE_FLOTA_DEMO=0 npm start
 
 | Variable | Uso |
 |----------|-----|
-| `JWT_SECRET` | Obligatoria. Firma los tokens de conductor y de administrador |
+| `JWT_SECRET` | Obligatoria. Firma los tokens del equipo del bus y de administrador |
 | `ADMIN_API_KEY` | Clave de superadministración (`x-admin-key`). Obligatoria en producción |
 | `HTTP_PORT` / `MQTT_PORT` | Por defecto 3000 y 8883 |
 | `HTTP_HOST` | Dónde escucha el HTTP. Por defecto `::` (IPv4 e IPv6 a la vez), y así se queda en el Mac y en Fly. Solo para máquinas sin IPv6, donde `::` falla con `EAFNOSUPPORT`: ahí `127.0.0.1` o `0.0.0.0`. Las pruebas la fijan en `127.0.0.1` (`tests/entorno.ts`) |
@@ -110,7 +110,7 @@ Las lecturas públicas admiten 120 por minuto e IP (`429 TOO_MANY_REQUESTS`).
 
 El punto tiene que caer en la zona de servicio. 120 por minuto e IP.
 
-### Equipo del bus (credencial de conductor)
+### Equipo del bus
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
@@ -122,7 +122,7 @@ El punto tiene que caer en la zona de servicio. 120 por minuto e IP.
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/admin/drivers` | Provisiona una credencial `{ phoneNumber, name, pin, companyId, busId, routeId }`. `/api/drivers/register` es el mismo endpoint. Un `busId` de otra empresa: `409 BUS_TAKEN`. `busId` y `companyId` sin `/`, `+` ni `#` y de hasta 64; `routeId` con forma de ruta; `phoneNumber` hasta 32 y `name` hasta 120, sin caracteres de control: si no, `400 INVALID_DRIVER_PROVISION` |
+| POST | `/api/admin/drivers` | Provisiona una credencial `{ phoneNumber, name, pin, companyId, busId, routeId }`. Un `busId` de otra empresa: `409 BUS_TAKEN`. `busId` y `companyId` sin `/`, `+` ni `#` y de hasta 64; `routeId` con forma de ruta; `phoneNumber` hasta 32 y `name` hasta 120, sin caracteres de control: si no, `400 INVALID_DRIVER_PROVISION` |
 | POST | `/api/admin/empresas/:companyId/admin` | Crea o actualiza la cuenta de panel `{ username, password }` (12+ caracteres) |
 | GET | `/api/metrics` | Contadores operativos |
 
