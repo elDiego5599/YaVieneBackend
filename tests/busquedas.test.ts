@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -7,9 +8,13 @@ import test from 'node:test';
 
 const tmp = mkdtempSync(join(tmpdir(), 'yaviene-busquedas-'));
 process.env.YA_VIENE_DB_PATH = join(tmp, 'test.db');
+process.env.JWT_SECRET = randomBytes(32).toString('hex');
 const { handleAPI } = require('../src/api/routes') as typeof import('../src/api/routes');
 const { getDb } = require('../src/data/database') as typeof import('../src/data/database');
 const { addCompanyRoute } = require('../src/data/routes_store') as typeof import('../src/data/routes_store');
+const { createOrUpdateCompanyAdmin } = require('../src/data/empresas') as typeof import('../src/data/empresas');
+const { signToken } = require('../src/auth/tokens') as typeof import('../src/auth/tokens');
+const { hashSecret } = require('../src/auth/passwords') as typeof import('../src/auth/passwords');
 const { calorBusquedas, horaBogota, limpiarBusquedas, PASO_LAT, PASO_LNG, rankingBusquedas, registrarBusqueda } = require('../src/data/busquedas') as typeof import('../src/data/busquedas');
 const server = createServer((req, res) => { if (!handleAPI(req, res)) { res.writeHead(404); res.end(); } });
 let base = '';
@@ -70,4 +75,30 @@ test('ranking por hora local, aislamiento, k=5 y retención de 13 meses', () => 
   assert.equal(calorBusquedas('EMP-AJENA', 'R-778', desde, hasta)?.length, 0);
   registrarBusqueda('R-777', null, null, instante - 397 * 24 * 60 * 60_000);
   assert.ok(limpiarBusquedas(instante) >= 1);
+});
+
+test('el panel cuenta un rango de varios días, sin lo de fuera, y rechaza uno invertido', async () => {
+  getDb().prepare('DELETE FROM busquedas WHERE route_id = ?').run('R-777');
+  getDb().prepare(
+    'INSERT OR IGNORE INTO empresas (company_id, name, created_at) VALUES (?, ?, ?)',
+  ).run('EMP-BUSQUEDAS', 'Empresa búsquedas', Date.now());
+  const admin = createOrUpdateCompanyAdmin('EMP-BUSQUEDAS', 'busquedasadmin', hashSecret('password123456'));
+  const token = signToken({
+    sub: admin.adminId, role: 'admin', companyId: 'EMP-BUSQUEDAS', username: admin.username, tv: admin.tokenVersion,
+  });
+  // Del 20 al 25 de octubre en Barranquilla: medianoche local = 05:00 UTC.
+  registrarBusqueda('R-777', null, null, Date.parse('2026-10-19T23:00:00.000Z')); // 19 oct, fuera
+  registrarBusqueda('R-777', null, null, Date.parse('2026-10-20T06:00:00.000Z')); // 20 oct, 1 a. m.
+  registrarBusqueda('R-777', null, null, Date.parse('2026-10-22T17:00:00.000Z'));
+  registrarBusqueda('R-777', null, null, Date.parse('2026-10-26T04:30:00.000Z')); // 25 oct, 11 p. m.
+  registrarBusqueda('R-777', null, null, Date.parse('2026-10-26T05:00:00.000Z')); // 26 oct, fuera
+  const pedir = (desde: string, hasta: string) => fetch(
+    `${base}/api/panel/busquedas?desde=${desde}&hasta=${hasta}`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  const respuesta = await pedir('2026-10-20T05:00:00.000Z', '2026-10-26T05:00:00.000Z');
+  assert.equal(respuesta.status, 200);
+  const { rutas } = await respuesta.json() as { rutas: { routeId: string; total: number }[] };
+  assert.deepEqual(rutas.map(({ routeId, total }) => ({ routeId, total })), [{ routeId: 'R-777', total: 3 }]);
+  assert.equal((await pedir('2026-10-26T05:00:00.000Z', '2026-10-20T05:00:00.000Z')).status, 400);
 });
