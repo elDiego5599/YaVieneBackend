@@ -63,15 +63,16 @@ const COOLITORAL = [
   company_id: 'EMP-03', route_id, name, terminal_a, terminal_b,
 }));
 
-// Coochofal entra con la migración 37 (dueño, 2026-10-28), también con los
-// identificadores de sus trazados en `rutas.json` (KMZ de la empresa).
+// Coochofal entra con la migración 37 y la 38 le pone los nombres oficiales
+// (dueño, 2026-10-28), con los identificadores de sus trazados en
+// `rutas.json` (KMZ de la empresa).
 const COOCHOFAL = [
-  ['R-111', 'A15 Soledad El Golf', 'Soledad, La Central', 'El Golf'],
-  ['R-112', 'C2 Villa Valery Centro', 'Villa Valery', 'Centro'],
-  ['R-113', 'C4 Villa Valery San Francisco', 'Villa Valery', 'San Francisco'],
-  ['R-114', 'C9 Villa Valery Santa Ana', 'Villa Valery', 'Santa Ana'],
-  ['R-115', 'C18 Villa Valery Santa Ana', 'Villa Valery', 'Santa Ana'],
-  ['R-116', 'D20 Villa Valery El Golf', 'Villa Valery', 'El Golf'],
+  ['R-111', 'A15 La Central-Calle 84', 'La Central', 'Calle 84'],
+  ['R-112', 'C2 Ruta C-2', 'Soledad 2000', 'Centro'],
+  ['R-113', 'C4 Ruta C4', 'Los Robles', 'Vía 40'],
+  ['R-114', 'C9 Ruta C9', '7 de Abril', 'Prado'],
+  ['R-115', 'C18 Ruta C18', '7 de Abril', 'Calle 51B'],
+  ['R-116', 'D20 Ruta Victoria Calle 84', 'Cordialidad', 'Calle 84'],
 ].map(([route_id, name, terminal_a, terminal_b]) => ({
   company_id: 'EMP-04', route_id, name, terminal_a, terminal_b,
 }));
@@ -83,7 +84,7 @@ const EMPRESAS = [
 ];
 const CATALOGO = [...SOBUSA, ...COOLITORAL, ...COOCHOFAL];
 
-const SIEMBRA = [9, 12, 16, 27, 28, 37];
+const SIEMBRA = [9, 12, 16, 27, 28, 37, 38];
 
 test('la regla: sembrada en desarrollo, vacía en producción, y la variable manda', () => {
   assert.equal(siembraDemoHabilitada({}), true);
@@ -113,6 +114,16 @@ test('encender la siembra después llena una base que nació vacía', () => {
   const sembrada = abrir('tarde.db', { YA_VIENE_SEED_DEMO: '1' });
   assert.deepEqual(sembrada.empresas, EMPRESAS);
   assert.deepEqual(sembrada.rutas, CATALOGO);
+});
+
+test('una base que corrió la 37 con los nombres provisionales recibe los oficiales', () => {
+  abrir('provisional.db', {});
+  const db = new Database(join(tmp, 'provisional.db'));
+  db.prepare(`UPDATE company_routes SET name = 'C2 Villa Valery Centro', terminal_a = 'Villa Valery'
+              WHERE route_id = 'R-112'`).run();
+  db.prepare('DELETE FROM schema_migrations WHERE version = 38').run();
+  db.close();
+  assert.deepEqual(abrir('provisional.db', {}).rutas, CATALOGO);
 });
 
 test('siembra calor demo al arrancar, respeta búsquedas reales y es idempotente', () => {

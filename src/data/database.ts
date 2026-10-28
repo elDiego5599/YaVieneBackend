@@ -177,6 +177,51 @@ function initSchema(): void {
   // reservadas (`routes_store.ts`), así que ninguna empresa puede ocuparlas
   // mientras tanto y chocar con el índice único de la migración 20.
   const sembrar = siembraDemoHabilitada();
+  // Coochofal y sus seis rutas (dueño, 2026-10-28), igual que Coolitoral en
+  // la 27: los trazados están en `rutas.json` con estos identificadores
+  // (`scripts/convert-rutas.mjs`, desde los KMZ de la empresa), y si otra
+  // empresa ya usa uno, heredaría en el mapa un recorrido de Coochofal: mejor
+  // no arrancar y decirlo. Cada nombre lleva primero el código que la app
+  // pinta en la insignia y detrás el que dio el dueño; los extremos salen de
+  // su descripción de cada recorrido. El upsert deja la siembra repetible.
+  const sembrarCoochofal = (): void => {
+    const coochofal: Record<string, [string, string, string]> = {
+      'R-111': ['A15 La Central-Calle 84', 'La Central', 'Calle 84'],
+      'R-112': ['C2 Ruta C-2', 'Soledad 2000', 'Centro'],
+      'R-113': ['C4 Ruta C4', 'Los Robles', 'Vía 40'],
+      'R-114': ['C9 Ruta C9', '7 de Abril', 'Prado'],
+      'R-115': ['C18 Ruta C18', '7 de Abril', 'Calle 51B'],
+      'R-116': ['D20 Ruta Victoria Calle 84', 'Cordialidad', 'Calle 84'],
+    };
+    const ids = Object.keys(coochofal);
+    const ocupadas = d.prepare(`
+      SELECT route_id FROM company_routes
+      WHERE route_id IN (${ids.map(() => '?').join(', ')}) AND company_id <> 'EMP-04'
+    `).all(...ids) as { route_id: string }[];
+    if (ocupadas.length > 0) {
+      throw new Error(
+        `Las rutas ${ocupadas.map((r) => r.route_id).join(', ')} ya son de otra empresa: `
+        + 'cámbiales el identificador antes de sembrar Coochofal (migraciones 37 y 38).',
+      );
+    }
+    const now = Date.now();
+    d.prepare(`
+      INSERT INTO empresas (company_id, name, created_at)
+      VALUES ('EMP-04', 'Coochofal', ?)
+      ON CONFLICT(company_id) DO UPDATE SET name = 'Coochofal'
+    `).run(now);
+    const upsert = d.prepare(`
+      INSERT INTO company_routes (company_id, route_id, name, terminal_a, terminal_b, created_at)
+      VALUES ('EMP-04', ?, ?, ?, ?, ?)
+      ON CONFLICT (company_id, route_id) DO UPDATE SET
+        name = excluded.name,
+        terminal_a = excluded.terminal_a,
+        terminal_b = excluded.terminal_b
+    `);
+    for (const [routeId, [name, terminalA, terminalB]] of Object.entries(coochofal)) {
+      upsert.run(routeId, name, terminalA, terminalB, now);
+    }
+  };
   const migrations: { version: number; siembra?: true; apply: () => void }[] = [
     {
       version: 1,
@@ -1050,55 +1095,11 @@ function initSchema(): void {
         CREATE INDEX idx_busquedas_hora ON busquedas(hora);
       `),
     },
-    {
-      version: 37,
-      siembra: true,
-      apply: () => {
-        // Coochofal y sus seis rutas (dueño, 2026-10-28), igual que
-        // Coolitoral en la 27: los trazados están en `rutas.json` con estos
-        // identificadores (`scripts/convert-rutas.mjs`, desde los KMZ de la
-        // empresa), y si otra empresa ya usa uno, heredaría en el mapa un
-        // recorrido de Coochofal: mejor no arrancar y decirlo. Los nombres
-        // salen de los barrios donde arranca y voltea cada circuito; los
-        // oficiales los confirma el dueño (FALTANTES).
-        const coochofal: Record<string, [string, string, string]> = {
-          'R-111': ['A15 Soledad El Golf', 'Soledad, La Central', 'El Golf'],
-          'R-112': ['C2 Villa Valery Centro', 'Villa Valery', 'Centro'],
-          'R-113': ['C4 Villa Valery San Francisco', 'Villa Valery', 'San Francisco'],
-          'R-114': ['C9 Villa Valery Santa Ana', 'Villa Valery', 'Santa Ana'],
-          'R-115': ['C18 Villa Valery Santa Ana', 'Villa Valery', 'Santa Ana'],
-          'R-116': ['D20 Villa Valery El Golf', 'Villa Valery', 'El Golf'],
-        };
-        const ids = Object.keys(coochofal);
-        const ocupadas = d.prepare(`
-          SELECT route_id FROM company_routes
-          WHERE route_id IN (${ids.map(() => '?').join(', ')}) AND company_id <> 'EMP-04'
-        `).all(...ids) as { route_id: string }[];
-        if (ocupadas.length > 0) {
-          throw new Error(
-            `Las rutas ${ocupadas.map((r) => r.route_id).join(', ')} ya son de otra empresa: `
-            + 'cámbiales el identificador antes de sembrar Coochofal (migración 37).',
-          );
-        }
-        const now = Date.now();
-        d.prepare(`
-          INSERT INTO empresas (company_id, name, created_at)
-          VALUES ('EMP-04', 'Coochofal', ?)
-          ON CONFLICT(company_id) DO UPDATE SET name = 'Coochofal'
-        `).run(now);
-        const upsert = d.prepare(`
-          INSERT INTO company_routes (company_id, route_id, name, terminal_a, terminal_b, created_at)
-          VALUES ('EMP-04', ?, ?, ?, ?, ?)
-          ON CONFLICT (company_id, route_id) DO UPDATE SET
-            name = excluded.name,
-            terminal_a = excluded.terminal_a,
-            terminal_b = excluded.terminal_b
-        `);
-        for (const [routeId, [name, terminalA, terminalB]] of Object.entries(coochofal)) {
-          upsert.run(routeId, name, terminalA, terminalB, now);
-        }
-      },
-    },
+    { version: 37, siembra: true, apply: sembrarCoochofal },
+    // La 37 sembró nombres provisionales, sacados de los barrios del
+    // recorrido; los oficiales llegaron el mismo día (dueño, 2026-10-28) y
+    // una base que ya corrió la 37 los recibe aquí.
+    { version: 38, siembra: true, apply: sembrarCoochofal },
   ];
 
   for (const migration of migrations) {

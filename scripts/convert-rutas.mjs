@@ -106,55 +106,54 @@ const COOLITORAL_MAP = [
   },
 ];
 
-// Coochofal (EMP-04), sembrada por la migración 37 con estos mismos nombres.
-// Los KMZ los mandó la empresa (2026-10-28). Todos son circuitos cerrados;
-// cinco salen de Villa Valery, en la Circunvalar, y A15 de Soledad, por la
-// Avenida Murillo. El KMZ no trae el nombre de la ruta: el título junta el
-// barrio de salida y el de la vuelta, hasta que el dueño confirme los
-// oficiales (FALTANTES). C9 y C18 voltean los dos en Santa Ana y comparten
-// casi todo el recorrido. Ojo: el archivo de C18 lleva un espacio.
+// Coochofal (EMP-04), sembrada por las migraciones 37 y 38 con estos mismos
+// nombres. Los KMZ los mandó la empresa (2026-10-28). Todos son circuitos
+// cerrados. El KMZ no trae el nombre de la ruta: los oficiales los dio el
+// dueño el mismo día, detrás del código que la app pinta en la insignia, y
+// los extremos salen de su descripción de cada recorrido. Ojo: el archivo
+// de C18 lleva un espacio.
 const COOCHOFAL_MAP = [
   {
     file: 'A15-4159',
     routeId: 'R-111',
-    name: 'A15 Soledad El Golf',
-    terminalA: 'Soledad, La Central',
-    terminalB: 'El Golf',
+    name: 'A15 La Central-Calle 84',
+    terminalA: 'La Central',
+    terminalB: 'Calle 84',
   },
   {
     file: 'C2-4133',
     routeId: 'R-112',
-    name: 'C2 Villa Valery Centro',
-    terminalA: 'Villa Valery',
+    name: 'C2 Ruta C-2',
+    terminalA: 'Soledad 2000',
     terminalB: 'Centro',
   },
   {
     file: 'C4-4135',
     routeId: 'R-113',
-    name: 'C4 Villa Valery San Francisco',
-    terminalA: 'Villa Valery',
-    terminalB: 'San Francisco',
+    name: 'C4 Ruta C4',
+    terminalA: 'Los Robles',
+    terminalB: 'Vía 40',
   },
   {
     file: 'C9-4140',
     routeId: 'R-114',
-    name: 'C9 Villa Valery Santa Ana',
-    terminalA: 'Villa Valery',
-    terminalB: 'Santa Ana',
+    name: 'C9 Ruta C9',
+    terminalA: '7 de Abril',
+    terminalB: 'Prado',
   },
   {
     file: 'C18- 4141',
     routeId: 'R-115',
-    name: 'C18 Villa Valery Santa Ana',
-    terminalA: 'Villa Valery',
-    terminalB: 'Santa Ana',
+    name: 'C18 Ruta C18',
+    terminalA: '7 de Abril',
+    terminalB: 'Calle 51B',
   },
   {
     file: 'D20-4185',
     routeId: 'R-116',
-    name: 'D20 Villa Valery El Golf',
-    terminalA: 'Villa Valery',
-    terminalB: 'El Golf',
+    name: 'D20 Ruta Victoria Calle 84',
+    terminalA: 'Cordialidad',
+    terminalB: 'Calle 84',
   },
 ];
 
