@@ -13,7 +13,7 @@
 // La diferencia es quién los vigila: ahora el backend, que es justo el
 // proceso que tiene que estar vivo para que haya demo.
 //
-// Ruedan Sobusa (EMP-01) y Coolitoral (EMP-03), cada bus a nombre de su
+// Ruedan Sobusa (EMP-01), Coolitoral (EMP-03) y Coochofal (EMP-04), cada bus a nombre de su
 // empresa. Se apaga con YA_VIENE_FLOTA_DEMO=0 —los tests lo hacen: la flota demo completa
 // publicando encima de un test de flota lo vuelven ruido—.
 import { connect, type MqttClient } from 'mqtt';
@@ -50,9 +50,10 @@ export interface BusDemo {
 // despliegue escriba YA_VIENE_FLOTA_DEMO=1.
 const HABILITADA = flotaDemoHabilitada();
 // Las empresas cuya flota rueda, separadas por comas. Coolitoral entró el
-// 2026-10-05 (dueño): sin buses, sus rutas se abrían vacías.
+// 2026-10-05 (dueño): sin buses, sus rutas se abrían vacías; Coochofal, el
+// 2026-10-28.
 const RUTAS_LIMITADAS = process.env.YA_VIENE_FLOTA_RUTAS?.split(',').map((ruta) => ruta.trim()).filter(Boolean);
-const EMPRESAS = (process.env.YA_VIENE_FLOTA_EMPRESA || 'EMP-01,EMP-03')
+const EMPRESAS = (process.env.YA_VIENE_FLOTA_EMPRESA || 'EMP-01,EMP-03,EMP-04')
   .split(',')
   .map((e) => e.trim())
   .filter(Boolean);

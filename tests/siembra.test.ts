@@ -63,13 +63,27 @@ const COOLITORAL = [
   company_id: 'EMP-03', route_id, name, terminal_a, terminal_b,
 }));
 
+// Coochofal entra con la migración 37 (dueño, 2026-10-28), también con los
+// identificadores de sus trazados en `rutas.json` (KMZ de la empresa).
+const COOCHOFAL = [
+  ['R-111', 'A15 Soledad El Golf', 'Soledad, La Central', 'El Golf'],
+  ['R-112', 'C2 Villa Valery Centro', 'Villa Valery', 'Centro'],
+  ['R-113', 'C4 Villa Valery San Francisco', 'Villa Valery', 'San Francisco'],
+  ['R-114', 'C9 Villa Valery Santa Ana', 'Villa Valery', 'Santa Ana'],
+  ['R-115', 'C18 Villa Valery Santa Ana', 'Villa Valery', 'Santa Ana'],
+  ['R-116', 'D20 Villa Valery El Golf', 'Villa Valery', 'El Golf'],
+].map(([route_id, name, terminal_a, terminal_b]) => ({
+  company_id: 'EMP-04', route_id, name, terminal_a, terminal_b,
+}));
+
 const EMPRESAS = [
   { company_id: 'EMP-01', name: 'Sobusa' },
   { company_id: 'EMP-03', name: 'Coolitoral' },
+  { company_id: 'EMP-04', name: 'Coochofal' },
 ];
-const CATALOGO = [...SOBUSA, ...COOLITORAL];
+const CATALOGO = [...SOBUSA, ...COOLITORAL, ...COOCHOFAL];
 
-const SIEMBRA = [9, 12, 16, 27, 28];
+const SIEMBRA = [9, 12, 16, 27, 28, 37];
 
 test('la regla: sembrada en desarrollo, vacía en producción, y la variable manda', () => {
   assert.equal(siembraDemoHabilitada({}), true);
@@ -78,7 +92,7 @@ test('la regla: sembrada en desarrollo, vacía en producción, y la variable man
   assert.equal(siembraDemoHabilitada({ YA_VIENE_SEED_DEMO: '0' }), false);
 });
 
-test('una base nueva de producción nace sin Sobusa ni Coolitoral', () => {
+test('una base nueva de producción nace sin Sobusa, Coolitoral ni Coochofal', () => {
   const base = abrir('produccion.db', { NODE_ENV: 'production' });
   assert.deepEqual(base.empresas, []);
   assert.deepEqual(base.rutas, []);

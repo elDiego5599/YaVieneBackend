@@ -137,7 +137,7 @@ test('arrancar sobre base vieja retira sobrantes demo y deja 8 activos y 8 en te
   for (const ruta of new Set(flota.map((bus) => bus.routeId))) {
     const conteo = d.prepare(`SELECT COUNT(*) AS total, SUM(visible = 1) AS visibles,
                                      SUM(en_terminal = 1) AS terminal
-                              FROM buses WHERE route_id = ? AND company_id IN ('EMP-01', 'EMP-03')`)
+                              FROM buses WHERE route_id = ? AND company_id IN ('EMP-01', 'EMP-03', 'EMP-04')`)
       .get(ruta) as { total: number; visibles: number; terminal: number };
     assert.equal(conteo.visibles, 8, `${ruta}: visibles`);
     assert.equal(conteo.terminal, 8, `${ruta}: terminal`);
@@ -227,6 +227,25 @@ test('Coolitoral sale con dieciséis buses por ruta, a su nombre', () => {
   assert.equal(
     getCompanyBuses('EMP-01').some((b) => coolitoral.some((demo) => demo.busId === b.busId)),
     false,
+  );
+});
+
+// Coochofal (EMP-04, migración 37) rueda igual (dueño, 2026-10-28): sus
+// seis rutas con su flota completa y cada bus en su panel.
+test('Coochofal sale con dieciséis buses por ruta, a su nombre', () => {
+  const flota = construirFlota();
+  const rutas = ['R-111', 'R-112', 'R-113', 'R-114', 'R-115', 'R-116'];
+  const coochofal = flota.filter((b) => b.companyId === 'EMP-04');
+  assert.deepEqual([...new Set(coochofal.map((b) => b.routeId))], rutas);
+  for (const routeId of rutas) {
+    assert.equal(coochofal.filter((b) => b.routeId === routeId).length, 16);
+  }
+
+  prepararFlota(flota);
+  const panel = getCompanyBuses('EMP-04');
+  assert.deepEqual(
+    panel.filter((b) => coochofal.some((demo) => demo.busId === b.busId)).map((b) => b.placa).sort(),
+    coochofal.map((b) => b.placa).sort(),
   );
 });
 

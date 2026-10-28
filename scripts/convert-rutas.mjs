@@ -1,14 +1,15 @@
 /**
- * Convertidor de rutas (KMZ de Sobusa y de Coolitoral → rutas.json)
+ * Convertidor de rutas (KMZ de Sobusa, Coolitoral y Coochofal → rutas.json)
  *
  * Lee los recorridos reales —KMZ de Google Earth que mandó cada empresa— y
  * genera el archivo `rutas.json` que usan el mapa del pasajero y el
  * simulador.
  *
  * Uso:
- *   node scripts/convert-rutas.mjs                # lee ~/Desktop/rutasSobusa y ~/Desktop/rutasCoolitoral
+ *   node scripts/convert-rutas.mjs                # lee ~/Desktop/rutasSobusa, rutasCoolitoral y rutasCoochofal
  *   node scripts/convert-rutas.mjs --kmz=/ruta    # carpeta custom de los KMZ de Sobusa
  *   node scripts/convert-rutas.mjs --coolitoral=/ruta  # carpeta custom de los KMZ de Coolitoral
+ *   node scripts/convert-rutas.mjs --coochofal=/ruta   # carpeta custom de los KMZ de Coochofal
  *   node scripts/convert-rutas.mjs --dry-run      # solo imprime estadísticas
  */
 import { execFileSync } from 'node:child_process';
@@ -23,6 +24,8 @@ const args = process.argv.slice(2);
 const DEFAULT_COOLITORAL_DIR = join(homedir(), 'Desktop', 'rutasCoolitoral');
 const kmzDir = args.find((a) => a.startsWith('--kmz='))?.slice(6) ?? DEFAULT_KMZ_DIR;
 const coolitoralDir = args.find((a) => a.startsWith('--coolitoral='))?.slice(13) ?? DEFAULT_COOLITORAL_DIR;
+const DEFAULT_COOCHOFAL_DIR = join(homedir(), 'Desktop', 'rutasCoochofal');
+const coochofalDir = args.find((a) => a.startsWith('--coochofal='))?.slice(12) ?? DEFAULT_COOCHOFAL_DIR;
 const dryRun = args.includes('--dry-run');
 
 // Mapeo archivo KMZ → ruta en el sistema (los IDs R-101..R-106 ya están en la
@@ -103,6 +106,58 @@ const COOLITORAL_MAP = [
   },
 ];
 
+// Coochofal (EMP-04), sembrada por la migración 37 con estos mismos nombres.
+// Los KMZ los mandó la empresa (2026-10-28). Todos son circuitos cerrados;
+// cinco salen de Villa Valery, en la Circunvalar, y A15 de Soledad, por la
+// Avenida Murillo. El KMZ no trae el nombre de la ruta: el título junta el
+// barrio de salida y el de la vuelta, hasta que el dueño confirme los
+// oficiales (FALTANTES). C9 y C18 voltean los dos en Santa Ana y comparten
+// casi todo el recorrido. Ojo: el archivo de C18 lleva un espacio.
+const COOCHOFAL_MAP = [
+  {
+    file: 'A15-4159',
+    routeId: 'R-111',
+    name: 'A15 Soledad El Golf',
+    terminalA: 'Soledad, La Central',
+    terminalB: 'El Golf',
+  },
+  {
+    file: 'C2-4133',
+    routeId: 'R-112',
+    name: 'C2 Villa Valery Centro',
+    terminalA: 'Villa Valery',
+    terminalB: 'Centro',
+  },
+  {
+    file: 'C4-4135',
+    routeId: 'R-113',
+    name: 'C4 Villa Valery San Francisco',
+    terminalA: 'Villa Valery',
+    terminalB: 'San Francisco',
+  },
+  {
+    file: 'C9-4140',
+    routeId: 'R-114',
+    name: 'C9 Villa Valery Santa Ana',
+    terminalA: 'Villa Valery',
+    terminalB: 'Santa Ana',
+  },
+  {
+    file: 'C18- 4141',
+    routeId: 'R-115',
+    name: 'C18 Villa Valery Santa Ana',
+    terminalA: 'Villa Valery',
+    terminalB: 'Santa Ana',
+  },
+  {
+    file: 'D20-4185',
+    routeId: 'R-116',
+    name: 'D20 Villa Valery El Golf',
+    terminalA: 'Villa Valery',
+    terminalB: 'El Golf',
+  },
+];
+
 // Decimación por distancia mínima (metros) + tope de puntos.
 const MIN_SPACING_M = 80;
 const MAX_POINTS = 500;
@@ -156,6 +211,7 @@ function routeLengthKm(points) {
 const fuentes = [
   ...ROUTE_MAP.map((entry) => ({ entry, dir: kmzDir })),
   ...COOLITORAL_MAP.map((entry) => ({ entry, dir: coolitoralDir })),
+  ...COOCHOFAL_MAP.map((entry) => ({ entry, dir: coochofalDir })),
 ];
 
 const results = [];

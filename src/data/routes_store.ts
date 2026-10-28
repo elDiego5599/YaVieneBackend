@@ -8,13 +8,15 @@ import { getDb } from './database';
  * (`ya_viene_core/assets/data/rutas.json`). No son datos de la demo sino un
  * contrato con la app: una ruta de otra empresa con uno de estos códigos
  * heredaría el trazado de Sobusa (R-101…R-106) o de Coolitoral
- * (R-107, R-109 y R-110) en el mapa, así que el alta los rechaza. R-108 era
+ * (R-107, R-109 y R-110) o de Coochofal (R-111…R-116) en el mapa, así que
+ * el alta los rechaza. R-108 era
  * A2 de Coolitoral, que se quitó (migración 28): sigue reservado porque las
  * apps instaladas antes la dibujan con ese número.
  */
 const RUTAS_CON_TRAZADO_EN_LA_APP = new Set([
   'R-101', 'R-102', 'R-103', 'R-104', 'R-105', 'R-106',
   'R-107', 'R-108', 'R-109', 'R-110',
+  'R-111', 'R-112', 'R-113', 'R-114', 'R-115', 'R-116',
 ]);
 
 /**
@@ -194,7 +196,7 @@ export const MAX_NOMBRE_RUTA = 60;
  */
 export type AddRouteError = 'taken';
 
-/** El número más alto con trazado en la app (R-110): la cuenta sigue desde ahí. */
+/** El número más alto con trazado en la app (R-116): la cuenta sigue desde ahí. */
 const MAYOR_RUTA_RESERVADA = Math.max(
   ...[...RUTAS_CON_TRAZADO_EN_LA_APP].map((id) => parseInt(id.slice(2), 10)),
 );

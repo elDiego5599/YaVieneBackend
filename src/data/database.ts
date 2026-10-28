@@ -1050,6 +1050,55 @@ function initSchema(): void {
         CREATE INDEX idx_busquedas_hora ON busquedas(hora);
       `),
     },
+    {
+      version: 37,
+      siembra: true,
+      apply: () => {
+        // Coochofal y sus seis rutas (dueño, 2026-10-28), igual que
+        // Coolitoral en la 27: los trazados están en `rutas.json` con estos
+        // identificadores (`scripts/convert-rutas.mjs`, desde los KMZ de la
+        // empresa), y si otra empresa ya usa uno, heredaría en el mapa un
+        // recorrido de Coochofal: mejor no arrancar y decirlo. Los nombres
+        // salen de los barrios donde arranca y voltea cada circuito; los
+        // oficiales los confirma el dueño (FALTANTES).
+        const coochofal: Record<string, [string, string, string]> = {
+          'R-111': ['A15 Soledad El Golf', 'Soledad, La Central', 'El Golf'],
+          'R-112': ['C2 Villa Valery Centro', 'Villa Valery', 'Centro'],
+          'R-113': ['C4 Villa Valery San Francisco', 'Villa Valery', 'San Francisco'],
+          'R-114': ['C9 Villa Valery Santa Ana', 'Villa Valery', 'Santa Ana'],
+          'R-115': ['C18 Villa Valery Santa Ana', 'Villa Valery', 'Santa Ana'],
+          'R-116': ['D20 Villa Valery El Golf', 'Villa Valery', 'El Golf'],
+        };
+        const ids = Object.keys(coochofal);
+        const ocupadas = d.prepare(`
+          SELECT route_id FROM company_routes
+          WHERE route_id IN (${ids.map(() => '?').join(', ')}) AND company_id <> 'EMP-04'
+        `).all(...ids) as { route_id: string }[];
+        if (ocupadas.length > 0) {
+          throw new Error(
+            `Las rutas ${ocupadas.map((r) => r.route_id).join(', ')} ya son de otra empresa: `
+            + 'cámbiales el identificador antes de sembrar Coochofal (migración 37).',
+          );
+        }
+        const now = Date.now();
+        d.prepare(`
+          INSERT INTO empresas (company_id, name, created_at)
+          VALUES ('EMP-04', 'Coochofal', ?)
+          ON CONFLICT(company_id) DO UPDATE SET name = 'Coochofal'
+        `).run(now);
+        const upsert = d.prepare(`
+          INSERT INTO company_routes (company_id, route_id, name, terminal_a, terminal_b, created_at)
+          VALUES ('EMP-04', ?, ?, ?, ?, ?)
+          ON CONFLICT (company_id, route_id) DO UPDATE SET
+            name = excluded.name,
+            terminal_a = excluded.terminal_a,
+            terminal_b = excluded.terminal_b
+        `);
+        for (const [routeId, [name, terminalA, terminalB]] of Object.entries(coochofal)) {
+          upsert.run(routeId, name, terminalA, terminalB, now);
+        }
+      },
+    },
   ];
 
   for (const migration of migrations) {
