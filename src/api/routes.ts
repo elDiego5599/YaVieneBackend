@@ -35,6 +35,7 @@ import { MAX_INTERNO, TIPOLOGIAS, MAX_CAPACIDAD, MIN_CAPACIDAD, getBusRouteId, n
 import { esRutaDeEmpresa, isRouteId, MAX_NOMBRE_RUTA } from '../data/routes_store';
 import {
   adminRateLimiter,
+  avisosArmarRateLimiter,
   avisosRateLimiter,
   fleetWriteRateLimiter,
   loginIpRateLimiter,
@@ -1056,6 +1057,10 @@ addRoute('POST', '/api/avisos', (req, res, _params, body) => {
     writeError(res, 404, 'BUS_NOT_FOUND', 'Bus no encontrado');
     return;
   }
+  if (!avisosArmarRateLimiter.allow(requestKey(req, 'avisos:armar'))) {
+    writeError(res, 429, 'DEMASIADOS_AVISOS_IP', 'Demasiados avisos desde esta red, intenta en unos minutos');
+    return;
+  }
   const creado = crearAviso({
     ...punto, busId, routeId, vidaMs: vidaMs ?? VIDA_MAXIMA_MS, radioM: radioM ?? RADIO_AVISO_M,
   });
@@ -1181,6 +1186,7 @@ function rangoBusquedas(req: IncomingMessage) {
   return { desde, hasta, hora };
 }
 addRoute('GET', '/api/panel/busquedas', (req, res) => {
+  if (!guardRate(readRateLimiter, req, res, 'panel:busquedas')) return;
   const auth = authenticateCompanyAdmin(req);
   if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company admin authentication is required'); return; }
   const rango = rangoBusquedas(req);
@@ -1188,6 +1194,7 @@ addRoute('GET', '/api/panel/busquedas', (req, res) => {
   writeJson(res, 200, { rutas: rankingBusquedas(auth.companyId, rango.desde, rango.hasta, rango.hora) });
 });
 addRoute('GET', '/api/panel/busquedas/:routeId/calor', (req, res, params) => {
+  if (!guardRate(readRateLimiter, req, res, 'panel:busquedas')) return;
   const auth = authenticateCompanyAdmin(req);
   if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company admin authentication is required'); return; }
   const rango = rangoBusquedas(req);

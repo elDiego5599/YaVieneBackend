@@ -102,3 +102,21 @@ test('el panel cuenta un rango de varios días, sin lo de fuera, y rechaza uno i
   assert.deepEqual(rutas.map(({ routeId, total }) => ({ routeId, total })), [{ routeId: 'R-777', total: 3 }]);
   assert.equal((await pedir('2026-10-26T05:00:00.000Z', '2026-10-20T05:00:00.000Z')).status, 400);
 });
+
+// AUD29-14: las dos lecturas del panel no tenían tope y un token de empresa
+// podía pedir el calor sin freno. Comparten el de las lecturas de flota (120
+// por minuto) con su propia cuenta, para que leer el calor no gaste la flota.
+test('las lecturas de búsquedas del panel tienen tope por minuto', async () => {
+  const admin = createOrUpdateCompanyAdmin('EMP-BUSQUEDAS', 'busquedasadmin', hashSecret('password123456'));
+  const token = signToken({
+    sub: admin.adminId, role: 'admin', companyId: 'EMP-BUSQUEDAS', username: admin.username, tv: admin.tokenVersion,
+  });
+  const leer = (ruta: string) => fetch(`${base}${ruta}`, { headers: { authorization: `Bearer ${token}` } });
+  // La prueba de arriba ya gastó dos lecturas del mismo cupo: a las 121 a
+  // más tardar tiene que cerrarse, y luego para las dos rutas.
+  let lecturas = 0;
+  while (lecturas < 121 && (await leer(lecturas % 2 ? '/api/panel/busquedas' : '/api/panel/busquedas/R-777/calor')).status === 200) lecturas += 1;
+  assert.ok(lecturas >= 100 && lecturas < 121, `se cerró tras ${lecturas} lecturas`);
+  assert.equal((await leer('/api/panel/busquedas/R-777/calor')).status, 429);
+  assert.equal((await leer('/api/panel/busquedas')).status, 429);
+});

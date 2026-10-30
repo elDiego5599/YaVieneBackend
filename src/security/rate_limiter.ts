@@ -103,6 +103,18 @@ export const fleetWriteRateLimiter = new SlidingWindowRateLimiter(60, 60_000);
 export const avisosRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
 
 /**
+ * Armar un aviso, aparte (AUD29-02). Con solo el tope de arriba una IP armaba
+ * 120 por minuto y llenaba las `MAX_AVISOS` filas en hora y media, y con eso
+ * nadie más podía armar uno. Cada aviso vive hasta 3 h: con 30 cada 10
+ * minutos una IP sostiene como mucho unos 540 vivos, así que llenar la tabla
+ * pide una veintena de IP. 30 deja de sobra a los pasajeros detrás de la
+ * misma IP del operador (CGNAT): arman uno y lo cambian de vez en cuando. Solo
+ * lo gasta un aviso válido que de verdad se va a armar.
+ */
+export const MAX_AVISOS_ARMADOS_POR_IP = 30;
+export const avisosArmarRateLimiter = new SlidingWindowRateLimiter(MAX_AVISOS_ARMADOS_POR_IP, 10 * 60_000);
+
+/**
  * El buzón de problemas y sugerencias (`POST /api/reportes`, D14). Un
  * pasajero escribe uno de vez en cuando: cinco cada diez minutos por IP deja
  * reportar a varios pasajeros detrás de la misma IP del operador y no deja
@@ -239,6 +251,7 @@ const LIMITADORES: Record<string, { readonly size: number }> = {
   fleetWrite: fleetWriteRateLimiter,
   deviceLogin: deviceLoginLockout,
   avisos: avisosRateLimiter,
+  avisosArmar: avisosArmarRateLimiter,
   reportes: reportesRateLimiter,
   lanzamiento: lanzamientoRateLimiter,
   busquedas: busquedasRateLimiter,

@@ -28,6 +28,7 @@ const { getMetrics } = require('../src/observability/metrics') as typeof import(
 const { validateConfig } = require('../src/config') as typeof import('../src/config');
 const fcm = require('../src/push/fcm') as typeof import('../src/push/fcm');
 const avisos = require('../src/data/avisos_push') as typeof import('../src/data/avisos_push');
+const { MAX_AVISOS_ARMADOS_POR_IP } = require('../src/security/rate_limiter') as typeof import('../src/security/rate_limiter');
 
 const PROYECTO = 'yaviene-prueba';
 const EMPRESA = 'AVI-01';
@@ -583,6 +584,34 @@ test('POST /api/avisos con la tabla llena responde 503', async () => {
   const r = await llamar('POST', '/api/avisos', { token: TOKEN, busId, routeId: RUTA, ...PASAJERO });
   assert.equal(r.estado, 503);
   assert.equal((r.cuerpo.error as { code: string }).code, 'AVISOS_LLENOS');
+  limpiar();
+});
+
+// AUD29-02: con 120 por minuto, una sola IP llenaba las 10.000 filas en
+// hora y media y dejaba sin avisos a todos. Armar tiene su propio cupo, que
+// solo gastan los avisos que de verdad se arman (los inválidos no).
+test('POST /api/avisos: una IP arma como mucho 30 avisos cada 10 minutos', async () => {
+  limpiar();
+  const armar = (i: number, ip: string) => fetch(`${base}/api/avisos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip },
+    body: JSON.stringify({ token: `tok-ip-${i}-${'b'.repeat(30)}`, busId, routeId: RUTA, ...PASAJERO }),
+  });
+  for (let i = 0; i < 5; i += 1) {
+    const malo = await fetch(`${base}/api/avisos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '198.51.100.7' },
+      body: JSON.stringify({ token: 'x', busId, routeId: RUTA, ...PASAJERO }),
+    });
+    assert.equal(malo.status, 400);
+  }
+  for (let i = 0; i < MAX_AVISOS_ARMADOS_POR_IP; i += 1) {
+    assert.equal((await armar(i, '198.51.100.7')).status, 201, `aviso ${i}`);
+  }
+  const tope = await armar(99, '198.51.100.7');
+  assert.equal(tope.status, 429);
+  assert.equal(((await tope.json()) as { error: { code: string } }).error.code, 'DEMASIADOS_AVISOS_IP');
+  assert.equal((await armar(100, '198.51.100.8')).status, 201, 'otra IP no comparte el cupo');
   limpiar();
 });
 
