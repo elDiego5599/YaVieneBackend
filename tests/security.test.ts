@@ -7,7 +7,7 @@ process.env.JWT_SECRET = 'test-jwt-secret';
 process.env.ADMIN_API_KEY = 'test-admin-key';
 
 import { hashPin, verifyPin } from '../src/auth/passwords';
-import { signToken, verifyToken } from '../src/auth/tokens';
+import { SESION_ADMIN_MAX_S, signToken, verifyToken } from '../src/auth/tokens';
 import {
   adminRateLimiter,
   avisosRateLimiter,
@@ -230,6 +230,21 @@ test('JWT de panel sin versión de credencial no valida', () => {
   assert.equal(verifyToken(signToken({ ...admin, tv: 3 }))?.role, 'admin');
   assert.equal(verifyToken(signToken(admin as never)), null);
   assert.equal(verifyToken(signToken({ ...admin, tv: '3' } as never)), null);
+});
+
+// La sesión del panel se renueva de 8 en 8 horas, pero no para siempre: a los
+// 30 días de entrar con la contraseña ya no valida (AUD29-09). Un token sin
+// inicio es de antes y se rechaza, como el que no traía versión.
+test('JWT de panel: vive como mucho SESION_ADMIN_MAX_S desde que se entró', () => {
+  const admin = { sub: 'admin-1', role: 'admin', companyId: 'EMP-01', username: 'jefa', tv: 0 } as const;
+  const ahora = Math.floor(Date.now() / 1000);
+  assert.equal(SESION_ADMIN_MAX_S, 30 * 24 * 60 * 60);
+  const nuevo = verifyToken(signToken(admin));
+  assert.ok(nuevo?.role === 'admin' && Math.abs(nuevo.auth_time - ahora) <= 1);
+  assert.equal(verifyToken(signToken({ ...admin, auth_time: ahora - SESION_ADMIN_MAX_S + 60 }))?.role, 'admin');
+  assert.equal(verifyToken(signToken({ ...admin, auth_time: ahora - SESION_ADMIN_MAX_S - 1 })), null);
+  assert.equal(verifyToken(signToken({ ...admin, auth_time: ahora + 3600 })), null);
+  assert.equal(verifyToken(signToken({ ...admin, auth_time: '1' } as never)), null);
 });
 
 test('rate limiter rejects after the configured window budget', () => {

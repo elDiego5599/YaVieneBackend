@@ -86,24 +86,24 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
   res.end(JSON.stringify(payload));
 }
 
-function setSecurityHeaders(res: ServerResponse): void {
-  // Globales vía setHeader para no quedar fuera de writeHead(204) directos.
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'no-referrer');
-}
-
 function writeError(res: ServerResponse, status: number, code: string, message: string): void {
   writeJson(res, status, { error: { code, message } });
 }
 
-function firmarTokenAdmin(admin: { adminId: string; companyId: string; username: string; tokenVersion: number }): string {
+function firmarTokenAdmin(admin: {
+  adminId: string;
+  companyId: string;
+  username: string;
+  tokenVersion: number;
+  inicio?: number;
+}): string {
   return signToken({
     sub: admin.adminId,
     role: 'admin',
     companyId: admin.companyId,
     username: admin.username,
     tv: admin.tokenVersion,
+    auth_time: admin.inicio,
   });
 }
 
@@ -171,8 +171,11 @@ function addRoute(method: string, path: string, handler: RouteHandler['handler']
   });
 }
 
-addRoute('GET', '/api/health', (_req, res) => {
-  writeJson(res, 200, { status: 'ok', uptime: process.uptime() });
+addRoute('GET', '/api/health', (req, res) => {
+  // Pública: solo dice que contesta, con el tope de las lecturas. El
+  // `uptime` de antes contaba cuándo se reinició el proceso (AUD29-13).
+  if (!guardRate(readRateLimiter, req, res, 'health')) return;
+  writeJson(res, 200, { status: 'ok' });
 });
 
 addRoute('GET', '/api/metrics', (req, res) => {
@@ -538,8 +541,9 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
   responderSesionAdmin(res, web, token, company);
 });
 
-// Renovar conserva la identidad y la versión de la credencial: authenticateCompanyAdmin
-// ya descarta tokens vencidos o revocados antes de llegar aquí.
+// Renovar conserva la identidad, la versión de la credencial y el inicio de la
+// sesión: authenticateCompanyAdmin ya descarta tokens vencidos, revocados o de
+// sesiones con más de 30 días antes de llegar aquí.
 addRoute('POST', '/api/fleet/renovar', (req, res) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
@@ -553,6 +557,7 @@ addRoute('POST', '/api/fleet/renovar', (req, res) => {
     companyId: auth.companyId,
     username: auth.username,
     tokenVersion: auth.tv,
+    inicio: auth.auth_time,
   });
   const company = {
     companyId: auth.companyId,
@@ -1252,7 +1257,6 @@ function escrituraConCookieAjena(req: IncomingMessage): boolean {
 }
 
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
-  setSecurityHeaders(res);
   const url = req.url?.split('?')[0] || '';
   if (escrituraConCookieAjena(req)) {
     writeError(res, 403, 'ORIGIN_NOT_ALLOWED', 'Origin not allowed');

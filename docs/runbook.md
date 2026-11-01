@@ -77,7 +77,7 @@ secreto configurado, quítalo con `fly secrets unset PIN`.
 ## Saber que está sano
 
 ```bash
-curl -s https://occupy-shed-squatter.ngrok-free.dev/api/health   # {"status":"ok","uptime":…}
+curl -s https://occupy-shed-squatter.ngrok-free.dev/api/health   # {"status":"ok"}
 curl -s https://occupy-shed-squatter.ngrok-free.dev/api/ready    # {"status":"ready"}
 ```
 

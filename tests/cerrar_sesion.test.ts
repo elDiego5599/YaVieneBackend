@@ -151,6 +151,19 @@ test('cerrar sesión deja fuera al token viejo en REST y en el socket', { timeou
       { sub: claimsViejos.sub, companyId: claimsViejos.companyId, username: claimsViejos.username, tv: claimsViejos.tv },
     );
     assert.equal(renovado.company.companyId, claimsViejos.companyId);
+    // Renovar no corre el inicio de la sesión: a los 30 días de entrar se
+    // vuelve a poner la contraseña, renueve quien renueve (AUD29-09).
+    assert.equal(claimsNuevos.auth_time, claimsViejos.auth_time);
+    const ahoraS = Math.floor(Date.now() / 1000);
+    const conInicio = (inicio: number) => jwt.sign({ ...claimsRecientes, auth_time: inicio }, SECRETO_JWT, {
+      algorithm: 'HS256',
+      issuer: 'ya-viene-backend',
+      audience: 'ya-viene-mqtt',
+      expiresIn: 8 * 60 * 60,
+    });
+    assert.equal((await renovar(conInicio(ahoraS - 29 * 86_400))).status, 200);
+    assert.equal((await renovar(conInicio(ahoraS - 31 * 86_400))).status, 401);
+    assert.equal((await rutas(conInicio(ahoraS - 31 * 86_400))).status, 401);
 
     const loginWeb = await fetch(`${BASE}/api/admin/login`, {
       method: 'POST',

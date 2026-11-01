@@ -42,7 +42,17 @@ export interface AdminTokenPayload {
    * tokens firmados con una anterior.
    */
   tv: number;
+  /**
+   * Cuándo se entró con la contraseña, en segundos (el `auth_time` de OIDC).
+   * Renovar firma un token nuevo cada 8 horas pero copia este inicio, así que
+   * una sesión robada no se estira para siempre: a los `SESION_ADMIN_MAX_S`
+   * de entrar deja de validar (AUD29-09).
+   */
+  auth_time: number;
 }
+
+/** Al firmar, el inicio es ahora salvo que se renueve una sesión que ya lo trae. */
+export type AdminTokenFirma = Omit<AdminTokenPayload, 'auth_time'> & { auth_time?: number };
 
 export type TokenPayload = DeviceTokenPayload | AdminTokenPayload;
 
@@ -50,8 +60,15 @@ export type TokenPayload = DeviceTokenPayload | AdminTokenPayload;
  * (`cookie_panel.ts`) dura lo mismo. */
 export const ADMIN_TOKEN_TTL_S = 8 * 60 * 60;
 
-export function signToken(payload: TokenPayload): string {
-  return jwt.sign(payload, jwtSecret(), {
+/** Lo más que dura una sesión del panel desde que se entró: 30 días, un mes
+ * de jornadas renovadas sin volver a poner la contraseña. */
+export const SESION_ADMIN_MAX_S = 30 * 24 * 60 * 60;
+
+export function signToken(payload: DeviceTokenPayload | AdminTokenFirma): string {
+  const claims = payload.role === 'admin'
+    ? { ...payload, auth_time: payload.auth_time ?? Math.floor(Date.now() / 1000) }
+    : payload;
+  return jwt.sign(claims, jwtSecret(), {
     // El token del panel dura una jornada: es la llave de toda la flota y
     // suele quedarse abierto en un computador de oficina. El del conductor
     // sigue en 24h a propósito, porque es el que sostiene la conexión MQTT
@@ -81,6 +98,10 @@ export function verifyToken(token: string): TokenPayload | null {
       // Los tokens emitidos antes de que existiera la versión no la traen:
       // se rechazan y el panel pide entrar otra vez, que es una sola vez.
       if (!Number.isInteger(decoded.tv)) return null;
+      // Sin inicio (anterior a AUD29-09), con uno del futuro o con más de
+      // SESION_ADMIN_MAX_S encima, toca volver a entrar.
+      const edad = Math.floor(Date.now() / 1000) - decoded.auth_time;
+      if (!Number.isInteger(decoded.auth_time) || edad < 0 || edad > SESION_ADMIN_MAX_S) return null;
       return decoded as AdminTokenPayload;
     }
 

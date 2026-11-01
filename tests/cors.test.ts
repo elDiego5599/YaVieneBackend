@@ -140,3 +140,25 @@ test('la landing solo puede la lista de lanzamiento, y sin credenciales', { time
     assert.equal(r.headers.get('access-control-allow-origin'), null, ruta);
   }
 });
+
+// AUD29-12: las cabeceras de seguridad salen de un solo sitio, así que
+// valen igual para la API, el preflight y el 404, y HSTS solo va cuando la
+// petición llegó por HTTPS al túnel.
+test('las cabeceras de seguridad cubren toda respuesta y HSTS solo por HTTPS', { timeout: 60_000 }, async () => {
+  const respuestas = [
+    await fetch(`${BASE}/api/health`),
+    await fetch(`${BASE}/api/health`, { method: 'OPTIONS' }),
+    await fetch(`${BASE}/no-existe`),
+  ];
+  for (const r of respuestas) {
+    assert.equal(r.headers.get('x-content-type-options'), 'nosniff', r.url);
+    assert.equal(r.headers.get('x-frame-options'), 'DENY', r.url);
+    assert.equal(r.headers.get('referrer-policy'), 'no-referrer', r.url);
+    assert.equal(r.headers.get('strict-transport-security'), null, r.url);
+    await r.text();
+  }
+
+  const cifrada = await fetch(`${BASE}/api/health`, { headers: { 'X-Forwarded-Proto': 'https' } });
+  assert.equal(cifrada.headers.get('strict-transport-security'), 'max-age=31536000');
+  await cifrada.text();
+});

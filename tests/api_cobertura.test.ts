@@ -346,13 +346,26 @@ test('admin por clave, borrado total y cierre de sesión', async () => {
   assert.equal((await llamar('GET', '/api/fleet/positions', undefined, comoAdmin(tokenAdmin))).estado, 401);
 });
 
-test('headers de seguridad presentes y param malformado da 400 sin tumbar', async () => {
+// Las cabeceras de seguridad las pone `requestHandler` (index.ts), no
+// `handleAPI`: las vigilan `cabeceras.test.ts` y `cors.test.ts`.
+test('health dice solo que vive, con el tope de lectura (AUD29-13)', async () => {
   const r = await fetch(`${base}/api/health`);
-  assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
-  assert.equal(r.headers.get('x-frame-options'), 'DENY');
-  assert.equal(r.headers.get('referrer-policy'), 'no-referrer');
-  await r.text();
+  assert.equal(r.status, 200);
+  // Sin `uptime`: cuánto lleva arriba el proceso le dice a cualquiera cuándo
+  // se reinició, y a nadie le hace falta para saber si contesta.
+  assert.deepEqual(await r.json(), { status: 'ok' });
 
+  // Es pública y barata, pero no infinita: 120 por minuto, como las lecturas.
+  let estado = 200;
+  for (let i = 0; i < 130 && estado === 200; i++) {
+    const otra = await fetch(`${base}/api/health`);
+    estado = otra.status;
+    await otra.text();
+  }
+  assert.equal(estado, 429);
+});
+
+test('param malformado da 400 sin tumbar', async () => {
   // %E0%A4 incompleto: URL válida pero decodeURIComponent lanza -> 400, no 500.
   const mala = await llamar('POST', '/api/fleet/buses/%E0%A4/visibility', { visible: true }, comoAdmin(tokenAdmin));
   assert.equal(mala.estado, 400);

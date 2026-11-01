@@ -32,10 +32,12 @@ import { siembraBusquedasDemoHabilitada } from './config';
 import { cleanupRevokedSessions } from './data/sessions';
 import { dispatchBusEvents } from './data/despacho';
 import { LifecycleEvent } from './data/lifecycle_events';
-import { flushMetrics, incrementMetric, restoreMetrics } from './observability/metrics';
+import { flushMetrics, restoreMetrics } from './observability/metrics';
+import { vueltaProtegida } from './observability/vuelta_protegida';
 import { arrancarFlotaDemo, detenerFlotaDemo } from './demo/flota_demo';
 import { DeviceTokenPayload } from './auth/tokens';
 import { validarPayloadPosicion } from './security/payload';
+import { ponerCabecerasSeguridad } from './security/cabeceras';
 import { cerrarRedLocal } from './security/red_local';
 import { registrarTamanosLimitadores } from './security/rate_limiter';
 import { emisorPush } from './push/fcm';
@@ -115,9 +117,7 @@ const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => 
   // ngrok-skip-browser-warning: sin ella ngrok le contesta al fetch de un
   // navegador con su página de aviso en HTML, no con la API (D15).
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, ngrok-skip-browser-warning');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'no-referrer');
+  ponerCabecerasSeguridad(req, res);
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -144,7 +144,10 @@ const server = HTTP_TLS_CERT_PATH && HTTP_TLS_KEY_PATH
 getDb();
 if (siembraBusquedasDemoHabilitada()) {
   sembrarBusquedasDemo();
-  const busquedasDemoTimer = setInterval(() => sembrarBusquedasDemo(), 60 * 60_000);
+  const busquedasDemoTimer = setInterval(
+    vueltaProtegida('Búsquedas demo', 'busquedas.demo.error', sembrarBusquedasDemo),
+    60 * 60_000,
+  );
   busquedasDemoTimer.unref();
 }
 
@@ -213,23 +216,6 @@ function emitLifecycleEvent(event: LifecycleEvent): void {
   broadcastBusPosition(position, true);
 }
 
-// Una excepción dentro de un setInterval sube sin dueño y tumba el proceso
-// entero (Node termina ante un error no capturado). Un fallo puntual de
-// cualquiera de los cuatro relojes que escriben en SQLite —barrido, despacho,
-// limpieza de sesiones y volcado de métricas—, por disco lleno o base
-// bloqueada, se registra y la siguiente vuelta lo reintenta, en vez de apagar
-// el tiempo real.
-function vueltaProtegida(nombre: string, metrica: string, trabajo: () => void): () => void {
-  return () => {
-    try {
-      trabajo();
-    } catch (error) {
-      incrementMetric(metrica);
-      console.error(`[${nombre}] Falló una vuelta; se reintenta en la siguiente:`, error);
-    }
-  };
-}
-
 const sweepTimer = setInterval(vueltaProtegida('Sweep', 'sweep.error', () => {
   sweepPositions(GHOST_MS);
   dispatchBusEvents(emitLifecycleEvent);
@@ -278,7 +264,10 @@ if (!correo) console.log('[Buzón] Sin YA_VIENE_CORREO_USUARIO/CLAVE: los report
 
 // Retención de contadores agregados, al arrancar y una vez al día.
 limpiarBusquedas();
-const busquedasLimpiezaTimer = setInterval(() => limpiarBusquedas(), 24 * 60 * 60_000);
+const busquedasLimpiezaTimer = setInterval(
+  vueltaProtegida('Búsquedas', 'busquedas.limpieza.error', limpiarBusquedas),
+  24 * 60 * 60_000,
+);
 busquedasLimpiezaTimer.unref();
 
 startBroker(
