@@ -103,6 +103,46 @@ test('el panel cuenta un rango de varios días, sin lo de fuera, y rechaza uno i
   assert.equal((await pedir('2026-10-26T05:00:00.000Z', '2026-10-20T05:00:00.000Z')).status, 400);
 });
 
+// AUD29-01: el umbral k=5 se miraba sobre la suma de todo el rango, y el
+// rango iba al milisegundo. Restando dos rangos solapados salían las
+// búsquedas de una celda aunque fueran 2. Ahora cada día de Bogotá y celda
+// pasa el umbral por su cuenta, y el rango va en días enteros.
+test('dos rangos solapados no dejan ver una celda con menos de 5 en un día', async () => {
+  getDb().prepare('DELETE FROM busquedas WHERE route_id = ?').run('R-777');
+  const lat = 10.99035, lng = -74.78967;
+  const dia1 = Date.parse('2026-10-20T05:00:00.000Z'); // 20 oct, medianoche en Barranquilla
+  const dia2 = dia1 + 24 * 60 * 60_000;
+  const dia3 = dia2 + 24 * 60 * 60_000;
+  for (let i = 0; i < 5; i += 1) registrarBusqueda('R-777', lat, lng, dia1 + 11 * 60 * 60_000);
+  registrarBusqueda('R-777', lat, lng, dia2 + 11 * 60 * 60_000);
+  registrarBusqueda('R-777', lat, lng, dia2 + 11 * 60 * 60_000);
+  const cuenta = (desde: number, hasta: number, hora?: number) =>
+    (calorBusquedas('EMP-BUSQUEDAS', 'R-777', desde, hasta, hora) as { count: number }[])
+      .reduce((suma, celda) => suma + celda.count, 0);
+  assert.equal(cuenta(dia1, dia3) - cuenta(dia1, dia2), 0);
+  assert.equal(cuenta(dia1, dia3, 6) - cuenta(dia1, dia2, 6), 0);
+  assert.equal(cuenta(dia1, dia3), 5);
+
+  const admin = createOrUpdateCompanyAdmin('EMP-BUSQUEDAS', 'busquedasadmin', hashSecret('password123456'));
+  const token = signToken({
+    sub: admin.adminId, role: 'admin', companyId: 'EMP-BUSQUEDAS', username: admin.username, tv: admin.tokenVersion,
+  });
+  const calor = async (desde: string, hasta: string) => {
+    const respuesta = await fetch(`${base}/api/panel/busquedas/R-777/calor?desde=${desde}&hasta=${hasta}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    return { status: respuesta.status, celdas: respuesta.ok ? (await respuesta.json() as { celdas: { count: number }[] }).celdas : [] };
+  };
+  // Un corte a media mañana del día 2 se lleva a días enteros: da lo mismo
+  // que el rango de los dos días, sin partir un día en dos.
+  const partido = await calor('2026-10-20T05:00:00.000Z', '2026-10-21T16:00:00.000Z');
+  const entero = await calor('2026-10-20T05:00:00.000Z', '2026-10-22T05:00:00.000Z');
+  assert.equal(partido.status, 200);
+  assert.deepEqual(partido.celdas, entero.celdas);
+  // Más largo que lo que se guarda (13 meses) no tiene nada que contar.
+  assert.equal((await calor('2025-01-01T05:00:00.000Z', '2026-10-22T05:00:00.000Z')).status, 400);
+});
+
 // AUD29-14: las dos lecturas del panel no tenían tope y un token de empresa
 // podía pedir el calor sin freno. Comparten el de las lecturas de flota (120
 // por minuto) con su propia cuenta, para que leer el calor no gaste la flota.

@@ -41,13 +41,43 @@ export function rankingBusquedas(companyId: string, desde: number, hasta: number
   return resultado;
 }
 
+const DIA_MS = 24 * 60 * 60 * 1000;
+const BOGOTA_MS = 5 * 60 * 60 * 1000;
+/** Lo más largo que se puede pedir: lo que se guarda y el día de hoy. */
+export const MAX_DIAS_RANGO = Math.ceil(RETENCION_MS / DIA_MS) + 1;
+
+/** La medianoche de Bogotá en que empieza el día de [instant]. */
+export function diaBogota(instant: number): number {
+  return Math.floor((instant - BOGOTA_MS) / DIA_MS) * DIA_MS + BOGOTA_MS;
+}
+
+/**
+ * Lleva el rango a días enteros de Bogotá: `desde` a la medianoche de su
+ * día y `hasta` a la del día siguiente, salvo que ya caiga en una. Así toda
+ * consulta del calor es una suma de días enteros, y restar dos rangos nunca
+ * parte un día (AUD29-01). Nulo si queda vacío o pasa de [MAX_DIAS_RANGO].
+ */
+export function rangoEnDias(desde: number, hasta: number): { desde: number; hasta: number } | null {
+  const inicio = diaBogota(desde);
+  const fin = diaBogota(hasta) === hasta ? hasta : diaBogota(hasta) + DIA_MS;
+  if (fin <= inicio || fin - inicio > MAX_DIAS_RANGO * DIA_MS) return null;
+  return { desde: inicio, hasta: fin };
+}
+
+// D17 y AUD29-01: el umbral k va por cubeta (día de Bogotá y celda), no por
+// la suma del rango. Con la suma, dos rangos solapados se restaban y dejaban
+// ver las 1 o 2 búsquedas de un día; así cada día que se cuenta ya tiene
+// sus 5, y una resta solo da días que se podían ver solos. Una zona con 2 un
+// día y 3 otro no sale: es el precio (dueño, 2026-10-31).
 export function calorBusquedas(companyId: string, routeId: string, desde: number, hasta: number, hora?: number) {
   const own = getDb().prepare('SELECT 1 FROM company_routes WHERE company_id = ? AND route_id = ?').get(companyId, routeId);
   if (!own) return null;
-  const rows = getDb().prepare(`SELECT celda_lat AS lat, celda_lng AS lng, SUM(count) AS count FROM busquedas
-    WHERE route_id = ? AND celda_lat IS NOT NULL AND hora >= ? AND hora < ?
-    ${hora === undefined ? '' : "AND CAST(strftime('%H', datetime(hora / 1000, 'unixepoch', '-5 hours')) AS INTEGER) = ?"}
-    GROUP BY celda_lat, celda_lng HAVING SUM(count) >= ?`)
+  const rows = getDb().prepare(`SELECT lat, lng, SUM(dia_count) AS count FROM (
+      SELECT celda_lat AS lat, celda_lng AS lng, SUM(count) AS dia_count FROM busquedas
+      WHERE route_id = ? AND celda_lat IS NOT NULL AND hora >= ? AND hora < ?
+      ${hora === undefined ? '' : "AND CAST(strftime('%H', datetime(hora / 1000, 'unixepoch', '-5 hours')) AS INTEGER) = ?"}
+      GROUP BY (hora - ${BOGOTA_MS}) / ${DIA_MS}, celda_lat, celda_lng HAVING SUM(count) >= ?
+    ) GROUP BY lat, lng`)
     .all(...(hora === undefined ? [routeId, desde, hasta, K_BUSQUEDAS] : [routeId, desde, hasta, hora, K_BUSQUEDAS]));
   return rows;
 }

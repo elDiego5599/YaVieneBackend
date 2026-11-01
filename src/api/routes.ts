@@ -60,7 +60,7 @@ import {
 import { busInCatalog } from '../data/positions_store';
 import { getBusVisibility } from '../data/fleet_admin';
 import { dentroDeZona } from '../security/zona';
-import { calorBusquedas, PASO_LAT, PASO_LNG, rankingBusquedas, registrarBusqueda } from '../data/busquedas';
+import { calorBusquedas, PASO_LAT, PASO_LNG, rangoEnDias, rankingBusquedas, registrarBusqueda } from '../data/busquedas';
 import { emisorPush } from '../push/fcm';
 import { isBrokerReady } from '../mqtt/broker';
 import {
@@ -1183,7 +1183,8 @@ function rangoBusquedas(req: IncomingMessage) {
   const horaTxt = params.get('hora'); const hora = horaTxt === null ? undefined : Number(horaTxt);
   if (!Number.isFinite(desde) || !Number.isFinite(hasta) || desde >= hasta
     || (hora !== undefined && (!Number.isInteger(hora) || hora < 0 || hora > 23))) return null;
-  return { desde, hasta, hora };
+  const dias = rangoEnDias(desde, hasta);
+  return dias && { ...dias, hora };
 }
 addRoute('GET', '/api/panel/busquedas', (req, res) => {
   if (!guardRate(readRateLimiter, req, res, 'panel:busquedas')) return;

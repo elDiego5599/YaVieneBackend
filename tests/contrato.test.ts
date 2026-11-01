@@ -410,7 +410,9 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
       });
       assert.equal(repetida.status, 204);
     }
-    const rango = '?desde=2000-01-01T00:00:00.000Z&hasta=2100-01-01T00:00:00.000Z';
+    // Los últimos 30 días, como el panel: el servidor ya no deja rangos de
+    // más de MAX_DIAS_RANGO (AUD29-01).
+    const rango = `?desde=${new Date(Date.now() - 30 * 86_400_000).toISOString()}&hasta=${new Date(Date.now() + 1).toISOString()}`;
     guardar('rest-panel-busquedas', await pedir('GET', `/api/panel/busquedas${rango}`, undefined, admin));
     guardar('rest-panel-busquedas-calor', await pedir('GET', `/api/panel/busquedas/${RUTA}/calor${rango}`, undefined, admin));
     guardar('rest-fleet-positions', await pedir('GET', '/api/fleet/positions', undefined, admin));
