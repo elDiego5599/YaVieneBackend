@@ -7,7 +7,7 @@ import { leerCookiePanel } from './cookie_panel';
 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
 if (!ADMIN_API_KEY && process.env.NODE_ENV === 'production') {
-  throw new Error('ADMIN_API_KEY is required in production');
+  throw new Error('ADMIN_API_KEY es obligatoria en producción');
 }
 
 /**

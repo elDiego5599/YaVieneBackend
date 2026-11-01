@@ -14,6 +14,7 @@ import {
 import { DeviceTokenPayload, verifyToken } from '../auth/tokens';
 import { claimSession, getSession, isSessionAuthorized, releaseSession } from '../data/sessions';
 import { incrementMetric } from '../observability/metrics';
+import { textoParaLog } from '../observability/texto_log';
 import { requestKey, SlidingWindowRateLimiter } from '../security/rate_limiter';
 import {
   CupoPorClave,
@@ -251,13 +252,13 @@ export function startBroker(
 
     const expectedTopic = `empresa/${payload.companyId}/bus/${payload.busId}/posicion`;
     if (debugLogs) {
-      console.log(`[MQTT] authorizePublish: client=${client.id} topic=${topic} expected=${expectedTopic}`);
+      console.log(`[MQTT] authorizePublish: client=${client.id} topic=${textoParaLog(topic)} expected=${expectedTopic}`);
     }
     if (topic !== expectedTopic) {
       incrementMetric('mqtt.publish.rejected_topic');
-      console.warn(`[MQTT] TOPIC HIJACKING: equipo ${payload.deviceId} (bus ${payload.busId}) intentó publicar a ${topic}`);
-      forceCloseClient(broker, client, `topic hijacking: ${topic}`);
-      return callback(denyPublish(`topic no autorizado: ${topic}`));
+      console.warn(`[MQTT] TOPIC HIJACKING: equipo ${payload.deviceId} (bus ${payload.busId}) intentó publicar a ${textoParaLog(topic)}`);
+      forceCloseClient(broker, client, `topic hijacking: ${textoParaLog(topic)}`);
+      return callback(denyPublish(`topic no autorizado: ${textoParaLog(topic)}`));
     }
 
     // Debe quedar antes del callback exitoso: aedes solo entonces reparte
@@ -324,7 +325,7 @@ export function startBroker(
 
   broker.on('publish', (packet: PublishPacket, client: Client | null) => {
     if (debugLogs) {
-      console.log(`[MQTT] publish event: client=${client?.id ?? 'null'} topic=${packet.topic}`);
+      console.log(`[MQTT] publish event: client=${client?.id ?? 'null'} topic=${textoParaLog(packet.topic)}`);
     }
     if (!client) return;
 

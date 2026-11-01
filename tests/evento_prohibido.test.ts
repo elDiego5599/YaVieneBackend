@@ -95,7 +95,7 @@ test('un evento que no existe recibe server:error y luego el cierre', { timeout:
     await cerrado;
 
     assert.deepEqual(orden, ['server:error', 'disconnect:io server disconnect']);
-    assert.deepEqual(aviso, { message: 'Forbidden event' });
+    assert.deepEqual(aviso, { message: 'Evento no permitido' });
   } finally {
     socket.close();
     await stopProcess(backend);

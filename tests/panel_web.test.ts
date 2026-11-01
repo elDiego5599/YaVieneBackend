@@ -271,7 +271,7 @@ test('sin YA_VIENE_PANEL_WEB, /panel/ es el 404 de siempre', { timeout: 60_000 }
   for (const ruta of ['/panel', '/panel/', '/panel/index.html']) {
     const r = await fetch(`${url}${ruta}`, { redirect: 'manual' });
     assert.equal(r.status, 404, ruta);
-    assert.deepEqual(await r.json(), { error: 'Not found' }, ruta);
+    assert.deepEqual(await r.json(), { error: 'No encontrado' }, ruta);
   }
 });
 

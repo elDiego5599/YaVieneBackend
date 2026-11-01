@@ -124,8 +124,8 @@ function responderSesionAdmin(
 /**
  * Guarda de lecturas públicas: el catálogo y las posiciones son GET abiertos
  * a internet que la app consulta cada pocos segundos. 120/min por IP deja
- * trabajar a la app de verdad y frena el scraping; health/ready quedan fuera
- * a propósito para no romper los sondeos de vida.
+ * trabajar a la app de verdad y frena el scraping. Health lleva el mismo
+ * tope con su propia clave, para que un sondeo de vida no gaste el de la app.
  */
 function guardPublicRead(req: IncomingMessage, res: ServerResponse): boolean {
   if (readRateLimiter.allow(requestKey(req, 'read'))) return true;
@@ -141,7 +141,7 @@ function guardRate(
   suffix: string,
 ): boolean {
   if (limiter.allow(requestKey(req, suffix))) return true;
-  writeError(res, 429, 'RATE_LIMITED', 'Too many requests');
+  writeError(res, 429, 'RATE_LIMITED', 'Demasiadas peticiones, intenta en un minuto');
   return false;
 }
 
@@ -183,7 +183,7 @@ addRoute('GET', '/api/metrics', (req, res) => {
   // a quien ya la tiene y dejaría probar claves sin tope.
   if (!guardRate(adminRateLimiter, req, res, 'metrics')) return;
   if (!isAdminRequest(req)) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador');
     return;
   }
   writeJson(res, 200, getMetrics());
@@ -193,12 +193,12 @@ addRoute('GET', '/api/ready', (_req, res) => {
   try {
     getDb().prepare('SELECT 1').get();
     if (!isBrokerReady()) {
-      writeError(res, 503, 'BROKER_NOT_READY', 'MQTT broker is not ready');
+      writeError(res, 503, 'BROKER_NOT_READY', 'El broker MQTT todavía no está listo');
       return;
     }
     writeJson(res, 200, { status: 'ready' });
   } catch {
-    writeError(res, 503, 'DATABASE_NOT_READY', 'Database is not ready');
+    writeError(res, 503, 'DATABASE_NOT_READY', 'La base de datos todavía no está lista');
   }
 });
 
@@ -261,7 +261,7 @@ addRoute('GET', '/api/buses/:busId', (req, res, params) => {
   // `{visible:false}` aparte, cualquiera distinguía «existe pero la empresa
   // lo esconde» de «no hay tal bus» probando ids (T3.4, YV-21).
   if (!bus || !bus.visible) {
-    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus no encontrado');
     return;
   }
   const { visible: _visible, ...position } = bus;
@@ -271,13 +271,13 @@ addRoute('GET', '/api/buses/:busId', (req, res, params) => {
 addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
   const auth = authenticateRequest(req);
   if (auth?.role !== 'device' || !isDeviceForBus(auth, params.busId)) {
-    writeError(res, 403, 'BUS_FORBIDDEN', 'The token cannot control this bus');
+    writeError(res, 403, 'BUS_FORBIDDEN', 'Este token no puede manejar ese bus');
     return;
   }
 
   const bus = getPosition(params.busId);
   if (!bus) {
-    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus no encontrado');
     return;
   }
   removePositionOwned(params.busId, auth.sessionId);
@@ -288,7 +288,7 @@ addRoute('POST', '/api/buses/:busId/offline', (req, res, params) => {
 });
 
 addRoute('POST', '/api/gps', (_req, res) => {
-  writeError(res, 410, 'HTTP_GPS_DISABLED', 'GPS ingestion is available through authenticated MQTT only');
+  writeError(res, 410, 'HTTP_GPS_DISABLED', 'Las posiciones GPS solo entran por MQTT autenticado');
 });
 
 /** Un segmento de topic MQTT: sin separador ni comodines ni controles, hasta 64. */
@@ -307,11 +307,11 @@ function provisionDriver(
   // que solo frenaba a quien ya la tenía: los intentos fallidos no contaban
   // y se podían probar claves sin tope. Ahora cuenta todo intento.
   if (!adminRateLimiter.allow(requestKey(req, 'provision'))) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many provisioning attempts');
+    writeError(res, 429, 'RATE_LIMITED', 'Demasiados intentos de alta, intenta en unos minutos');
     return;
   }
   if (!isAdminRequest(req)) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador');
     return;
   }
 
@@ -352,11 +352,11 @@ function provisionDriver(
     || !TELEFONO_DE_TEXTO.test(phoneNumber)
     || !NOMBRE_DE_TEXTO.test(name)
   ) {
-    writeError(res, 400, 'INVALID_DRIVER_PROVISION', 'busId and companyId cannot contain /, + or #; routeId must look like a route; phoneNumber and name must be short plain text');
+    writeError(res, 400, 'INVALID_DRIVER_PROVISION', 'busId y companyId no pueden llevar /, + ni #; routeId debe tener forma de ruta; phoneNumber y name deben ser texto corto y plano');
     return;
   }
   if (!getEmpresa(companyId)) {
-    writeError(res, 404, 'COMPANY_NOT_FOUND', 'Company not found');
+    writeError(res, 404, 'COMPANY_NOT_FOUND', 'Empresa no encontrada');
     return;
   }
 
@@ -398,7 +398,7 @@ function loginDevice(
     !loginIpRateLimiter.allow(requestKey(req, 'login')) ||
     !loginRateLimiter.allow(requestKey(req, `login:${identifier || 'unknown'}`))
   ) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
+    writeError(res, 429, 'RATE_LIMITED', 'Demasiados intentos de entrada, intenta en unos minutos');
     return;
   }
 
@@ -414,7 +414,7 @@ function loginDevice(
   const bloqueo = deviceLoginLockout.restante(identifier);
   if (bloqueo > 0) {
     res.setHeader('Retry-After', String(Math.ceil(bloqueo / 1000)));
-    writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
+    writeError(res, 429, 'RATE_LIMITED', 'Demasiados intentos de entrada, intenta en unos minutos');
     return;
   }
 
@@ -434,17 +434,17 @@ function loginDevice(
       incrementMetric('login.cuenta_bloqueada');
       console.warn(`[Auth] Cuenta …${identifier.slice(-4)} bloqueada ${Math.round(bloqueoMs / 60_000)} min tras ${MAX_FALLOS_PIN_POR_CUENTA} PIN fallidos`);
     }
-    writeError(res, 401, 'INVALID_CREDENTIALS', 'Invalid device credentials');
+    writeError(res, 401, 'INVALID_CREDENTIALS', 'Credenciales del equipo no válidas');
     return;
   }
   deviceLoginLockout.acierto(identifier);
 
   if (requestedBusId && requestedBusId !== device.busId) {
-    writeError(res, 403, 'BUS_FORBIDDEN', 'The device is not assigned to this bus');
+    writeError(res, 403, 'BUS_FORBIDDEN', 'El equipo no está asignado a ese bus');
     return;
   }
   if (requestedRouteId && requestedRouteId !== device.routeId) {
-    writeError(res, 403, 'ROUTE_FORBIDDEN', 'The device is not assigned to this route');
+    writeError(res, 403, 'ROUTE_FORBIDDEN', 'El equipo no está asignado a esa ruta');
     return;
   }
 
@@ -503,7 +503,7 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
   // Origin es el escritorio, que nunca lo manda.
   const web = req.headers.origin !== undefined;
   if (web && !esOrigenDelPanel(req.headers)) {
-    writeError(res, 403, 'ORIGIN_NOT_ALLOWED', 'Origin not allowed');
+    writeError(res, 403, 'ORIGIN_NOT_ALLOWED', 'Origen no permitido');
     return;
   }
   const username = typeof body?.username === 'string'
@@ -513,12 +513,12 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
     !loginIpRateLimiter.allow(requestKey(req, 'adminlogin')) ||
     !loginRateLimiter.allow(requestKey(req, `adminlogin:${username || 'unknown'}`))
   ) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many login attempts');
+    writeError(res, 429, 'RATE_LIMITED', 'Demasiados intentos de entrada, intenta en unos minutos');
     return;
   }
 
   if (!username || !password) {
-    writeError(res, 400, 'CREDENTIALS_REQUIRED', 'username and password are required');
+    writeError(res, 400, 'CREDENTIALS_REQUIRED', 'username y password son obligatorios');
     return;
   }
 
@@ -526,7 +526,7 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
   // Igual que en el login del equipo (P3-1): el tiempo no dice si el
   // usuario existe.
   if (!verifySecretSinDelatar(password, admin?.passwordHash) || !admin) {
-    writeError(res, 401, 'INVALID_CREDENTIALS', 'Invalid admin credentials');
+    writeError(res, 401, 'INVALID_CREDENTIALS', 'Usuario o contraseña incorrectos');
     return;
   }
 
@@ -547,7 +547,7 @@ addRoute('POST', '/api/admin/login', (req, res, _params, body) => {
 addRoute('POST', '/api/fleet/renovar', (req, res) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
@@ -572,7 +572,7 @@ addRoute('POST', '/api/fleet/renovar', (req, res) => {
 addRoute('GET', '/api/admin/sesion', (req, res) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!guardRate(readRateLimiter, req, res, 'fleet:read')) return;
@@ -589,11 +589,11 @@ addRoute('POST', '/api/admin/empresas/:companyId/admin', (req, res, params, body
   // intentos fallidos también cuenten. Y la key ya no lleva la empresa:
   // con ella, cambiar el :companyId de la URL estrenaba presupuesto.
   if (!adminRateLimiter.allow(requestKey(req, 'companyadmin'))) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many attempts');
+    writeError(res, 429, 'RATE_LIMITED', 'Demasiados intentos, intenta en unos minutos');
     return;
   }
   if (!isAdminRequest(req)) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador');
     return;
   }
 
@@ -605,7 +605,7 @@ addRoute('POST', '/api/admin/empresas/:companyId/admin', (req, res, params, body
   // script 12, así que por aquí entraban cuentas de panel más débiles que
   // las que el propio proyecto considera aceptables.
   if (!username || password.length < 12) {
-    writeError(res, 400, 'INVALID_ADMIN_CREDENTIALS', 'username and a password of at least 12 characters are required');
+    writeError(res, 400, 'INVALID_ADMIN_CREDENTIALS', 'Hacen falta username y una password de al menos 12 caracteres');
     return;
   }
 
@@ -633,7 +633,7 @@ addRoute('POST', '/api/fleet/logout', (req, res) => {
   if (leerCookiePanel(req.headers)) res.setHeader('Set-Cookie', cookieBorrada());
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
@@ -652,7 +652,7 @@ addRoute('POST', '/api/fleet/logout', (req, res) => {
 addRoute('GET', '/api/fleet/positions', (req, res) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!guardRate(readRateLimiter, req, res, 'fleet:read')) return;
@@ -665,26 +665,26 @@ addRoute('GET', '/api/fleet/positions', (req, res) => {
 addRoute('POST', '/api/fleet/buses/:busId/visibility', (req, res, params, body) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
 
   const companyId = getBusCompanyId(params.busId);
   if (!companyId || companyId !== auth.companyId) {
-    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found in this company');
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Ese bus no es de esta empresa');
     return;
   }
 
   const visible = body?.visible;
   if (typeof visible !== 'boolean') {
-    writeError(res, 400, 'INVALID_VISIBILITY', 'visible must be a boolean');
+    writeError(res, 400, 'INVALID_VISIBILITY', 'visible debe ser true o false');
     return;
   }
 
   const result = setBusVisibility(params.busId, visible);
   if (!result) {
-    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus no encontrado');
     return;
   }
   console.log(`[API] Bus ${params.busId} ${result.visible ? 'visible' : 'oculto'} (empresa ${auth.companyId})`);
@@ -694,14 +694,14 @@ addRoute('POST', '/api/fleet/buses/:busId/visibility', (req, res, params, body) 
 addRoute('POST', '/api/fleet/buses/visibility', (req, res, _params, body) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
 
   const visible = body?.visible;
   if (typeof visible !== 'boolean') {
-    writeError(res, 400, 'INVALID_VISIBILITY', 'visible must be a boolean');
+    writeError(res, 400, 'INVALID_VISIBILITY', 'visible debe ser true o false');
     return;
   }
 
@@ -713,7 +713,7 @@ addRoute('POST', '/api/fleet/buses/visibility', (req, res, _params, body) => {
 addRoute('GET', '/api/fleet/routes', (req, res) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!guardRate(readRateLimiter, req, res, 'fleet:read')) return;
@@ -726,11 +726,11 @@ addRoute('GET', '/api/fleet/routes', (req, res) => {
 addRoute('POST', '/api/fleet/routes', (req, res, _params, body) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!adminRateLimiter.allow(requestKey(req, 'route:create'))) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many route creation attempts');
+    writeError(res, 429, 'RATE_LIMITED', 'Demasiadas rutas creadas seguidas, intenta en unos minutos');
     return;
   }
 
@@ -760,11 +760,11 @@ addRoute('POST', '/api/fleet/routes', (req, res, _params, body) => {
 addRoute('PATCH', '/api/fleet/routes/:routeId', (req, res, params, body) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!adminRateLimiter.allow(requestKey(req, 'route:rename'))) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many route rename attempts');
+    writeError(res, 429, 'RATE_LIMITED', 'Demasiados cambios de nombre seguidos, intenta en unos minutos');
     return;
   }
 
@@ -782,7 +782,7 @@ addRoute('PATCH', '/api/fleet/routes/:routeId', (req, res, params, body) => {
 
   const route = renameCompanyRoute(auth.companyId, params.routeId, name);
   if (!route) {
-    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found in this company');
+    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Esa ruta no es de esta empresa');
     return;
   }
   console.log(`[API] Ruta ${route.routeId} renombrada en ${auth.companyId}: ${route.name}`);
@@ -792,13 +792,13 @@ addRoute('PATCH', '/api/fleet/routes/:routeId', (req, res, params, body) => {
 addRoute('DELETE', '/api/fleet/routes/:routeId', (req, res, params) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
   const removed = removeCompanyRoute(auth.companyId, params.routeId);
   if (!removed) {
-    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found in this company');
+    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Esa ruta no es de esta empresa');
     return;
   }
   console.log(`[API] ${auth.username} eliminó la ruta ${params.routeId} del catálogo de ${auth.companyId}`);
@@ -818,11 +818,11 @@ addRoute('DELETE', '/api/fleet/routes/:routeId', (req, res, params) => {
 addRoute('DELETE', '/api/fleet/buses', (req, res) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!adminRateLimiter.allow(requestKey(req, 'fleet:wipe'))) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many fleet wipe attempts');
+    writeError(res, 429, 'RATE_LIMITED', 'Demasiados vaciados de flota seguidos, intenta en unos minutos');
     return;
   }
 
@@ -846,11 +846,11 @@ addRoute('DELETE', '/api/fleet/buses', (req, res) => {
 addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!adminRateLimiter.allow(requestKey(req, 'bus:create'))) {
-    writeError(res, 429, 'RATE_LIMITED', 'Too many bus creation attempts');
+    writeError(res, 429, 'RATE_LIMITED', 'Demasiados buses creados seguidos, intenta en unos minutos');
     return;
   }
 
@@ -877,7 +877,7 @@ addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
   // existe en otra parte. Una ruta mal escrita sigue siendo el 400 de abajo.
   const rutaPedida = routeId.trim();
   if (isRouteId(rutaPedida) && !esRutaDeEmpresa(auth.companyId, rutaPedida)) {
-    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found in this company');
+    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Esa ruta no es de esta empresa');
     return;
   }
 
@@ -904,14 +904,14 @@ addRoute('POST', '/api/fleet/buses', (req, res, _params, body) => {
 addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
 
   const companyId = getBusCompanyId(params.busId);
   if (!companyId || companyId !== auth.companyId) {
-    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found in this company');
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Ese bus no es de esta empresa');
     return;
   }
 
@@ -936,7 +936,7 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
     && rawRouteId !== getBusRouteId(params.busId)
     && !esRutaDeEmpresa(auth.companyId, rawRouteId)
   ) {
-    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found in this company');
+    writeError(res, 404, 'ROUTE_NOT_FOUND', 'Esa ruta no es de esta empresa');
     return;
   }
   if (interno !== undefined && interno.trim().length > MAX_INTERNO) {
@@ -961,7 +961,7 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
     return;
   }
   if (!bus) {
-    writeError(res, 400, 'INVALID_BUS_PLACA', 'placa must be 3 letters followed by 3 numbers (e.g. ABC123)');
+    writeError(res, 400, 'INVALID_BUS_PLACA', 'placa debe ser 3 letras y 3 números (ej. ABC123)');
     return;
   }
   console.log(`[API] Bus ${bus.busId} actualizado (placa ${bus.placa}, ruta ${bus.routeId ?? '-'})`);
@@ -971,20 +971,20 @@ addRoute('PATCH', '/api/fleet/buses/:busId', (req, res, params, body) => {
 addRoute('DELETE', '/api/fleet/buses/:busId', (req, res, params) => {
   const auth = authenticateCompanyAdmin(req);
   if (!auth) {
-    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company administrator authentication is required');
+    writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa');
     return;
   }
   if (!guardRate(fleetWriteRateLimiter, req, res, 'fleet:write')) return;
 
   const companyId = getBusCompanyId(params.busId);
   if (!companyId || companyId !== auth.companyId) {
-    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found in this company');
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Ese bus no es de esta empresa');
     return;
   }
 
   const result = deleteBus(params.busId);
   if (!result) {
-    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus not found');
+    writeError(res, 404, 'BUS_NOT_FOUND', 'Bus no encontrado');
     return;
   }
   console.log(`[API] ${auth.username} eliminó el bus ${params.busId} del catálogo (empresa ${auth.companyId})`);
@@ -1194,7 +1194,7 @@ function rangoBusquedas(req: IncomingMessage) {
 addRoute('GET', '/api/panel/busquedas', (req, res) => {
   if (!guardRate(readRateLimiter, req, res, 'panel:busquedas')) return;
   const auth = authenticateCompanyAdmin(req);
-  if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company admin authentication is required'); return; }
+  if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa'); return; }
   const rango = rangoBusquedas(req);
   if (!rango) { writeError(res, 400, 'INVALID_INPUT', 'Rango u hora inválidos'); return; }
   writeJson(res, 200, { rutas: rankingBusquedas(auth.companyId, rango.desde, rango.hasta, rango.hora) });
@@ -1202,11 +1202,11 @@ addRoute('GET', '/api/panel/busquedas', (req, res) => {
 addRoute('GET', '/api/panel/busquedas/:routeId/calor', (req, res, params) => {
   if (!guardRate(readRateLimiter, req, res, 'panel:busquedas')) return;
   const auth = authenticateCompanyAdmin(req);
-  if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Company admin authentication is required'); return; }
+  if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa'); return; }
   const rango = rangoBusquedas(req);
   if (!rango) { writeError(res, 400, 'INVALID_INPUT', 'Rango u hora inválidos'); return; }
   const celdas = calorBusquedas(auth.companyId, params.routeId, rango.desde, rango.hasta, rango.hora);
-  if (celdas === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Route not found'); return; }
+  if (celdas === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Ruta no encontrada'); return; }
   writeJson(res, 200, { routeId: params.routeId, celdas });
 });
 
@@ -1214,7 +1214,7 @@ addRoute('GET', '/api/panel/busquedas/:routeId/calor', (req, res, params) => {
 function guardAdmin(req: IncomingMessage, res: ServerResponse): boolean {
   if (!guardRate(adminRateLimiter, req, res, 'lanzamiento-admin')) return false;
   if (isAdminRequest(req)) return true;
-  writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Administrator authentication is required');
+  writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador');
   return false;
 }
 
@@ -1259,7 +1259,7 @@ function escrituraConCookieAjena(req: IncomingMessage): boolean {
 export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
   const url = req.url?.split('?')[0] || '';
   if (escrituraConCookieAjena(req)) {
-    writeError(res, 403, 'ORIGIN_NOT_ALLOWED', 'Origin not allowed');
+    writeError(res, 403, 'ORIGIN_NOT_ALLOWED', 'Origen no permitido');
     return true;
   }
 
@@ -1274,7 +1274,7 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
         params[name] = decodeURIComponent(match[i + 1]);
       });
     } catch {
-      writeError(res, 400, 'INVALID_PARAM', 'Invalid URL encoding');
+      writeError(res, 400, 'INVALID_PARAM', 'La URL trae un código de caracteres roto');
       return true;
     }
 
@@ -1284,7 +1284,7 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
       } catch (error) {
         console.error('[HTTP] Handler error:', error);
         if (!res.headersSent) {
-          writeError(res, 500, 'INTERNAL_ERROR', 'Internal server error');
+          writeError(res, 500, 'INTERNAL_ERROR', 'Error interno del servidor');
         }
       }
     };
@@ -1308,7 +1308,7 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
           // respuesta ya se fue, para no seguir tragando el cuerpo entero.
           if (!res.headersSent) {
             res.setHeader('Connection', 'close');
-            writeError(res, 413, 'REQUEST_TOO_LARGE', 'Request body is too large');
+            writeError(res, 413, 'REQUEST_TOO_LARGE', 'El cuerpo de la petición es demasiado grande');
           }
           res.once('finish', () => req.destroy());
           trozos.length = 0;
@@ -1324,14 +1324,14 @@ export function handleAPI(req: IncomingMessage, res: ServerResponse): boolean {
         // preflight y el servidor lo interpreta como JSON en operaciones de escritura.
         const tipoJson = /^application\/json(?:\s*;\s*charset\s*=\s*[^;\s]+)?\s*$/i;
         if (body && !tipoJson.test(req.headers['content-type'] ?? '')) {
-          writeError(res, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json');
+          writeError(res, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type debe ser application/json');
           return;
         }
         let parsedBody: Record<string, unknown>;
         try {
           parsedBody = body ? JSON.parse(body) as Record<string, unknown> : {};
         } catch {
-          writeError(res, 400, 'INVALID_JSON', 'Request body must be valid JSON');
+          writeError(res, 400, 'INVALID_JSON', 'El cuerpo de la petición debe ser JSON válido');
           return;
         }
         runHandler(parsedBody);

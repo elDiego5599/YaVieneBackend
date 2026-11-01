@@ -95,7 +95,7 @@ test('los POST con cuerpo exigen application/json y permiten charset', async () 
   });
   assert.equal(tipoNoJson.status, 415);
   assert.deepEqual(await tipoNoJson.json(), {
-    error: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Content-Type must be application/json' },
+    error: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Content-Type debe ser application/json' },
   });
 
   const conCharset = await fetch(`${base}/api/avisos`, {
@@ -105,7 +105,7 @@ test('los POST con cuerpo exigen application/json y permiten charset', async () 
   });
   assert.equal(conCharset.status, 400);
   assert.deepEqual(await conCharset.json(), {
-    error: { code: 'INVALID_JSON', message: 'Request body must be valid JSON' },
+    error: { code: 'INVALID_JSON', message: 'El cuerpo de la petición debe ser JSON válido' },
   });
 });
 

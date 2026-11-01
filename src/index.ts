@@ -34,6 +34,7 @@ import { dispatchBusEvents } from './data/despacho';
 import { LifecycleEvent } from './data/lifecycle_events';
 import { flushMetrics, restoreMetrics } from './observability/metrics';
 import { vueltaProtegida } from './observability/vuelta_protegida';
+import { textoParaLog } from './observability/texto_log';
 import { arrancarFlotaDemo, detenerFlotaDemo } from './demo/flota_demo';
 import { DeviceTokenPayload } from './auth/tokens';
 import { validarPayloadPosicion } from './security/payload';
@@ -129,7 +130,7 @@ const requestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => 
 
   if (!handleAPI(req, res)) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not found' }));
+    res.end(JSON.stringify({ error: 'No encontrado' }));
   }
 };
 
@@ -274,7 +275,7 @@ startBroker(
   (_clientId: string, auth: DeviceTokenPayload, topic, payload): PositionHandlingResult | void => {
   const match = topic.match(/^empresa\/([^/]+)\/bus\/([^/]+)\/posicion$/);
   if (!match) {
-    console.warn(`[MQTT] Topic rejected after authorization: ${topic}`);
+    console.warn(`[MQTT] Topic rejected after authorization: ${textoParaLog(topic)}`);
     return;
   }
 

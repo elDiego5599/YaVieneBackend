@@ -15,9 +15,19 @@ import { isAdminTokenCurrent } from '../data/empresas';
 import { verifyToken, AdminTokenPayload } from '../auth/tokens';
 import { esOrigenDelPanel, leerCookiePanel } from '../auth/cookie_panel';
 import { incrementMetric } from '../observability/metrics';
+import { textoParaLog } from '../observability/texto_log';
 import { requestKey } from '../security/rate_limiter';
 
 let io: Server | null = null;
+/**
+ * Cada pasajero que abre la app es una conexión: en el log de todos los
+ * días eso es ruido (las métricas ya las cuentan). Solo con
+ * `SOCKET_DEBUG_LOGS=true`, como `MQTT_DEBUG_LOGS` en el broker.
+ */
+function logDepuracion(mensaje: string): void {
+  if (process.env.SOCKET_DEBUG_LOGS === 'true') console.log(mensaje);
+}
+
 const pendingPositions = new Map<string, Map<string, BusPosition>>();
 const flushTimers = new Map<string, NodeJS.Timeout>();
 const SOCKET_FLUSH_MS = 100;
@@ -256,7 +266,7 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
     const clave = requestKey(socket.request);
     if ((socketsPorIp.get(clave) ?? 0) >= MAX_SOCKETS_POR_IP) {
       incrementMetric('socket.rechazado.por_ip');
-      next(new Error('Too many connections'));
+      next(new Error('Demasiadas conexiones'));
       return;
     }
     next();
@@ -281,13 +291,15 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
       else socketsPorIp.delete(claveIp);
     });
 
-    console.log(`[WS] Client connected: ${socket.id}`);
+    incrementMetric('socket.conexiones');
+    logDepuracion(`[WS] Client connected: ${socket.id}`);
 
     const admin = adminFromHandshake(socket.handshake);
     if (admin) {
       socket.data.admin = admin;
       socket.join(`admin:${admin.companyId}`);
-      console.log(`[WS] Admin ${admin.username} joined room admin:${admin.companyId}`);
+      incrementMetric('socket.admin.unido');
+      logDepuracion(`[WS] Admin ${admin.username} joined room admin:${admin.companyId}`);
     }
 
     const PASSENGER_ALLOWED_EVENTS = new Set([
@@ -326,13 +338,13 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
 
       if (PASSENGER_ALLOWED_EVENTS.has(event)) return;
 
-      console.warn(`[WS] KICKED client ${socket.id} — attempted forbidden event: "${event}"`);
+      console.warn(`[WS] KICKED client ${socket.id} — attempted forbidden event: ${textoParaLog(String(event))}`);
       // Ninguna de las apps escucha `server:error`, y es a propósito: solo
       // mandan los tres eventos de la lista de arriba (pasajero:
       // subscribe/unsubscribe:route; panel: subscribe:fleet), así que nunca
       // llegan aquí. Lo recibe un cliente ajeno o uno roto, y le dice por
       // qué se le cierra el socket en vez de dejarlo adivinando.
-      socket.emit('server:error', { message: 'Forbidden event' });
+      socket.emit('server:error', { message: 'Evento no permitido' });
       socket.disconnect(true);
     });
 
@@ -398,7 +410,8 @@ export function setupSocketServer(httpServer: HTTPServer): Server {
     });
 
     socket.on('disconnect', () => {
-      console.log(`[WS] Client disconnected: ${socket.id}`);
+      incrementMetric('socket.desconexiones');
+      logDepuracion(`[WS] Client disconnected: ${socket.id}`);
     });
   });
 

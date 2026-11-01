@@ -87,7 +87,7 @@ test('una dirección abre 100 sockets a la vez, no más', { timeout: 60_000 }, a
     const resultados = await Promise.all(Array.from({ length: 200 }, () => abrir(abiertos)));
 
     const dentro = resultados.filter((r) => r === 'dentro').length;
-    const fuera = resultados.filter((r) => r === 'Too many connections').length;
+    const fuera = resultados.filter((r) => r === 'Demasiadas conexiones').length;
     assert.equal(dentro, 100);
     assert.equal(fuera, 100);
 
@@ -99,7 +99,7 @@ test('una dirección abre 100 sockets a la vez, no más', { timeout: 60_000 }, a
     // El servidor se entera del cierre un instante después que el cliente.
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.equal(await abrir(abiertos), 'dentro');
-    assert.equal(await abrir(abiertos), 'Too many connections');
+    assert.equal(await abrir(abiertos), 'Demasiadas conexiones');
   } finally {
     for (const s of abiertos) s.close();
     await stopProcess(backend);
