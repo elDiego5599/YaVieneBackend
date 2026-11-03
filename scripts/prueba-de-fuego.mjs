@@ -79,6 +79,12 @@ export const MUTACIONES = [
   { archivo: 'src/data/positions_store.ts', de: 'WHERE p.route_id = ? AND (b.visible = 1 OR b.visible IS NULL)', a: 'WHERE p.route_id = ?', que: 'ocultos fuera de las posiciones por ruta' },
   // Flota demo: la placa vieja de la presentación no se queda en el panel.
   { archivo: 'src/demo/flota_demo.ts', de: "  'BUS-WGV705',\n", a: '', que: 'retirar la placa vieja de la demo' },
+  // Gzip del JSON: lo pequeño en claro, el q=0 del cliente y el Vary de las cachés.
+  { archivo: 'src/api/respuesta_json.ts', de: 'cuerpo.length >= MINIMO_PARA_COMPRIMIR &&', a: 'cuerpo.length >= 0 &&', que: 'lo pequeño no se comprime' },
+  { archivo: 'src/api/respuesta_json.ts', de: 'Number(q.slice(2)) > 0', a: 'Number(q.slice(2)) >= 0', que: 'gzip;q=0 es un no' },
+  { archivo: 'src/api/respuesta_json.ts', de: "  agregarVary(res, 'Accept-Encoding');\n", a: '', que: 'Vary: Accept-Encoding' },
+  // Filtro por días: el domingo ISO (7) es el 0 de strftime.
+  { archivo: 'src/data/busquedas.ts', de: 'dias.map((dia) => dia % 7)', a: 'dias.map((dia) => dia)', que: 'el domingo del filtro de días' },
 ];
 
 function correrSuite() {
