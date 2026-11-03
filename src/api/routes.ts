@@ -24,6 +24,7 @@ import {
   getCompanyBuses,
 } from '../data/buses';
 import { getEmpresas } from '../data/empresas';
+import { escribirJson as writeJson } from './respuesta_json';
 import { getActiveDeviceByIdentifier } from '../data/drivers_store';
 import { authenticateRequest, isAdminRequest, isDeviceForBus, authenticateCompanyAdmin } from '../auth/http';
 import { hashPin, hashSecret, verifySecretSinDelatar } from '../auth/passwords';
@@ -80,11 +81,6 @@ interface RouteHandler {
 
 const handlers: RouteHandler[] = [];
 const MAX_BODY_BYTES = 32 * 1024;
-
-function writeJson(res: ServerResponse, status: number, payload: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(payload));
-}
 
 function writeError(res: ServerResponse, status: number, code: string, message: string): void {
   writeJson(res, status, { error: { code, message } });

@@ -3,6 +3,8 @@ import { IncomingMessage, ServerResponse } from 'http';
 import path from 'path';
 import zlib from 'zlib';
 
+import { aceptaGzip } from './respuesta_json';
+
 /**
  * El panel web (la build de `app_control`, `tool/compilar-panel-web.sh
  * --base-href /panel/`) servido en /panel/, en el mismo origen que la API.
@@ -88,7 +90,7 @@ export function panelWeb(dir: string | undefined): ServirPanel {
     // main.dart.js): se revalida siempre y el ETag ahorra la descarga.
     const extension = path.extname(archivo).toLowerCase();
     const comprimible = COMPRIMIBLES.has(extension);
-    const gzip = comprimible && pideGzip(req.headers['accept-encoding']);
+    const gzip = comprimible && aceptaGzip(req.headers['accept-encoding']);
     const etag = `W/"${datos.size}-${Math.trunc(datos.mtimeMs)}${gzip ? '-gz' : ''}"`;
     res.setHeader('Content-Security-Policy', csp);
     res.setHeader('Cache-Control', 'no-cache');
@@ -115,16 +117,6 @@ export function panelWeb(dir: string | undefined): ServirPanel {
     lectura.pipe(zlib.createGzip().on('error', () => res.destroy())).pipe(res);
     return true;
   };
-}
-
-/** Si `Accept-Encoding` admite gzip: lo nombra y no con `q=0`. */
-function pideGzip(aceptadas: string | undefined): boolean {
-  return (aceptadas ?? '').split(',').some((parte) => {
-    const [nombre, ...parametros] = parte.split(';').map((t) => t.trim().toLowerCase());
-    if (nombre !== 'gzip') return false;
-    const q = parametros.find((p) => p.startsWith('q='));
-    return q === undefined || Number(q.slice(2)) > 0;
-  });
 }
 
 /**
