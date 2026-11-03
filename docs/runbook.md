@@ -528,11 +528,12 @@ fly ssh console   # y dentro: node scripts/crear-admin-empresa.mjs <companyId> <
 La flota firma sus JWT dentro del backend y no necesita un PIN global. Si
 `PIN` seguía configurado como secreto en Fly, `fly secrets unset PIN` lo quita.
 
-La máquina duerme sola (`auto_stop_machines`) y la despierta la primera
-petición, con un arranque en frío de unos segundos —por eso las apps esperan
-20 s al respaldo—. Para el día de la presentación conviene
-dejarla despierta antes de empezar: con la máquina parada no hay buses
-simulados rodando y el respaldo enseñaría un mapa vacío.
+La máquina va siempre prendida (`auto_stop_machines = "off"`,
+`min_machines_running = 1`; dueño, 2026-11-02, unos 3,5 USD al mes): con la
+máquina parada no hay buses simulados rodando y el respaldo enseñaría un mapa
+vacío. Si se vuelve a dejar que duerma (`"stop"` y `0`), la despierta la
+primera petición con un arranque en frío de unos segundos (por eso las apps
+esperan 20 s al respaldo), y antes de presentar hay que despertarla a mano.
 
 ## Que el Mac se levante solo
 

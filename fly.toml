@@ -54,27 +54,19 @@ primary_region = "iad"
   # sigue escuchando solo en loopback, como está diseñado, y por eso no se
   # expone ningún puerto más.
 
-  # Escala a cero mientras no se use. Fuera de las pruebas y de la
-  # presentación esta máquina no debe costar nada, y una máquina parada en
-  # Fly no factura CPU ni memoria: lo único que se sigue pagando es el
-  # volumen (1 GB).
+  # Siempre prendida (dueño, 2026-11-02, para la reunión con el AMB del 6 de
+  # noviembre): la flota simulada la lanza el propio proceso al arrancar, así
+  # que con la máquina dormida el respaldo enseñaría un mapa vacío los
+  # primeros segundos. Cuesta unos 3,5 USD al mes (shared-cpu-1x con 512 MB
+  # todo el mes, más el volumen de 1 GB).
   #
-  # `auto_start_machines` sigue en true a propósito: así la URL de Fly sirve
-  # de respaldo del túnel de ngrok. Si ngrok se cae, la primera petición que
-  # llegue aquí levanta la máquina sola (arranque en frío de unos segundos).
-  #
-  # OJO para el día de la presentación: con la máquina dormida no hay buses
-  # simulados rodando, porque los lanza el propio proceso al arrancar y
-  # tardan un momento en aparecer en el mapa. Antes de presentar hay que
-  # dejarla despierta:
-  #
-  #     fly scale count 1 --yes && fly machine start
-  #
-  # y volver a `min_machines_running = 1` si se quiere que no se duerma sola
-  # a mitad de la demo.
-  auto_stop_machines = "stop"
+  # Para volver a dormirla y pagar solo el volumen: auto_stop_machines =
+  # "stop" y min_machines_running = 0, y desplegar. `auto_start_machines`
+  # sigue en true para que, si la máquina se cae, la primera petición la
+  # levante sola.
+  auto_stop_machines = "off"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
   # Una sola máquina, a propósito: SQLite con un volumen no se reparte entre
   # varias. Si algún día hacen falta más, primero hay que cambiar de motor.
