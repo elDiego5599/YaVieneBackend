@@ -143,6 +143,53 @@ test('dos rangos solapados no dejan ver una celda con menos de 5 en un día', as
   assert.equal((await calor('2025-01-01T05:00:00.000Z', '2026-10-22T05:00:00.000Z')).status, 400);
 });
 
+// Reportes recorta el rango a unos días de la semana («todos los lunes de
+// los dos últimos meses», dueño, 2026-11-02). El día es el de Barranquilla:
+// el lunes a las 11 p. m. allá ya es martes en UTC y cuenta como lunes.
+test('el panel cuenta solo los días de la semana pedidos, en hora de Barranquilla', async () => {
+  getDb().prepare('DELETE FROM busquedas WHERE route_id = ?').run('R-777');
+  getDb().prepare(
+    'INSERT OR IGNORE INTO empresas (company_id, name, created_at) VALUES (?, ?, ?)',
+  ).run('EMP-BUSQUEDAS', 'Empresa búsquedas', Date.now());
+  const admin = createOrUpdateCompanyAdmin('EMP-BUSQUEDAS', 'busquedasadmin', hashSecret('password123456'));
+  const token = signToken({
+    sub: admin.adminId, role: 'admin', companyId: 'EMP-BUSQUEDAS', username: admin.username, tv: admin.tokenVersion,
+  });
+  const lat = 10.99035, lng = -74.78967;
+  const lunes = Date.parse('2026-10-19T05:00:00.000Z'); // lunes 19 oct, medianoche allá
+  const dia = 24 * 60 * 60_000;
+  for (let i = 0; i < 5; i += 1) registrarBusqueda('R-777', lat, lng, lunes + 23 * 60 * 60_000); // lunes, 11 p. m.
+  for (let i = 0; i < 6; i += 1) registrarBusqueda('R-777', lat, lng, lunes + dia + 8 * 60 * 60_000); // martes
+  for (let i = 0; i < 7; i += 1) registrarBusqueda('R-777', lat, lng, lunes + 6 * dia + 9 * 60 * 60_000); // domingo
+  const desde = lunes, hasta = lunes + 7 * dia;
+  const total = (dias: number[], hora?: number) =>
+    rankingBusquedas('EMP-BUSQUEDAS', desde, hasta, hora, dias).find(({ routeId }) => routeId === 'R-777')?.total;
+  const calor = (dias: number[], hora?: number) =>
+    (calorBusquedas('EMP-BUSQUEDAS', 'R-777', desde, hasta, hora, dias) as { count: number }[])
+      .reduce((suma, celda) => suma + celda.count, 0);
+  assert.equal(total([1]), 5);
+  assert.equal(total([1, 7]), 12);
+  assert.equal(total([3]), 0);
+  assert.equal(calor([2]), 6);
+  assert.equal(calor([7, 1]), 12);
+  // Con la hora también: el martes a las 8 a. m. sí, el lunes a esa hora no.
+  assert.equal(total([1, 2], 8), 6);
+  assert.equal(calor([1, 2], 8), 6);
+
+  // Las lecturas del panel comparten un tope por minuto (abajo): pocas aquí.
+  const pedir = (ruta: string, dias: string) => fetch(
+    `${base}${ruta}?desde=${new Date(desde).toISOString()}&hasta=${new Date(hasta).toISOString()}&dias=${dias}`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  const { rutas } = await (await pedir('/api/panel/busquedas', '7,1')).json() as { rutas: { routeId: string; total: number }[] };
+  assert.equal(rutas.find(({ routeId }) => routeId === 'R-777')?.total, 12);
+  const { celdas } = await (await pedir('/api/panel/busquedas/R-777/calor', '2')).json() as { celdas: { count: number }[] };
+  assert.deepEqual(celdas.map(({ count }) => count), [6]);
+  for (const malo of ['', '0', '8', 'x', '1,1', '1.5', '1,,2']) {
+    assert.equal((await pedir('/api/panel/busquedas', malo)).status, 400, `dias=${malo}`);
+  }
+});
+
 // AUD29-14: las dos lecturas del panel no tenían tope y un token de empresa
 // podía pedir el calor sin freno. Comparten el de las lecturas de flota (120
 // por minuto) con su propia cuenta, para que leer el calor no gaste la flota.

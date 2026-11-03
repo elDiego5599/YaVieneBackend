@@ -60,7 +60,7 @@ import {
 import { busInCatalog } from '../data/positions_store';
 import { getBusVisibility } from '../data/fleet_admin';
 import { dentroDeZona } from '../security/zona';
-import { calorBusquedas, PASO_LAT, PASO_LNG, rangoEnDias, rankingBusquedas, registrarBusqueda } from '../data/busquedas';
+import { calorBusquedas, type DiaSemana, PASO_LAT, PASO_LNG, rangoEnDias, rankingBusquedas, registrarBusqueda } from '../data/busquedas';
 import { emisorPush } from '../push/fcm';
 import { isBrokerReady } from '../mqtt/broker';
 import {
@@ -1180,32 +1180,44 @@ addRoute('POST', '/api/busquedas', (req, res, _params, body) => {
   res.writeHead(204); res.end();
 });
 
+/**
+ * `dias=1,3` deja solo lunes y miércoles (ISO: 1 lunes, 7 domingo). Sin el
+ * parámetro cuentan todos; vacío, repetido o fuera de 1 a 7 es inválido.
+ */
+function leerDias(texto: string | null): DiaSemana[] | undefined | null {
+  if (texto === null) return undefined;
+  const dias = texto.split(',');
+  if (!dias.every((dia) => /^[1-7]$/.test(dia)) || new Set(dias).size !== dias.length) return null;
+  return dias.map(Number) as DiaSemana[];
+}
+
 function rangoBusquedas(req: IncomingMessage) {
   const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
   const ahora = Date.now();
   const desde = params.has('desde') ? Date.parse(params.get('desde')!) : ahora - 30 * 24 * 60 * 60_000;
   const hasta = params.has('hasta') ? Date.parse(params.get('hasta')!) : ahora + 1;
   const horaTxt = params.get('hora'); const hora = horaTxt === null ? undefined : Number(horaTxt);
-  if (!Number.isFinite(desde) || !Number.isFinite(hasta) || desde >= hasta
+  const diasSemana = leerDias(params.get('dias'));
+  if (!Number.isFinite(desde) || !Number.isFinite(hasta) || desde >= hasta || diasSemana === null
     || (hora !== undefined && (!Number.isInteger(hora) || hora < 0 || hora > 23))) return null;
   const dias = rangoEnDias(desde, hasta);
-  return dias && { ...dias, hora };
+  return dias && { ...dias, hora, diasSemana };
 }
 addRoute('GET', '/api/panel/busquedas', (req, res) => {
   if (!guardRate(readRateLimiter, req, res, 'panel:busquedas')) return;
   const auth = authenticateCompanyAdmin(req);
   if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa'); return; }
   const rango = rangoBusquedas(req);
-  if (!rango) { writeError(res, 400, 'INVALID_INPUT', 'Rango u hora inválidos'); return; }
-  writeJson(res, 200, { rutas: rankingBusquedas(auth.companyId, rango.desde, rango.hasta, rango.hora) });
+  if (!rango) { writeError(res, 400, 'INVALID_INPUT', 'Rango, hora o días inválidos'); return; }
+  writeJson(res, 200, { rutas: rankingBusquedas(auth.companyId, rango.desde, rango.hasta, rango.hora, rango.diasSemana) });
 });
 addRoute('GET', '/api/panel/busquedas/:routeId/calor', (req, res, params) => {
   if (!guardRate(readRateLimiter, req, res, 'panel:busquedas')) return;
   const auth = authenticateCompanyAdmin(req);
   if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa'); return; }
   const rango = rangoBusquedas(req);
-  if (!rango) { writeError(res, 400, 'INVALID_INPUT', 'Rango u hora inválidos'); return; }
-  const celdas = calorBusquedas(auth.companyId, params.routeId, rango.desde, rango.hasta, rango.hora);
+  if (!rango) { writeError(res, 400, 'INVALID_INPUT', 'Rango, hora o días inválidos'); return; }
+  const celdas = calorBusquedas(auth.companyId, params.routeId, rango.desde, rango.hasta, rango.hora, rango.diasSemana);
   if (celdas === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Ruta no encontrada'); return; }
   writeJson(res, 200, { routeId: params.routeId, celdas });
 });

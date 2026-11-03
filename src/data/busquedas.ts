@@ -25,13 +25,26 @@ export function limpiarBusquedas(ahora = Date.now()): number {
   return getDb().prepare('DELETE FROM busquedas WHERE hora < ?').run(ahora - RETENCION_MS).changes;
 }
 
-export function rankingBusquedas(companyId: string, desde: number, hasta: number, hora?: number) {
+/** Días de la semana como en ISO 8601: 1 es lunes y 7, domingo. */
+export type DiaSemana = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+/** Un campo de la fecha de Barranquilla (`%H` la hora, `%w` el día con 0 en domingo). */
+const enBogota = (formato: '%H' | '%w', columna: string) =>
+  `CAST(strftime('${formato}', datetime(${columna} / 1000, 'unixepoch', '-5 hours')) AS INTEGER)`;
+
+/** El filtro de días en SQL y sus valores; sin días pedidos, todos cuentan. */
+function filtroDias(columna: string, dias?: readonly DiaSemana[]): { sql: string; valores: number[] } {
+  if (!dias?.length) return { sql: '', valores: [] };
+  return { sql: `AND ${enBogota('%w', columna)} IN (${dias.map(() => '?').join(', ')})`, valores: dias.map((dia) => dia % 7) };
+}
+
+export function rankingBusquedas(companyId: string, desde: number, hasta: number, hora?: number, dias?: readonly DiaSemana[]) {
+  const enDias = filtroDias('b.hora', dias);
   const rows = getDb().prepare(`SELECT cr.route_id AS routeId, cr.name AS name,
     COALESCE(SUM(b.count), 0) AS total,
-    SUM(CASE WHEN CAST(strftime('%H', datetime(b.hora / 1000, 'unixepoch', '-5 hours')) AS INTEGER) = 0 THEN b.count ELSE 0 END) AS h0,
-    ${Array.from({ length: 23 }, (_, i) => `SUM(CASE WHEN CAST(strftime('%H', datetime(b.hora / 1000, 'unixepoch', '-5 hours')) AS INTEGER) = ${i + 1} THEN b.count ELSE 0 END) AS h${i + 1}`).join(',\n    ')}
-    FROM company_routes cr LEFT JOIN busquedas b ON b.route_id = cr.route_id AND b.hora >= ? AND b.hora < ?
-    WHERE cr.company_id = ? GROUP BY cr.route_id ORDER BY total DESC, cr.name`).all(desde, hasta, companyId) as Record<string, unknown>[];
+    ${Array.from({ length: 24 }, (_, h) => `SUM(CASE WHEN ${enBogota('%H', 'b.hora')} = ${h} THEN b.count ELSE 0 END) AS h${h}`).join(',\n    ')}
+    FROM company_routes cr LEFT JOIN busquedas b ON b.route_id = cr.route_id AND b.hora >= ? AND b.hora < ? ${enDias.sql}
+    WHERE cr.company_id = ? GROUP BY cr.route_id ORDER BY total DESC, cr.name`).all(desde, hasta, ...enDias.valores, companyId) as Record<string, unknown>[];
   const resultado = rows.map((row) => {
     const porHora = Array.from({ length: 24 }, (_, h) => Number(row[`h${h}`] ?? 0));
     const max = Math.max(...porHora);
@@ -69,15 +82,16 @@ export function rangoEnDias(desde: number, hasta: number): { desde: number; hast
 // ver las 1 o 2 búsquedas de un día; así cada día que se cuenta ya tiene
 // sus 5, y una resta solo da días que se podían ver solos. Una zona con 2 un
 // día y 3 otro no sale: es el precio (dueño, 2026-10-31).
-export function calorBusquedas(companyId: string, routeId: string, desde: number, hasta: number, hora?: number) {
+export function calorBusquedas(companyId: string, routeId: string, desde: number, hasta: number, hora?: number, dias?: readonly DiaSemana[]) {
   const own = getDb().prepare('SELECT 1 FROM company_routes WHERE company_id = ? AND route_id = ?').get(companyId, routeId);
   if (!own) return null;
+  const enDias = filtroDias('hora', dias);
+  const enHora = hora === undefined ? { sql: '', valores: [] } : { sql: `AND ${enBogota('%H', 'hora')} = ?`, valores: [hora] };
   const rows = getDb().prepare(`SELECT lat, lng, SUM(dia_count) AS count FROM (
       SELECT celda_lat AS lat, celda_lng AS lng, SUM(count) AS dia_count FROM busquedas
-      WHERE route_id = ? AND celda_lat IS NOT NULL AND hora >= ? AND hora < ?
-      ${hora === undefined ? '' : "AND CAST(strftime('%H', datetime(hora / 1000, 'unixepoch', '-5 hours')) AS INTEGER) = ?"}
+      WHERE route_id = ? AND celda_lat IS NOT NULL AND hora >= ? AND hora < ? ${enHora.sql} ${enDias.sql}
       GROUP BY (hora - ${BOGOTA_MS}) / ${DIA_MS}, celda_lat, celda_lng HAVING SUM(count) >= ?
     ) GROUP BY lat, lng`)
-    .all(...(hora === undefined ? [routeId, desde, hasta, K_BUSQUEDAS] : [routeId, desde, hasta, hora, K_BUSQUEDAS]));
+    .all(routeId, desde, hasta, ...enHora.valores, ...enDias.valores, K_BUSQUEDAS);
   return rows;
 }
