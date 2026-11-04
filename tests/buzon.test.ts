@@ -231,6 +231,19 @@ test('leerReporte: tipo, texto de 3 a 1000, sin controles, plataforma y versión
     { tipo: 'sugerencia', texto: 'Modo\tnoche', plataforma: 'ios', version: '1.4.0+12' });
   // Mil caracteres de verdad, no mil unidades de UTF-16: los emoji cuentan uno.
   assert.ok(!('error' in reportes.leerReporte({ tipo: 'problema', texto: '🚌'.repeat(1000) })));
+  // Los separadores de Unicode son saltos de línea; los controles de dirección
+  // (que pintan al revés lo que sigue en el correo) y el BOM se van sin
+  // rechazar el reporte. El ZWJ se queda: junta la familia del emoji.
+  assert.deepEqual(reportes.leerReporte({ tipo: 'problema', texto: 'uno dos tres' }),
+    { tipo: 'problema', texto: 'uno\ndos\ntres' });
+  assert.deepEqual(
+    reportes.leerReporte({ tipo: 'problema', texto: '﻿ruta ‮atrás‬ ⁦aislado⁩ ‪a‫b‭c' }),
+    { tipo: 'problema', texto: 'ruta atrás aislado abc' });
+  assert.deepEqual(reportes.leerReporte({ tipo: 'sugerencia', texto: 'Para 👨‍👩‍👧' }),
+    { tipo: 'sugerencia', texto: 'Para 👨‍👩‍👧' });
+  // Solo invisibles no es un reporte: tras quitarlos no quedan 3 caracteres.
+  const vacio = reportes.leerReporte({ tipo: 'problema', texto: 'a‮‮‮b' });
+  assert.ok('error' in vacio && vacio.error.includes('entre 3 y 1000'));
 
   for (const [malo, mensaje] of [
     [null, 'objeto'],

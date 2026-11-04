@@ -32,6 +32,13 @@ const VERSION = /^[0-9A-Za-z.+-]{1,32}$/;
 // Controles fuera, salvo el salto de línea y el tabulador: el texto se lee en
 // un correo y no debe poder pintar nada raro.
 const CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/;
+// El separador de línea y el de párrafo (U+2028, U+2029) son saltos de línea
+// para el correo y para JSON, así que se vuelven `\n`. Los controles de
+// dirección (U+202A a U+202E, U+2066 a U+2069) dan vuelta lo que sigue en el
+// correo del equipo y el BOM (U+FEFF) no se ve: se quitan sin rechazar el
+// reporte, porque el pasajero no los ve y no sabría qué corregir. El ZWJ
+// (U+200D) se queda: es el que junta los emojis de varias personas.
+const INVISIBLES = /[\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 
 export interface NuevoReporte {
   tipo: TipoReporte;
@@ -53,7 +60,10 @@ export function leerReporte(cuerpo: unknown): NuevoReporte | { error: string } {
     return { error: 'tipo debe ser «problema» o «sugerencia»' };
   }
   if (typeof texto !== 'string') return { error: 'Falta el texto del reporte' };
-  const limpio = texto.replace(/\r\n?/g, '\n').trim();
+  const limpio = texto
+    .replace(/\r\n?|[\u2028\u2029]/g, '\n')
+    .replace(INVISIBLES, '')
+    .trim();
   const largo = [...limpio].length;
   if (largo < MIN_TEXTO_REPORTE || largo > MAX_TEXTO_REPORTE) {
     return { error: `El texto debe tener entre ${MIN_TEXTO_REPORTE} y ${MAX_TEXTO_REPORTE} caracteres` };
