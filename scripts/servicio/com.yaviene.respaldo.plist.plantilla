@@ -21,16 +21,20 @@
   <key>WorkingDirectory</key>
   <string>@@REPO@@</string>
 
-  <!-- Cada hora. Con StartInterval launchd cuenta desde que se carga el
-       servicio, así que no hace falta clavar el minuto: lo que importa es
-       que entre copia y copia pase una hora. Si el Mac estaba dormido,
-       launchd la corre en cuanto despierta, una sola vez y no una por
-       cada hora perdida. -->
-  <key>StartInterval</key>
-  <integer>3600</integer>
+  <!-- Cada hora, en punto. No StartInterval: ese contador solo corre con el
+       Mac despierto y al despertar no se pone al día (el 2026-11-04 la
+       última copia seguía siendo la de las 03:02 a las 10:30). Con
+       StartCalendarInterval, si el Mac dormía a la hora en punto, launchd
+       corre la copia en cuanto despierta, una sola vez y no una por cada
+       hora perdida. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
 
   <!-- Al cargar no: cargar el servicio no es motivo para copiar, y la
-       primera copia llega una hora después. Para una copia ya mismo está
+       primera copia llega a la siguiente hora en punto. Para una copia ya mismo está
        `npm run respaldo`. -->
   <key>RunAtLoad</key>
   <false/>

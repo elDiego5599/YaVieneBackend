@@ -209,7 +209,7 @@ mensajes no significan lo mismo:
 ## Copias de seguridad y restauración
 
 Las copias las hace solo el servicio `com.yaviene.respaldo` de launchd, una
-cada hora, mientras el Mac esté encendido. Cada pasada copia la base en
+cada hora en punto; si el Mac dormía, la hace al despertar. Cada pasada copia la base en
 caliente —respaldo en línea de SQLite, no hay que parar el backend— y acto
 seguido abre la copia recién hecha para comprobar que sirve: `integrity_check`
 y las tablas contadas contra la base viva. Lo que salga queda en

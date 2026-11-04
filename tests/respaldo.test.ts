@@ -337,7 +337,15 @@ test('el servicio de launchd sale instalable y apunta a este repo', { skip: SOLO
   const texto = readFileSync(plist, 'utf8');
   assert.doesNotMatch(texto, /@@/, 'quedó una marca sin reemplazar en el plist');
   assert.match(texto, /servicio\/respaldar\.sh/);
-  assert.match(texto, /<key>StartInterval<\/key>\s*<integer>3600<\/integer>/);
+  // A la hora en punto del reloj y no cada 3600 s de Mac despierto: el
+  // contador de StartInterval se para mientras el Mac duerme y al despertar
+  // no se pone al día (el 2026-11-04 la última copia era de las 03:02 a las
+  // 10:30). StartCalendarInterval sí corre la que se perdió al despertar.
+  assert.match(
+    texto,
+    /<key>StartCalendarInterval<\/key>\s*<dict>\s*<key>Minute<\/key>\s*<integer>0<\/integer>\s*<\/dict>/,
+  );
+  assert.doesNotMatch(texto, /StartInterval<\/key>/);
   // El plist se lee solo si es XML válido; plutil es el mismo que usa
   // launchd al cargarlo.
   assert.equal(spawnSync('/usr/bin/plutil', ['-lint', plist]).status, 0);
