@@ -76,6 +76,27 @@ const semanaContraMes = [...new Set([...mes.keys(), ...semana.keys()])]
   .reduce((sum, k) => sum + Math.abs((mes.get(k) ?? 0) - (semana.get(k) ?? 0)), 0) / 2;
 const formas = ['EMP-01', 'EMP-03'].flatMap(companyId => rankingBusquedas(companyId, now - 30 * 86400000, now + 1)
   .map(route => ({ routeId: route.routeId, horaPico: route.horaPico, porHora: route.porHora })));
-const output = { formas, semanaContraMes, celdasCalientes, fueraDeCalle, maxVisibleDistance, tramosConCalor, firstCount, secondCount, thirdCount, sentinel, realCount, daily, visiblePeak, peakCells, todayRank, localMidnight, visibleHours, offRouteVisible, rawOffRoute, beyondLimit, maxHour, peaksByCompany, addedRows, nextHourRows, minHour: limits.min, threshold: K_BUSQUEDAS, totals };
+// Manchas lejos de la ruta (dueño, 2026-10-27): solo sobre la calle de otra
+// ruta, nunca en el agua ni en un potrero. A cada una se le mide la calle más
+// cercana de todas las rutas y la distancia a la suya.
+const visiblesLejos = geometries.flatMap(route => {
+  const companyId = ['R-107','R-109','R-110'].includes(route.routeId) ? 'EMP-03' : 'EMP-01';
+  return (calorBusquedas(companyId, route.routeId, now - 30 * 86400000, now + 1) ?? [])
+    .map(cell => ({ routeId: route.routeId, p: { lat: cell.lat, lon: cell.lng } }))
+    .filter(({ p }) => aRuta(p, route) > 400)
+    .map(({ routeId, p }) => ({ routeId, aSuya: aRuta(p, route), aCalle: Math.min(...rutasJson.rutas.map(r => aRuta(p, r))) }));
+});
+const lejosSinCalle = visiblesLejos.filter(c => c.aCalle > 110).length;
+const rutasConManchas = new Set(visiblesLejos.map(c => c.routeId)).size;
+const lejosMin = Math.min(...visiblesLejos.map(c => c.aSuya)), lejosMax = Math.max(...visiblesLejos.map(c => c.aSuya));
+// Las zonas más calientes cambian de una semana a otra (dueño, 2026-10-27:
+// siempre salían las mismas 5): de las 5 celdas más calientes de cada semana,
+// la parte que queda a más de 500 m de las 5 de la semana anterior.
+const top5 = (desde: number) => (calorBusquedas('EMP-01', monthRank.routeId, desde, desde + 7 * 86400000) ?? [])
+  .sort((a, b) => b.count - a.count).slice(0, 5).map(cell => ({ lat: cell.lat, lon: cell.lng }));
+const semanas = [4, 3, 2, 1].map(k => top5(now + 1 - k * 7 * 86400000));
+const zonasNuevas = semanas.slice(1).map((sem, i) =>
+  sem.filter(p => semanas[i].every(q => metros(p, q) > 500)).length / Math.max(1, sem.length));
+const output = { formas, lejosSinCalle, rutasConManchas, lejosMin, lejosMax, zonasNuevas, semanaContraMes, celdasCalientes, fueraDeCalle, maxVisibleDistance, tramosConCalor, firstCount, secondCount, thirdCount, sentinel, realCount, daily, visiblePeak, peakCells, todayRank, localMidnight, visibleHours, offRouteVisible, rawOffRoute, beyondLimit, maxHour, peaksByCompany, addedRows, nextHourRows, minHour: limits.min, threshold: K_BUSQUEDAS, totals };
 closeDb();
 process.stdout.write(JSON.stringify(output));

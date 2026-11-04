@@ -230,7 +230,7 @@ test('calor de demo varía, se completa por hora y reemplaza su versión sin toc
   assert.equal(hijo.status, 0, hijo.stderr);
   const dato = JSON.parse(hijo.stdout.trim().split('\n').at(-1) ?? '') as {
     firstCount: number; secondCount: number; thirdCount: number; sentinel: number; realCount: number;
-    daily: Array<{ day: string; n: number }>; visiblePeak: number; visibleHours: number[]; maxVisibleDistance: number; semanaContraMes: number; fueraDeCalle: number; celdasCalientes: number; tramosConCalor: number; offRouteVisible: number; rawOffRoute: number; beyondLimit: number; maxHour: number; minHour: number; peaksByCompany: number[]; addedRows: number; nextHourRows: number;
+    daily: Array<{ day: string; n: number }>; visiblePeak: number; visibleHours: number[]; maxVisibleDistance: number; semanaContraMes: number; fueraDeCalle: number; celdasCalientes: number; tramosConCalor: number; offRouteVisible: number; rutasConManchas: number; lejosSinCalle: number; lejosMin: number; lejosMax: number; zonasNuevas: number[]; rawOffRoute: number; beyondLimit: number; maxHour: number; minHour: number; peaksByCompany: number[]; addedRows: number; nextHourRows: number;
     formas: Array<{ routeId: string; horaPico: number | null; porHora: number[] }>;
     totals: Array<{ routeId: string; total: number }>; peakCells: { n: number; max: number }; todayRank: { routeId: string; horaPico: number | null }; localMidnight: number;
   };
@@ -264,15 +264,20 @@ test('calor de demo varía, se completa por hora y reemplaza su versión sin toc
   assert.ok(Math.max(...saltos) >= 2 * Math.min(...saltos), `saltos: ${saltos.join(',')}`);
   assert.ok(dato.visiblePeak >= 15, `celdas visibles en pico: ${dato.visiblePeak}; datos=${JSON.stringify(dato.peakCells)} ruta=${JSON.stringify(dato.todayRank)}`);
   assert.ok(dato.visibleHours.every(n => n >= 30), `visibles por hora 6-21: ${dato.visibleHours.join(",")}`);
-  // El calor va por donde pasa la ruta, nunca lejos (dueño, 2026-10-26:
-  // una mancha en el agua no va), pero no como un hilo parejo: parches
-  // variados con huecos entre ellos, que se abren un poco a los lados de la
-  // calle, y focos anchos que llegan a amarillo, naranja y rojo.
-  assert.equal(dato.offRouteVisible, 0, `celdas lejos de la ruta: ${dato.offRouteVisible}`);
-  // 400 m: dos celdas de 150 m a cada lado de la calle, más media diagonal.
-  assert.ok(dato.maxVisibleDistance <= 400, `celda visible a ${Math.round(dato.maxVisibleDistance)} m de la ruta`);
+  // El calor va por donde pasa la ruta, en parches variados que se abren un
+  // poco a los lados de la calle y focos anchos que llegan a amarillo,
+  // naranja y rojo. En 30 días cubre casi toda la ruta y deja unas manchas a
+  // 1 o 2 km, siempre sobre una calle (la de otra ruta), nunca en el agua
+  // (dueño, 2026-10-27).
+  assert.ok(dato.offRouteVisible >= 10, `celdas lejos de la ruta: ${dato.offRouteVisible}`);
+  assert.ok(dato.rutasConManchas >= 5, `rutas con manchas lejos: ${dato.rutasConManchas}`);
+  assert.equal(dato.lejosSinCalle, 0, `manchas lejos fuera de una calle: ${dato.lejosSinCalle}`);
+  assert.ok(dato.lejosMin >= 800 && dato.lejosMax <= 2200, `manchas entre ${Math.round(dato.lejosMin)} y ${Math.round(dato.lejosMax)} m`);
+  assert.ok(dato.maxVisibleDistance <= 2200, `celda visible a ${Math.round(dato.maxVisibleDistance)} m de la ruta`);
   assert.ok(dato.fueraDeCalle >= 0.15, `celdas a un lado de la calle: ${dato.fueraDeCalle}`);
-  assert.ok(dato.tramosConCalor >= 0.4 && dato.tramosConCalor <= 0.85, `tramos con calor: ${dato.tramosConCalor}`);
+  assert.ok(dato.tramosConCalor >= 0.8 && dato.tramosConCalor <= 0.97, `tramos con calor: ${dato.tramosConCalor}`);
+  // Cada semana, al menos 2 de las 5 zonas más calientes son nuevas.
+  assert.ok(dato.zonasNuevas.every(f => f >= 0.4), `zonas nuevas por semana: ${dato.zonasNuevas.join(',')}`);
   // 7 y 30 días no se calcan (dueño, 2026-10-26): al menos un cuarto del
   // calor cambia de sitio entre la última semana y el mes.
   assert.ok(dato.semanaContraMes >= 0.25, `semana contra mes: ${dato.semanaContraMes}`);
