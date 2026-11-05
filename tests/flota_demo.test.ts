@@ -54,11 +54,13 @@ test('cada bus de la flota lleva placa colombiana y su id sale de ella', () => {
   }
   // Ni una placa repetida: el índice único de la base no dejaría guardarla.
   assert.equal(new Set(flota.map((b) => b.placa)).size, flota.length);
-  // La que se toca en la presentación: viene hacia el pasajero en R-106.
+  // La que se toca en la presentación, en R-106.
   const destacada = flota.find((b) => b.placa === 'ABC123');
   assert.equal(destacada?.routeId, 'R-106');
-  assert.equal(destacada?.sentido, 'venida');
-  assert.equal(destacada?.fraccion, 1 - 5.5 / 8);
+  assert.equal(destacada?.fraccion, 5.5 / 8);
+  // Cada ruta es un circuito cerrado: un bus que lo recorriera al revés
+  // subiría por la calle de bajada (dueño, 2026-11-05).
+  assert.ok(flota.every((b) => !('sentido' in b)), 'ningún bus va en contravía');
 });
 
 test('cada ruta conserva dieciséis placas: ocho rodando y ocho en espera terminal', () => {
@@ -69,16 +71,12 @@ test('cada ruta conserva dieciséis placas: ocho rodando y ocho en espera termin
     assert.equal(buses.length, 16, `${ruta}: plantilla`);
     const activos = buses.filter((b) => b.activo);
     assert.equal(activos.length, 8, ruta);
-    assert.equal(activos.filter((b) => b.sentido === 'ida').length, 4, ruta);
-    assert.equal(activos.filter((b) => b.sentido === 'venida').length, 4, ruta);
-    assert.equal(buses.filter((b) => !b.activo).length, 8, ruta);
-    assert.equal(buses.filter((b) => !b.activo && b.fraccion === 0).length, 4, `${ruta}: espera A`);
-    assert.equal(buses.filter((b) => !b.activo && b.fraccion === 1).length, 4, `${ruta}: espera B`);
-    const posiciones = activos.map((b) => b.sentido === 'ida' ? b.fraccion : 1 - b.fraccion).sort((a, b) => a - b);
+    // El circuito empieza y termina en la misma terminal: ahí esperan todos.
+    assert.equal(buses.filter((b) => !b.activo && b.fraccion === 0).length, 8, `${ruta}: espera`);
+    const posiciones = activos.map((b) => b.fraccion).sort((a, b) => a - b);
     const brechas = posiciones.slice(1).map((p, i) => p - posiciones[i]);
     const media = brechas.reduce((s, b) => s + b, 0) / brechas.length;
     assert.ok(Math.max(...brechas) <= 2 * media, `${ruta}: brechas ${brechas.join(',')}`);
-    assert.ok(buses.filter((b) => !b.activo).every((b) => b.fraccion === 0 || b.fraccion === 1), ruta);
   }
 });
 
@@ -126,7 +124,7 @@ test('arrancar sobre base vieja retira sobrantes demo y deja 8 activos y 8 en te
       Math.floor(datosRuta.rutas.find((candidato) => candidato.routeId === ruta)!.waypoints.length / 2)
     ];
     const publicada = upsertPosition(bus.telefono, {
-      busId: bus.busId, routeId: ruta, ...punto, speedKmh: 24, sentido: bus.sentido,
+      busId: bus.busId, routeId: ruta, ...punto, speedKmh: 24, sentido: 'ida',
       sequence: 1, capturedAt: ahora + 1,
       driverValidated: true, companyId: bus.companyId,
     });

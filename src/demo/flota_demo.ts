@@ -37,11 +37,15 @@ export interface BusDemo {
   routeId: string;
   /** La empresa dueña de la ruta: con ella se registra el simulador. */
   companyId: string;
-  /** Punto del recorrido donde nace, de 0 (terminal A) a 1 (terminal B). */
+  /**
+   * Punto del circuito donde nace, de 0 a 1 desde la terminal. Cada ruta es
+   * un circuito cerrado (empieza y termina en la misma terminal), así que
+   * todos lo recorren en el mismo sentido: uno que fuera al revés subiría
+   * por la calle de bajada (dueño, 2026-11-05).
+   */
   fraccion: number;
   telefono: string;
   intervaloMs: string;
-  sentido: 'ida' | 'venida';
   activo: boolean;
   velocidadBaseKmh: number;
 }
@@ -168,11 +172,9 @@ export function construirFlota(): BusDemo[] {
   for (const [indiceRuta, { companyId, routeId }] of rutas.entries()) {
     for (let i = 0; i < BUSES_POR_RUTA; i++) {
       const activo = i < 8;
-      const sentido = i % 2 === 0 ? 'ida' : 'venida';
-      const posicion = activo ? (i + 0.5) / 8 : (i < 10 ? 0 : 1);
-      // START_FRACTION del simulador se expresa desde el terminal de salida;
-      // venida invierte esa coordenada para ocupar otra posición física.
-      const fraccion = sentido === 'ida' ? posicion : 1 - posicion;
+      // Los ocho en servicio, repartidos por el circuito; los otros, en la
+      // terminal, donde el circuito empieza y termina.
+      const fraccion = activo ? (i + 0.5) / 8 : 0;
       // Conserva los IDs de los doce buses de la versión anterior en cada
       // ruta. Los cuatro nuevos usan el bloque final para no desplazar rutas.
       const numeroBus = i < 12
@@ -189,7 +191,6 @@ export function construirFlota(): BusDemo[] {
         fraccion,
         telefono: `300${String(numeroBus).padStart(7, '0')}`,
         intervaloMs: routeId === RUTA_DESTACADA ? INTERVALO_RAPIDO : INTERVALO_LENTO,
-        sentido,
         activo,
         velocidadBaseKmh: 60 + (hashBus(busIdFromPlaca(placa)) % 4001) / 100,
       });
@@ -350,7 +351,6 @@ type EstadoBus = {
   bus: BusDemo;
   iniciado: boolean;
   esperandoTerminal: boolean;
-  sentido: 'ida' | 'venida';
   progreso: number;
   longitud: number;
   tramos: number[];
@@ -369,6 +369,7 @@ const espera = new Map<string, number>();
 let apagando = false;
 let temporizador: NodeJS.Timeout | undefined;
 let geometria: Map<string, RutaGeometria> | undefined;
+/** Cola de la terminal de cada ruta (por routeId), del que más lleva esperando al último. */
 const busesEnTerminal = new Map<string, string[]>();
 
 const ESPERA_MINIMA_MS = 5_000;
@@ -411,7 +412,7 @@ function geometriaBus(bus: BusDemo): Pick<EstadoBus, 'puntos' | 'tramos' | 'long
   const puntos = ruta && ruta.waypoints.length >= 2 ? ruta.waypoints : PUNTOS_RESPALDO;
   const tramos = puntos.slice(1).map((punto, i) => distancia(puntos[i], punto));
   const longitud = tramos.reduce((suma, tramo) => suma + tramo, 0);
-  const progreso = (bus.sentido === 'ida' ? bus.fraccion : 1 - bus.fraccion) * longitud;
+  const progreso = bus.fraccion * longitud;
   return { puntos, tramos, longitud, progreso };
 }
 
@@ -478,6 +479,13 @@ async function conectarBus(estado: EstadoBus): Promise<void> {
   }
 }
 
+/**
+ * El equipo del bus dice si va de ida o de venida (`visibilidad_terminal`).
+ * Un circuito cerrado se recorre siempre en un sentido, el de sus waypoints,
+ * así que la flota demo siempre va de ida.
+ */
+const SENTIDO_DEL_CIRCUITO = 'ida';
+
 function rumbo(a: Punto, b: Punto): number {
   return (Math.atan2(b.lon - a.lon, b.lat - a.lat) * 180 / Math.PI + 360) % 360;
 }
@@ -485,10 +493,10 @@ function rumbo(a: Punto, b: Punto): number {
 function publicarPosicion(estado: EstadoBus, ahora: number): void {
   const interval = Number(estado.bus.intervaloMs);
   if (estado.esperandoTerminal) {
-    const terminal = estado.progreso <= 0 ? estado.puntos[0] : estado.puntos[estado.puntos.length - 1];
+    const terminal = estado.puntos[0];
     estado.cliente?.publish(`empresa/${estado.bus.companyId}/bus/${estado.bus.busId}/posicion`, JSON.stringify({
       protocolVersion: 1, lat: terminal.lat, lon: terminal.lon, speedKmh: 0,
-      sentido: estado.sentido, capturedAt: estado.capturedAt, sequence: ++estado.secuencia,
+      sentido: SENTIDO_DEL_CIRCUITO, capturedAt: estado.capturedAt, sequence: ++estado.secuencia,
     }));
     estado.capturedAt = Math.max(estado.capturedAt + interval, ahora - interval);
     return;
@@ -499,28 +507,22 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
   const velocidad = estado.velocidadKmh + Math.max(-cambioMaximo, Math.min(cambioMaximo, objetivo - estado.velocidadKmh));
   const recorrido = (estado.velocidadKmh + velocidad) / 2 / 3.6 * interval / 1000;
   estado.velocidadKmh = velocidad;
-  estado.progreso += estado.sentido === 'ida' ? recorrido : -recorrido;
-  const terminal = estado.sentido === 'ida' && estado.progreso >= estado.longitud
-    ? 'B'
-    : estado.sentido === 'venida' && estado.progreso <= 0 ? 'A' : undefined;
-  if (terminal) {
-    estado.progreso = terminal === 'A' ? 0 : estado.longitud;
+  estado.progreso += recorrido;
+  if (estado.progreso >= estado.longitud) {
+    // Cerró el circuito: vuelve a la terminal y sale el que más esperó.
+    estado.progreso = 0;
     estado.esperandoTerminal = true;
-    const clave = `${estado.bus.routeId}:${terminal}`;
-    const esperando = busesEnTerminal.get(clave) ?? [];
-    busesEnTerminal.set(clave, esperando);
+    const esperando = busesEnTerminal.get(estado.bus.routeId) ?? [];
+    busesEnTerminal.set(estado.bus.routeId, esperando);
     const relevo = relevoTerminal(estado.bus.busId, esperando);
     estado.bus.activo = false;
-    estado.bus.fraccion = terminal === 'A'
-      ? (estado.sentido === 'ida' ? 0 : 1)
-      : (estado.sentido === 'ida' ? 1 : 0);
+    estado.bus.fraccion = 0;
     const nuevo = estados.get(relevo.sale)!;
     nuevo.cliente?.end(true);
     nuevo.cliente = undefined;
-    nuevo.sentido = terminal === 'A' ? 'ida' : 'venida';
     nuevo.bus.activo = true;
     nuevo.esperandoTerminal = false;
-    nuevo.progreso = terminal === 'A' ? 0 : nuevo.longitud;
+    nuevo.progreso = 0;
     nuevo.iniciado = true;
     nuevo.siguiente = ahora;
     nuevo.capturedAt = ahora;
@@ -540,8 +542,8 @@ function publicarPosicion(estado: EstadoBus, ahora: number): void {
   const topic = `empresa/${estado.bus.companyId}/bus/${estado.bus.busId}/posicion`;
   estado.cliente?.publish(topic, JSON.stringify({
     protocolVersion: 1, lat, lon,
-    heading: estado.sentido === 'venida' ? rumbo(b, a) : rumbo(a, b),
-    speedKmh: velocidad, sentido: estado.sentido,
+    heading: rumbo(a, b),
+    speedKmh: velocidad, sentido: SENTIDO_DEL_CIRCUITO,
     capturedAt: estado.capturedAt, sequence: ++estado.secuencia,
   }));
   estado.capturedAt = Math.max(estado.capturedAt + interval, ahora - interval);
@@ -581,16 +583,15 @@ export function arrancarFlotaDemo(): void {
   for (const bus of flota) {
     const datos = geometriaBus(bus);
     estados.set(bus.busId, {
-      bus, ...datos, sentido: bus.sentido, iniciado: true, esperandoTerminal: !bus.activo,
+      bus, ...datos, iniciado: true, esperandoTerminal: !bus.activo,
       siguiente: 0, secuencia: 0, capturedAt: Date.now(), rechazos: 0, velocidadKmh: 0,
       iniciadoEn: Date.now(),
     });
   }
   for (const estado of estados.values()) {
     if (!estado.esperandoTerminal) continue;
-    const terminal = estado.progreso <= 0 ? 'A' : 'B';
-    const clave = `${estado.bus.routeId}:${terminal}`;
-    busesEnTerminal.set(clave, [...(busesEnTerminal.get(clave) ?? []), estado.bus.busId]);
+    const ruta = estado.bus.routeId;
+    busesEnTerminal.set(ruta, [...(busesEnTerminal.get(ruta) ?? []), estado.bus.busId]);
   }
   // Un solo temporizador del proceso mueve toda la flota; no se crea un
   // proceso ni un interval por bus.
