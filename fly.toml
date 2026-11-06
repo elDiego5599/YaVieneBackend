@@ -57,8 +57,8 @@ primary_region = "iad"
   # Siempre prendida (dueño, 2026-11-02, para la reunión con el AMB del 6 de
   # noviembre): la flota simulada la lanza el propio proceso al arrancar, así
   # que con la máquina dormida el respaldo enseñaría un mapa vacío los
-  # primeros segundos. Cuesta unos 3,5 USD al mes (shared-cpu-1x con 512 MB
-  # todo el mes, más el volumen de 1 GB).
+  # primeros segundos. Cuesta unos 12 USD al mes (shared-cpu-2x con 1 GB
+  # todo el mes, más el volumen de 1 GB; ver [[vm]], abajo).
   #
   # Para volver a dormirla y pagar solo el volumen: auto_stop_machines =
   # "stop" y min_machines_running = 0, y desplegar. `auto_start_machines`
@@ -83,7 +83,10 @@ primary_region = "iad"
     path = "/api/health"
 
 [[vm]]
-  size = "shared-cpu-1x"
-  # 512 MB en vez de 256: el backend mueve la flota demo en su propio
+  # Dos CPU y 1 GB (dueño, 2026-11-06, día del pitch): con una sola CPU
+  # compartida la flota demo, que creció con Coochofal, atrasaba tanto el
+  # proceso que /api/health pasaba de los 5 s del chequeo y el proxy de Fly
+  # dejaba de mandarle tráfico. El backend mueve la flota en su propio
   # proceso, con un solo temporizador compartido por todos los buses.
-  memory = "512mb"
+  size = "shared-cpu-2x"
+  memory = "1024mb"
