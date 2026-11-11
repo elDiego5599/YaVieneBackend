@@ -46,6 +46,7 @@ import { revisarAvisos } from './data/avisos_push';
 import { configCorreoDesdeEntorno } from './buzon/correo';
 import { enviarReportes } from './data/reportes';
 import { limpiarBusquedas } from './data/busquedas';
+import { limpiarQuejas } from './data/quejas';
 import {
   setupSocketServer,
   closeSocketServer,
@@ -270,6 +271,14 @@ const busquedasLimpiezaTimer = setInterval(
   24 * 60 * 60_000,
 );
 busquedasLimpiezaTimer.unref();
+
+// Las quejas guardadas para el panel (D18) se van a los 13 meses.
+limpiarQuejas();
+const quejasLimpiezaTimer = setInterval(
+  vueltaProtegida('Quejas', 'quejas.limpieza.error', limpiarQuejas),
+  24 * 60 * 60_000,
+);
+quejasLimpiezaTimer.unref();
 
 startBroker(
   (_clientId: string, auth: DeviceTokenPayload, topic, payload): PositionHandlingResult | void => {

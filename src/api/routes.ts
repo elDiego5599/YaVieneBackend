@@ -61,7 +61,8 @@ import {
 import { busInCatalog } from '../data/positions_store';
 import { getBusVisibility } from '../data/fleet_admin';
 import { dentroDeZona } from '../security/zona';
-import { calorBusquedas, type DiaSemana, PASO_LAT, PASO_LNG, rangoEnDias, rankingBusquedas, registrarBusqueda } from '../data/busquedas';
+import { calorBusquedas, type DiaSemana, leerCelda, rangoEnDias, rankingBusquedas, registrarBusqueda } from '../data/busquedas';
+import { esMotivoQueja, quejasDeEmpresa } from '../data/quejas';
 import { emisorPush } from '../push/fcm';
 import { isBrokerReady } from '../mqtt/broker';
 import {
@@ -1156,18 +1157,9 @@ addRoute('POST', '/api/busquedas', (req, res, _params, body) => {
   if (!ruta) { writeError(res, 400, 'INVALID_ROUTE', 'La ruta no existe o no está visible'); return; }
   let lat: number | null = null; let lng: number | null = null;
   if (body.celda !== undefined) {
-    const celda = body.celda as Record<string, unknown>;
-    if (!celda || typeof celda !== 'object' || !Number.isFinite(celda.lat) || !Number.isFinite(celda.lng)) {
-      writeError(res, 400, 'INVALID_CELL', 'celda debe traer lat y lng finitos'); return;
-    }
-    const rawLat = celda.lat as number; const rawLng = celda.lng as number;
-    if (!dentroDeZona(rawLat, rawLng)) { writeError(res, 400, 'INVALID_CELL', 'celda fuera del área de servicio'); return; }
-    const alignedLat = Math.round(rawLat / PASO_LAT) * PASO_LAT;
-    const alignedLng = Math.round(rawLng / PASO_LNG) * PASO_LNG;
-    if (Math.abs(rawLat - alignedLat) > 1e-7 || Math.abs(rawLng - alignedLng) > 1e-7) {
-      writeError(res, 400, 'INVALID_CELL', 'celda debe coincidir con la rejilla'); return;
-    }
-    lat = Number(alignedLat.toFixed(8)); lng = Number(alignedLng.toFixed(8));
+    const celda = leerCelda(body.celda);
+    if ('error' in celda) { writeError(res, 400, 'INVALID_CELL', celda.error); return; }
+    ({ lat, lng } = celda);
   }
   const ahoraPrueba = process.env.NODE_ENV === 'test'
     ? Number(process.env.YA_VIENE_TEST_NOW_MS)
@@ -1216,6 +1208,28 @@ addRoute('GET', '/api/panel/busquedas/:routeId/calor', (req, res, params) => {
   const celdas = calorBusquedas(auth.companyId, params.routeId, rango.desde, rango.hasta, rango.hora, rango.diasSemana);
   if (celdas === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Ruta no encontrada'); return; }
   writeJson(res, 200, { routeId: params.routeId, celdas });
+});
+
+// D18: las quejas de las rutas de la empresa. La sesión da la empresa
+// (authenticateCompanyAdmin, auth/http.ts) y la consulta nunca sale de ella.
+addRoute('GET', '/api/panel/quejas', (req, res) => {
+  if (!guardRate(readRateLimiter, req, res, 'panel:quejas')) return;
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa'); return; }
+  const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+  const ahora = Date.now();
+  // Sin rango, todo lo guardado: 13 meses hasta ahora.
+  const desde = params.has('desde') ? Date.parse(params.get('desde')!) : 0;
+  const hasta = params.has('hasta') ? Date.parse(params.get('hasta')!) : ahora + 1;
+  const motivo = params.get('motivo') ?? undefined;
+  const routeId = params.get('routeId') ?? undefined;
+  if (!Number.isFinite(desde) || !Number.isFinite(hasta) || desde >= hasta
+    || (motivo !== undefined && !esMotivoQueja(motivo))) {
+    writeError(res, 400, 'INVALID_INPUT', 'Rango o motivo inválidos'); return;
+  }
+  const quejas = quejasDeEmpresa(auth.companyId, { desde, hasta, routeId, motivo });
+  if (quejas === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Ruta no encontrada'); return; }
+  writeJson(res, 200, quejas);
 });
 
 /** Las rutas del equipo: el tope va antes de la clave, como en las demás. */

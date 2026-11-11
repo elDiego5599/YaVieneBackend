@@ -1,10 +1,36 @@
 import { getDb } from './database';
+import { dentroDeZona } from '../security/zona';
 
 // Celdas centradas en múltiplos desde 0, a escala local de Barranquilla.
 export const PASO_LAT = 0.00135;
 export const PASO_LNG = 0.00137;
 export const K_BUSQUEDAS = 5;
 export const RETENCION_MS = 396 * 24 * 60 * 60 * 1000;
+
+export interface Celda { lat: number; lng: number }
+
+/**
+ * Lee una celda de la rejilla de D17 que manda la app: lat y lng finitos,
+ * dentro del área de servicio y en el centro de una celda (tolerancia 1e-7,
+ * lo que se pierde al pasar el número por JSON). La comparten la búsqueda y
+ * la queja (D18): la app nunca manda el punto exacto, y aquí se comprueba.
+ */
+export function leerCelda(valor: unknown): Celda | { error: string } {
+  if (typeof valor !== 'object' || valor === null || Array.isArray(valor)) {
+    return { error: 'celda debe traer lat y lng finitos' };
+  }
+  const { lat, lng } = valor as Record<string, unknown>;
+  if (typeof lat !== 'number' || typeof lng !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return { error: 'celda debe traer lat y lng finitos' };
+  }
+  if (!dentroDeZona(lat, lng)) return { error: 'celda fuera del área de servicio' };
+  const alineadaLat = Math.round(lat / PASO_LAT) * PASO_LAT;
+  const alineadaLng = Math.round(lng / PASO_LNG) * PASO_LNG;
+  if (Math.abs(lat - alineadaLat) > 1e-7 || Math.abs(lng - alineadaLng) > 1e-7) {
+    return { error: 'celda debe coincidir con la rejilla' };
+  }
+  return { lat: Number(alineadaLat.toFixed(8)), lng: Number(alineadaLng.toFixed(8)) };
+}
 
 export function horaBogota(instant: number): number {
   const fecha = new Date(instant - 5 * 60 * 60 * 1000);

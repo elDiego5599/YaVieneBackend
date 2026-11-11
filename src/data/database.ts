@@ -1100,6 +1100,66 @@ function initSchema(): void {
     // recorrido; los oficiales llegaron el mismo día (dueño, 2026-10-28) y
     // una base que ya corrió la 37 los recibe aquí.
     { version: 38, siembra: true, apply: sembrarCoochofal },
+    {
+      version: 39,
+      // La queja del pasajero (D18). La cola del correo (D14) acepta el
+      // tipo nuevo y sus campos; SQLite no cambia un CHECK, así que la tabla
+      // se rehace con lo que tenga en espera. Aparte, `quejas` guarda 13
+      // meses lo que la empresa de la ruta ve en su panel: solo la queja,
+      // sin IP, plataforma ni versión.
+      apply: () => {
+        // Una base hecha a mano (las pruebas de migración) puede no traer la
+        // cola: entonces no hay nada que copiar.
+        const conCola = d.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'reportes'").get();
+        d.exec(`
+        CREATE TABLE reportes_nueva (
+          id TEXT PRIMARY KEY,
+          tipo TEXT NOT NULL CHECK (tipo IN ('problema', 'sugerencia', 'queja')),
+          texto TEXT NOT NULL,
+          plataforma TEXT,
+          version TEXT,
+          creado INTEGER NOT NULL,
+          intentos INTEGER NOT NULL DEFAULT 0,
+          proximo_intento INTEGER NOT NULL,
+          motivo TEXT,
+          route_id TEXT,
+          bus_id TEXT,
+          celda_lat REAL,
+          celda_lng REAL,
+          hora INTEGER,
+          CHECK ((tipo = 'queja') = (motivo IS NOT NULL)),
+          CHECK ((celda_lat IS NULL) = (celda_lng IS NULL))
+        );
+        `);
+        if (conCola) {
+          d.exec(`
+            INSERT INTO reportes_nueva (id, tipo, texto, plataforma, version, creado, intentos, proximo_intento)
+              SELECT id, tipo, texto, plataforma, version, creado, intentos, proximo_intento FROM reportes;
+            DROP TABLE reportes;
+          `);
+        }
+        d.exec(`
+        ALTER TABLE reportes_nueva RENAME TO reportes;
+        CREATE INDEX idx_reportes_proximo ON reportes(proximo_intento);
+
+        CREATE TABLE quejas (
+          id TEXT PRIMARY KEY,
+          motivo TEXT NOT NULL,
+          texto TEXT NOT NULL,
+          route_id TEXT NOT NULL,
+          company_id TEXT NOT NULL,
+          bus_id TEXT,
+          celda_lat REAL,
+          celda_lng REAL,
+          hora INTEGER,
+          creado INTEGER NOT NULL,
+          CHECK ((celda_lat IS NULL) = (celda_lng IS NULL))
+        );
+        CREATE INDEX idx_quejas_empresa ON quejas(company_id, creado);
+        CREATE INDEX idx_quejas_creado ON quejas(creado);
+        `);
+      },
+    },
   ];
 
   for (const migration of migrations) {
