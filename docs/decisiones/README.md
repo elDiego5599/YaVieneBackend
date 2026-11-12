@@ -32,4 +32,4 @@ cuándo.
 | [D15](D15-lista-lanzamiento.md) | La lista de «Avísame cuando salga» la guarda el backend | backend, web | decidida, falta `WEB_ORIGINS` al publicar la web |
 | [D16](D16-visibilidad-terminal.md) | El backend oculta al pasajero los buses quietos en terminal | backend, apps | decidida |
 | [D17](D17-reportes-busquedas.md) | Los reportes cuentan búsquedas como agregados por ruta, hora y celda | backend, app pasajero, panel | decidida, aviso legal pendiente con el abogado |
-| [D18](D18-quejas.md) | La queja del pasajero lleva ruta, bus, lugar y hora, y la ve la empresa | backend, app pasajero, panel | decidida provisional, motivos y retención por confirmar con el dueño |
+| [D18](D18-quejas.md) | La queja del pasajero lleva ruta, bus, lugar y hora, y la ve la empresa | backend, app pasajero, panel | decidida; los siete motivos por confirmar con el dueño |
