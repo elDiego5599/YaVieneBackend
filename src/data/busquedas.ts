@@ -59,7 +59,7 @@ const enBogota = (formato: '%H' | '%w', columna: string) =>
   `CAST(strftime('${formato}', datetime(${columna} / 1000, 'unixepoch', '-5 hours')) AS INTEGER)`;
 
 /** El filtro de días en SQL y sus valores; sin días pedidos, todos cuentan. */
-function filtroDias(columna: string, dias?: readonly DiaSemana[]): { sql: string; valores: number[] } {
+export function filtroDias(columna: string, dias?: readonly DiaSemana[]): { sql: string; valores: number[] } {
   if (!dias?.length) return { sql: '', valores: [] };
   return { sql: `AND ${enBogota('%w', columna)} IN (${dias.map(() => '?').join(', ')})`, valores: dias.map((dia) => dia % 7) };
 }

@@ -1223,11 +1223,12 @@ addRoute('GET', '/api/panel/quejas', (req, res) => {
   const hasta = params.has('hasta') ? Date.parse(params.get('hasta')!) : ahora + 1;
   const motivo = params.get('motivo') ?? undefined;
   const routeId = params.get('routeId') ?? undefined;
-  if (!Number.isFinite(desde) || !Number.isFinite(hasta) || desde >= hasta
+  const dias = leerDias(params.get('dias'));
+  if (!Number.isFinite(desde) || !Number.isFinite(hasta) || desde >= hasta || dias === null
     || (motivo !== undefined && !esMotivoQueja(motivo))) {
-    writeError(res, 400, 'INVALID_INPUT', 'Rango o motivo inválidos'); return;
+    writeError(res, 400, 'INVALID_INPUT', 'Rango, días o motivo inválidos'); return;
   }
-  const quejas = quejasDeEmpresa(auth.companyId, { desde, hasta, routeId, motivo });
+  const quejas = quejasDeEmpresa(auth.companyId, { desde, hasta, routeId, motivo, dias });
   if (quejas === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Ruta no encontrada'); return; }
   writeJson(res, 200, quejas);
 });

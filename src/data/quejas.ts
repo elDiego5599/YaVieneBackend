@@ -8,7 +8,7 @@
 // qué pasó y dónde, no dónde estaba una persona a qué minuto.
 import { randomUUID } from 'node:crypto';
 import { getDb } from './database';
-import { type Celda, horaBogota, leerCelda, RETENCION_MS } from './busquedas';
+import { type Celda, type DiaSemana, filtroDias, horaBogota, leerCelda, RETENCION_MS } from './busquedas';
 
 /** Los motivos, en el orden de la app. Su texto en español va en [LITERAL_MOTIVO]. */
 export const MOTIVOS_QUEJA = [
@@ -130,6 +130,8 @@ export interface FiltroQuejas {
   hasta: number;
   routeId?: string;
   motivo?: MotivoQueja;
+  /** Solo esos días de la semana en Barranquilla, como en las búsquedas; sin días, todos. */
+  dias?: readonly DiaSemana[];
 }
 
 /**
@@ -147,7 +149,9 @@ export function quejasDeEmpresa(companyId: string, filtro: FiltroQuejas) {
   const valores: (string | number)[] = [companyId, filtro.desde, filtro.hasta];
   if (filtro.routeId !== undefined) { condiciones.push('q.route_id = ?'); valores.push(filtro.routeId); }
   if (filtro.motivo !== undefined) { condiciones.push('q.motivo = ?'); valores.push(filtro.motivo); }
-  const donde = condiciones.join(' AND ');
+  const enDias = filtroDias('COALESCE(q.hora, q.creado)', filtro.dias);
+  valores.push(...enDias.valores);
+  const donde = `${condiciones.join(' AND ')} ${enDias.sql}`;
 
   const filas = db.prepare(`
     SELECT q.id, q.motivo, q.texto, q.route_id, cr.name AS ruta, q.bus_id, q.celda_lat, q.celda_lng, q.hora, q.creado

@@ -415,6 +415,27 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
     const rango = `?desde=${new Date(Date.now() - 30 * 86_400_000).toISOString()}&hasta=${new Date(Date.now() + 1).toISOString()}`;
     guardar('rest-panel-busquedas', await pedir('GET', `/api/panel/busquedas${rango}`, undefined, admin));
     guardar('rest-panel-busquedas-calor', await pedir('GET', `/api/panel/busquedas/${RUTA}/calor${rango}`, undefined, admin));
+
+    // ── La queja del pasajero llega al panel de su empresa (D18) ──────
+    // Con todo lo opcional puesto, para que el panel lea cada campo. El id,
+    // la hora y la llegada cambian de corrida a corrida: van fijos.
+    const queja = await fetch(`${BASE}/api/reportes`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        tipo: 'queja', motivo: 'no_paro', texto: 'No paró en el paradero', routeId: RUTA, busId: uno.busId,
+        celda: { lat: 10.99035, lng: -74.78967 }, hora: new Date(Date.now() - 3_600_000).toISOString(),
+        plataforma: 'ios', version: '1.0.0',
+      }),
+    });
+    assert.equal(queja.status, 201);
+    const quejasPanel = await pedir('GET', `/api/panel/quejas${rango}`, undefined, admin) as {
+      quejas: Record<string, unknown>[];
+    };
+    assert.equal(quejasPanel.quejas.length, 1);
+    guardar('rest-panel-quejas', {
+      ...quejasPanel,
+      quejas: quejasPanel.quejas.map((q) => ({ ...q, id: '<quejaId>', hora: INSTANTE_MS, creado: INSTANTE_MS })),
+    });
     guardar('rest-fleet-positions', await pedir('GET', '/api/fleet/positions', undefined, admin));
     guardar('rest-fleet-routes', await pedir('GET', '/api/fleet/routes', undefined, admin));
 

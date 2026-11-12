@@ -282,6 +282,27 @@ test('GET /api/panel/quejas: filtra por ruta, motivo y fechas; sin sesión, 401;
   assert.equal((await panel(token, '?desde=ayer')).estado, 400);
 });
 
+test('GET /api/panel/quejas: dias deja solo esos días de la semana en Barranquilla, como en las búsquedas', async () => {
+  limpiar();
+  // El lunes 9 a las 11 p. m. de Barranquilla ya es martes en UTC: cuenta el día de allá.
+  const lunesNoche = Date.parse('2026-11-10T04:00:00.000Z');
+  const miercoles = Date.parse('2026-11-11T17:00:00.000Z');
+  quejas.guardarQueja({ motivo: 'otro', routeId: 'R-901', companyId: 'EMP-QUEJAS', busId: null, celda: CELDA, hora: lunesNoche }, 'Lunes', lunesNoche);
+  quejas.guardarQueja({ motivo: 'otro', routeId: 'R-901', companyId: 'EMP-QUEJAS', busId: null, celda: CELDA, hora: miercoles }, 'Miércoles', miercoles);
+  const token = tokenDe('EMP-QUEJAS');
+  const rango = '?desde=2026-11-09T05:00:00.000Z&hasta=2026-11-12T05:00:00.000Z';
+
+  const lunes = await panel(token, `${rango}&dias=1`);
+  assert.deepEqual((lunes.cuerpo.quejas as Array<Record<string, unknown>>).map((q) => q.texto), ['Lunes']);
+  assert.deepEqual(lunes.cuerpo.celdas, [{ lat: CELDA.lat, lng: CELDA.lng, total: 1 }]);
+  const martes = await panel(token, `${rango}&dias=2`);
+  assert.deepEqual(martes.cuerpo, { quejas: [], celdas: [] });
+  const ambos = await panel(token, `${rango}&dias=1,3`);
+  assert.equal((ambos.cuerpo.quejas as unknown[]).length, 2);
+  assert.equal((await panel(token, `${rango}&dias=8`)).estado, 400);
+  assert.equal((await panel(token, `${rango}&dias=1,1`)).estado, 400);
+});
+
 test('el limitador de D14 sigue: la sexta queja en 10 minutos es 429', async () => {
   limpiar();
   olvidarLimitador();
