@@ -31,6 +31,8 @@ export const LITERAL_MOTIVO: Record<MotivoQueja, string> = {
 export const RETENCION_QUEJAS_MS = RETENCION_MS;
 /** Lo más viejo que se puede contar: una semana. Más atrás ya no se recuerda la hora. */
 const MAX_ANTIGUEDAD_MS = 7 * 24 * 60 * 60_000;
+/** Lo que se le perdona al reloj del teléfono cuando va adelantado. */
+const HOLGURA_RELOJ_MS = 5 * 60_000;
 /** Lo que el panel lista de una vez; el mapa cuenta todas las del filtro. */
 const MAX_LISTA = 500;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
@@ -92,10 +94,11 @@ export function leerQueja(cuerpo: Record<string, unknown>, ahora: number): Queja
   if (hora !== undefined) {
     const instante = typeof hora === 'string' && ISO.test(hora) ? Date.parse(hora) : Number.NaN;
     if (!Number.isFinite(instante)) return { error: 'hora debe ser una fecha ISO 8601 con zona' };
-    // El reloj del teléfono puede ir unos minutos adelante: la hora en curso vale.
-    if (horaBogota(instante) > horaBogota(ahora)) return { error: 'la hora no puede ser futura' };
+    // El reloj del teléfono puede ir unos minutos adelante: la hora en curso
+    // vale, y al filo de la hora la siguiente también, guardada como la en curso.
+    if (horaBogota(instante) > horaBogota(ahora + HOLGURA_RELOJ_MS)) return { error: 'la hora no puede ser futura' };
     if (instante < ahora - MAX_ANTIGUEDAD_MS) return { error: 'la hora no puede ser de hace más de 7 días' };
-    enHora = horaBogota(instante);
+    enHora = Math.min(horaBogota(instante), horaBogota(ahora));
   }
 
   return {

@@ -151,6 +151,15 @@ test('leerReporte: cada campo malo de la queja se rechaza y dice cuál', () => {
   }
   // La hora de dentro de la hora en curso vale: el reloj del teléfono puede ir unos minutos adelante.
   assert.ok(!('error' in reportes.leerReporte({ ...buena, hora: new Date(AHORA + 10 * 60_000).toISOString() }, AHORA)));
+  // Tampoco se cae al filo de la hora: a las 12:59 un teléfono un minuto
+  // adelantado manda la 1 en punto, y se guarda como la hora en curso.
+  const alFilo = Date.parse('2026-11-10T17:59:30.000Z');
+  const adelantada = reportes.leerReporte({ ...buena, hora: '2026-11-10T18:00:00.000Z' }, alFilo);
+  assert.ok(!('error' in adelantada), JSON.stringify(adelantada));
+  assert.equal(adelantada.queja?.hora, Date.parse('2026-11-10T17:00:00.000Z'));
+  // Más de cinco minutos adelante ya no es el reloj: es otra hora.
+  const lejos6 = reportes.leerReporte({ ...buena, hora: '2026-11-10T18:00:00.000Z' }, alFilo - 6 * 60_000);
+  assert.ok('error' in lejos6 && lejos6.error.includes('hora'));
   // Y la de hace 7 días justos, también.
   assert.ok(!('error' in reportes.leerReporte({ ...buena, hora: new Date(AHORA - 7 * DIA + 60_000).toISOString() }, AHORA)));
 });
