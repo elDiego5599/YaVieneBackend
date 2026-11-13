@@ -33,4 +33,4 @@ cuándo.
 | [D16](D16-visibilidad-terminal.md) | El backend oculta al pasajero los buses quietos en terminal | backend, apps | decidida |
 | [D17](D17-reportes-busquedas.md) | Los reportes cuentan búsquedas como agregados por ruta, hora y celda | backend, app pasajero, panel | decidida, aviso legal pendiente con el abogado |
 | [D22](D22-saldo-tarjeta.md) | El número de la tarjeta SIBUS vive solo en el teléfono; el saldo, detrás de un proveedor | app pasajero | decidida, con proveedor simulado; falta convenio |
-| [D23](D23-recarga-tarjeta.md) | La recarga se entrega al operador o al banco; la app solo lee el resultado | app pasajero | propuesta, fase 6 |
+| [D23](D23-recarga-tarjeta.md) | La recarga se entrega al operador o al banco; la app solo lee el resultado | app pasajero | decidida, con proveedor simulado; falta convenio |
