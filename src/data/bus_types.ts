@@ -18,6 +18,10 @@ export interface BusPosition {
   driverPhone: string;
   companyId: string;
   isGhost: boolean;
+  /** El bus es de la flota de ejemplo (`buses.is_demo`). Sale en la posición
+   * pública: lo que la app calcule con él (la hora de llegada, D24) lleva
+   * la etiqueta «Simulación». */
+  simulado: boolean;
   /** Campo exclusivo del panel; nunca se incluye en la posición pública. */
   enTerminal?: boolean;
 }

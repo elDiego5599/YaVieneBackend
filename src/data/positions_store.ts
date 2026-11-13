@@ -57,6 +57,9 @@ export function rowToPosition(row: PositionRow): BusPosition {
     driverPhone: row.device_id,
     companyId: row.bus_company_id ?? '',
     isGhost: row.is_ghost === 1,
+    // Se consulta por bus y no en el JOIN: el barrido y los borrados leen
+    // con RETURNING, sin el catálogo al lado, y así todos dicen lo mismo.
+    simulado: busDelCatalogo(row.bus_id)?.is_demo === 1,
   };
 }
 
@@ -66,9 +69,9 @@ export function toPublicPosition(position: BusPosition): Omit<BusPosition, 'driv
 }
 
 /** La fila del bus en el catálogo, o `undefined` si no está dado de alta. */
-function busDelCatalogo(busId: string): { route_id: string | null } | undefined {
-  return getDb().prepare('SELECT route_id FROM buses WHERE bus_id = ?')
-    .get(busId) as { route_id: string | null } | undefined;
+function busDelCatalogo(busId: string): { route_id: string | null; is_demo: number } | undefined {
+  return getDb().prepare('SELECT route_id, is_demo FROM buses WHERE bus_id = ?')
+    .get(busId) as { route_id: string | null; is_demo: number } | undefined;
 }
 
 /**
@@ -122,6 +125,7 @@ export function upsertPosition(phoneNumber: string, data: {
   const speedKmh = data.speedKmh ?? 0;
   const sentido = normalizeSentido(data.sentido ?? null);
   const companyId = data.companyId || driver?.companyId || '';
+  const simulado = bus.is_demo === 1;
 
   const ruta = geometriaDeRuta().get(routeId);
   const filaVisible = db.prepare(`
@@ -215,7 +219,7 @@ export function upsertPosition(phoneNumber: string, data: {
     if (filaVisible.visible !== (decision.visible ? 1 : 0)) queueLifecycleEvent(db, decision.visible ? 'bus:visible' : 'bus:hidden', routeId, {
       busId: data.busId, routeId,
       enTerminal,
-      ...(decision.visible ? { position: { busId: data.busId, routeId, lat: data.lat, lon: data.lon, heading, speedKmh, sentido, timestamp: new Date(now).toISOString(), capturedAt: data.capturedAt ?? now, receivedAt: now, sequence: data.sequence ?? null, driverPhone: phoneNumber, companyId, isGhost: false } } : {}),
+      ...(decision.visible ? { position: { busId: data.busId, routeId, lat: data.lat, lon: data.lon, heading, speedKmh, sentido, timestamp: new Date(now).toISOString(), capturedAt: data.capturedAt ?? now, receivedAt: now, sequence: data.sequence ?? null, driverPhone: phoneNumber, companyId, isGhost: false, simulado } } : {}),
     });
   }
 
@@ -234,6 +238,7 @@ export function upsertPosition(phoneNumber: string, data: {
     driverPhone: phoneNumber,
     companyId,
     isGhost: false,
+    simulado,
     enTerminal: !decision.visible && decision.motivo === 'en_terminal',
   };
 }
