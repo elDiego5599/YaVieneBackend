@@ -33,3 +33,4 @@ cuándo.
 | [D16](D16-visibilidad-terminal.md) | El backend oculta al pasajero los buses quietos en terminal | backend, apps | decidida |
 | [D17](D17-reportes-busquedas.md) | Los reportes cuentan búsquedas como agregados por ruta, hora y celda | backend, app pasajero, panel | decidida, aviso legal pendiente con el abogado |
 | [D18](D18-quejas.md) | La queja del pasajero lleva ruta, bus, lugar y hora, y la ve la empresa | backend, app pasajero, panel | decidida; los siete motivos por confirmar con el dueño |
+| [D21](D21-puntos-recarga.md) | Los puntos de recarga salen de una fuente pública citada o dicen «Ejemplo» | core, app pasajero | decidida, falta confirmar la licencia del AMB |
