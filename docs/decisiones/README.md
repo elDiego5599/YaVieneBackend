@@ -35,5 +35,5 @@ cuándo.
 | [D18](D18-quejas.md) | La queja del pasajero lleva ruta, bus, lugar y hora, y la ve la empresa | backend, app pasajero, panel | decidida; los siete motivos por confirmar con el dueño |
 | [D21](D21-puntos-recarga.md) | Los puntos de recarga salen de una fuente pública citada o dicen «Ejemplo» | core, app pasajero | decidida, falta confirmar la licencia del AMB |
 | [D22](D22-saldo-tarjeta.md) | El número de la tarjeta SIBUS vive solo en el teléfono; el saldo, detrás de un proveedor | app pasajero | decidida, con proveedor simulado; falta convenio |
-| [D23](D23-recarga-tarjeta.md) | La recarga se entrega al operador o al banco; la app solo lee el resultado | app pasajero | propuesta, fase 6 |
+| [D23](D23-recarga-tarjeta.md) | La recarga se entrega al operador o al banco; la app solo lee el resultado | app pasajero | decidida, con proveedor simulado; falta convenio |
 | [D25](D25-buscador-de-lugares.md) | El buscador de lugares es un índice local de datos abiertos, sin red | core, app pasajero | decidida; falta conectarlo al planificador |
