@@ -47,6 +47,7 @@ import {
   reportesRateLimiter,
   lanzamientoRateLimiter,
   busquedasRateLimiter,
+  viajesRateLimiter,
   requestKey,
   SlidingWindowRateLimiter,
 } from '../security/rate_limiter';
@@ -61,6 +62,7 @@ import {
 import { busInCatalog } from '../data/positions_store';
 import { getBusVisibility } from '../data/fleet_admin';
 import { dentroDeZona } from '../security/zona';
+import { empresasDeRutas, leerZona, MAX_RUTAS_POR_VIAJE, registrarViaje, viajesDeEmpresa } from '../data/viajes_od';
 import { calorBusquedas, type DiaSemana, leerCelda, rangoEnDias, rankingBusquedas, registrarBusqueda } from '../data/busquedas';
 import { esMotivoQueja, quejasDeEmpresa } from '../data/quejas';
 import { emisorPush } from '../push/fcm';
@@ -1208,6 +1210,56 @@ addRoute('GET', '/api/panel/busquedas/:routeId/calor', (req, res, params) => {
   const celdas = calorBusquedas(auth.companyId, params.routeId, rango.desde, rango.hasta, rango.hora, rango.diasSemana);
   if (celdas === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Ruta no encontrada'); return; }
   writeJson(res, 200, { routeId: params.routeId, celdas });
+});
+
+// D20: el viaje buscado, anónimo. Todo se valida aquí: dos zonas de la
+// rejilla, una o dos rutas que existen y un cuerpo sin nada más. La hora la
+// pone el servidor, y la IP solo entra a la llave del limitador (en memoria).
+addRoute('POST', '/api/viajes', (req, res, _params, body) => {
+  if (!guardRate(viajesRateLimiter, req, res, 'viajes')) return;
+  const invalido = (mensaje: string) => writeError(res, 400, 'INVALID_INPUT', mensaje);
+  if (typeof body !== 'object' || body === null || Array.isArray(body) || Buffer.byteLength(JSON.stringify(body)) > 1024) {
+    invalido('Cuerpo de viaje inválido'); return;
+  }
+  if (Object.keys(body).some((clave) => !['origen', 'destino', 'rutas'].includes(clave))) {
+    invalido('El viaje solo lleva origen, destino y rutas'); return;
+  }
+  const origen = leerZona(body.origen);
+  if ('error' in origen) { invalido(`origen: ${origen.error}`); return; }
+  const destino = leerZona(body.destino);
+  if ('error' in destino) { invalido(`destino: ${destino.error}`); return; }
+  if (origen.lat === destino.lat && origen.lng === destino.lng) { invalido('Origen y destino son la misma zona'); return; }
+  const rutas: unknown = body.rutas;
+  if (!Array.isArray(rutas) || rutas.length < 1 || rutas.length > MAX_RUTAS_POR_VIAJE
+    || !rutas.every((r) => typeof r === 'string' && r.length > 0 && r.length <= 64) || new Set(rutas).size !== rutas.length) {
+    invalido('rutas debe traer una o dos rutas distintas'); return;
+  }
+  const empresas = empresasDeRutas(rutas as string[]);
+  if (!empresas) { writeError(res, 400, 'INVALID_ROUTE', 'Una ruta no existe o no está visible'); return; }
+  const ahoraPrueba = process.env.NODE_ENV === 'test' ? Number(process.env.YA_VIENE_TEST_NOW_MS) : Number.NaN;
+  if (!registrarViaje(origen, destino, empresas, Number.isFinite(ahoraPrueba) ? ahoraPrueba : undefined)) {
+    writeError(res, 503, 'LIMITE_DIARIO', 'Hoy ya no se reciben más viajes nuevos'); return;
+  }
+  res.writeHead(204); res.end();
+});
+
+// D20: los viajes buscados que pasan por las rutas de la empresa, por par de
+// zonas y con k ≥ 5 por día (viajes_od.ts). `franja` es 0 a 7 (de 3 en 3 horas).
+addRoute('GET', '/api/panel/viajes', (req, res) => {
+  if (!guardRate(readRateLimiter, req, res, 'panel:viajes')) return;
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa'); return; }
+  const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+  const franjaTxt = params.get('franja'); const franja = franjaTxt === null ? undefined : Number(franjaTxt);
+  const dias = leerDias(params.get('dias'));
+  const ahora = Date.now();
+  const desde = params.has('desde') ? Date.parse(params.get('desde')!) : ahora - 30 * 24 * 60 * 60_000;
+  const hasta = params.has('hasta') ? Date.parse(params.get('hasta')!) : ahora + 1;
+  const rango = Number.isFinite(desde) && Number.isFinite(hasta) && desde < hasta ? rangoEnDias(desde, hasta) : null;
+  if (!rango || dias === null || (franja !== undefined && (!Number.isInteger(franja) || franja < 0 || franja > 7))) {
+    writeError(res, 400, 'INVALID_INPUT', 'Rango, franja o días inválidos'); return;
+  }
+  writeJson(res, 200, { pares: viajesDeEmpresa(auth.companyId, rango.desde, rango.hasta, { franja, dias }) });
 });
 
 // D18: las quejas de las rutas de la empresa. La sesión da la empresa
