@@ -274,18 +274,39 @@ test('la velocidad demo respeta rectas, curvas y frenadas suaves deterministas',
   const a0 = velocidadDemo(busA, 0);
   assert.equal(a0, velocidadDemo(busA, 0));
   assert.notEqual(a0, velocidadDemo(busB, 0));
-  assert.ok(a0 >= 60 && a0 <= 100);
+  assert.ok(a0 >= 28 && a0 <= 48);
   assert.notEqual(a0, velocidadDemo(busA, 20_000));
   const recta = [{ lat: 0, lon: 0 }, { lat: 0.01, lon: 0 }, { lat: 0.02, lon: 0 }];
   const curva = [{ lat: 0, lon: 0 }, { lat: 0.01, lon: 0 }, { lat: 0.01, lon: 0.01 }];
-  assert.ok(velocidadDemo(busA, 15_000, recta, 500) >= 60);
-  assert.ok(velocidadDemo(busA, 15_000, curva, 500) >= 15);
-  assert.ok(velocidadDemo(busA, 15_000, curva, 500) <= 30);
+  assert.ok(velocidadDemo(busA, 15_000, recta, 500) >= 28);
+  assert.ok(velocidadDemo(busA, 15_000, curva, 500) >= 12);
+  assert.ok(velocidadDemo(busA, 15_000, curva, 500) <= 22);
   const velocidades = Array.from({ length: 800 }, (_, i) => velocidadDemo(busA, i * 100, recta, 500));
   assert.ok(velocidades.some((v) => v <= 8), 'debe incluir frenadas cortas');
   const intervalo = 1_000;
   const t = 15_000;
   assert.equal(metrosAvanceDemo(busA, t, intervalo, recta, 500), velocidadDemo(busA, t, recta, 500) / 3.6);
+});
+
+// D24: la app saca el rango de la hora de llegada de lo que avanzaron los
+// buses en tramos de un minuto, y descarta los que pasan de 25 m/s (90 km/h)
+// por salto de GPS. A 60-100 km/h por la calle, la mitad de los minutos de la
+// flota de ejemplo se tiraba y el rango salía de la otra mitad, imposible
+// para un bus urbano.
+test('cada minuto de la flota demo anda a ritmo de bus urbano, medible por el core', () => {
+  const [bus] = construirFlota().filter((b) => b.activo);
+  const recta = [{ lat: 0, lon: 0 }, { lat: 0.1, lon: 0 }, { lat: 0.2, lon: 0 }];
+  for (const [puntos, nombre] of [[recta, 'recta']] as const) {
+    let metros = 0;
+    for (let s = 0; s < 3600; s++) {
+      metros += metrosAvanceDemo(bus, s * 1000, 1000, [...puntos], 500);
+      if ((s + 1) % 60 === 0) {
+        const ms = metros / 60;
+        assert.ok(ms >= 3 && ms <= 14, `${nombre}: minuto ${(s + 1) / 60} a ${ms.toFixed(1)} m/s`);
+        metros = 0;
+      }
+    }
+  }
 });
 
 test('preparar dos veces no cambia nada, y una placa editada en el panel se respeta', () => {

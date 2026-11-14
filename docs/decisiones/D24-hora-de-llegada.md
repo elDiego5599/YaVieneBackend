@@ -32,6 +32,12 @@ Con la flota de ejemplo el rango lleva la etiqueta «Simulación» (D8): la
 posición pública trae `simulado`, que sale de `buses.is_demo`, y basta un
 bus de ejemplo entre los medidos para rotularlo.
 
+La flota de ejemplo recorre los trazos reales de `rutas.json` a ritmo de
+bus urbano (rectas hacia 38 km/h, entre 28 y 48; curvas entre 12 y 22), para
+que sus minutos entren en lo que el core mide (0,5 a 25 m/s). Antes andaban
+a 60-100 km/h y los minutos más rápidos se descartaban como saltos del GPS
+(`tests/flota_demo.test.ts` lo vigila minuto a minuto).
+
 ## Por qué
 
 La distancia sola obliga a la persona a hacer la cuenta, y la hace peor que

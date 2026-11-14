@@ -94,8 +94,14 @@ function diferenciaAngular(a: number, b: number): number {
   return Math.abs(((b - a + 540) % 360) - 180);
 }
 
+// Ritmo de un bus urbano de Barranquilla (D24): la app mide la hora de llegada
+// con lo que avanzan los buses de la ruta en tramos de un minuto y tira los de
+// más de 25 m/s como saltos del GPS. Con 60 a 100 km/h por la calle el rango de
+// la flota de ejemplo salía de una vuelta que ningún bus da.
+const VELOCIDAD_RECTA_KMH = 38;
+
 function velocidadGeometrica(puntos?: Punto[], progreso?: number): number {
-  if (!puntos || puntos.length < 3 || progreso === undefined) return 80;
+  if (!puntos || puntos.length < 3 || progreso === undefined) return VELOCIDAD_RECTA_KMH;
   let acumulado = 0;
   let tramo = 0;
   while (tramo < puntos.length - 2) {
@@ -104,9 +110,9 @@ function velocidadGeometrica(puntos?: Punto[], progreso?: number): number {
     acumulado += largo;
     tramo++;
   }
-  if (tramo >= puntos.length - 2) return 80;
+  if (tramo >= puntos.length - 2) return VELOCIDAD_RECTA_KMH;
   const giro = diferenciaAngular(rumbo(puntos[tramo], puntos[tramo + 1]), rumbo(puntos[tramo + 1], puntos[tramo + 2]));
-  return giro < 20 ? 80 : Math.max(15, 30 - Math.min(giro, 180) / 180 * 15);
+  return giro < 20 ? VELOCIDAD_RECTA_KMH : Math.max(12, 22 - Math.min(giro, 180) / 180 * 10);
 }
 
 /** Velocidad determinista por bus y ajustada a la geometría que tiene delante. */
@@ -115,9 +121,10 @@ export function velocidadDemo(bus: Pick<BusDemo, 'busId' | 'velocidadBaseKmh'>, 
   const base = velocidadGeometrica(puntos, progreso);
   const fase = ((hash >>> 8) % 6283) / 1000;
   const segundos = Math.max(0, elapsedMs) / 1000;
-  const variacion = 10 * Math.sin(segundos / 24 + fase) + 5 * Math.sin(segundos / 61 + fase * 1.7);
-  const limiteBajo = base === 80 ? 60 : 15;
-  const limiteAlto = base === 80 ? 100 : 30;
+  const variacion = 6 * Math.sin(segundos / 24 + fase) + 3 * Math.sin(segundos / 61 + fase * 1.7);
+  const enRecta = base === VELOCIDAD_RECTA_KMH;
+  const limiteBajo = enRecta ? 28 : 12;
+  const limiteAlto = enRecta ? 48 : 22;
   const crucero = Math.max(limiteBajo, Math.min(limiteAlto, base + variacion));
   const ciclo = ((segundos + fase * 3) % 78 + 78) % 78;
   const suave = (t: number) => t * t * (3 - 2 * t);
@@ -192,7 +199,7 @@ export function construirFlota(): BusDemo[] {
         telefono: `300${String(numeroBus).padStart(7, '0')}`,
         intervaloMs: routeId === RUTA_DESTACADA ? INTERVALO_RAPIDO : INTERVALO_LENTO,
         activo,
-        velocidadBaseKmh: 60 + (hashBus(busIdFromPlaca(placa)) % 4001) / 100,
+        velocidadBaseKmh: 30 + (hashBus(busIdFromPlaca(placa)) % 1501) / 100,
       });
     }
   }
