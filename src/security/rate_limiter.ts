@@ -129,6 +129,8 @@ export const reportesRateLimiter = new SlidingWindowRateLimiter(5, 10 * 60_000);
  */
 export const lanzamientoRateLimiter = new SlidingWindowRateLimiter(5, 10 * 60_000);
 export const busquedasRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
+// D20: un viaje buscado es una intención rara (un toque en «Ir»); 30 cada 10 minutos por IP sobra para una persona y frena a quien infla.
+export const viajesRateLimiter = new SlidingWindowRateLimiter(30, 10 * 60_000);
 
 /**
  * Bloqueo temporal de una cuenta tras muchos fallos seguidos (auditoría
@@ -255,6 +257,7 @@ const LIMITADORES: Record<string, { readonly size: number }> = {
   reportes: reportesRateLimiter,
   lanzamiento: lanzamientoRateLimiter,
   busquedas: busquedasRateLimiter,
+  viajes: viajesRateLimiter,
 };
 
 // La memoria de cada limitador está acotada por el barrido, pero nadie la

@@ -47,6 +47,7 @@ import { configCorreoDesdeEntorno } from './buzon/correo';
 import { enviarReportes } from './data/reportes';
 import { limpiarBusquedas } from './data/busquedas';
 import { limpiarQuejas } from './data/quejas';
+import { limpiarViajes } from './data/viajes_od';
 import {
   setupSocketServer,
   closeSocketServer,
@@ -279,6 +280,13 @@ const quejasLimpiezaTimer = setInterval(
   24 * 60 * 60_000,
 );
 quejasLimpiezaTimer.unref();
+
+limpiarViajes();
+const viajesLimpiezaTimer = setInterval(
+  vueltaProtegida('Viajes', 'viajes.limpieza.error', limpiarViajes),
+  24 * 60 * 60_000,
+);
+viajesLimpiezaTimer.unref();
 
 startBroker(
   (_clientId: string, auth: DeviceTokenPayload, topic, payload): PositionHandlingResult | void => {

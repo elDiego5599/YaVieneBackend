@@ -416,6 +416,24 @@ test('lo que el backend manda a las apps tiene la forma guardada', { timeout: 60
     guardar('rest-panel-busquedas', await pedir('GET', `/api/panel/busquedas${rango}`, undefined, admin));
     guardar('rest-panel-busquedas-calor', await pedir('GET', `/api/panel/busquedas/${RUTA}/calor${rango}`, undefined, admin));
 
+    // D20: cinco viajes buscados del mismo par de zonas llenan la k ≥ 5 del
+    // panel. Las zonas son centros de 4 × 4 celdas (la app los saca con
+    // centroZona); el rango fija el día del reloj de prueba del servidor.
+    const zonaViaje = (lat: number, lng: number) => ({
+      lat: Number((Math.round(lat / 0.0054) * 0.0054).toFixed(8)),
+      lng: Number((Math.round(lng / 0.00548) * 0.00548).toFixed(8)),
+    });
+    const viaje = { origen: zonaViaje(10.99, -74.79), destino: zonaViaje(10.96, -74.80), rutas: [RUTA] };
+    for (let i = 0; i < 5; i += 1) {
+      const enviado = await fetch(`${BASE}/api/viajes`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(viaje),
+      });
+      assert.equal(enviado.status, 204);
+      if (i === 0) guardar('rest-viaje-registrado', { status: enviado.status });
+    }
+    const rangoViajes = `?desde=${new Date(Date.UTC(2026, 9, 25)).toISOString()}&hasta=${new Date(Date.UTC(2026, 9, 27)).toISOString()}`;
+    guardar('rest-panel-viajes', await pedir('GET', `/api/panel/viajes${rangoViajes}`, undefined, admin));
+
     // ── La queja del pasajero llega al panel de su empresa (D18) ──────
     // Con todo lo opcional puesto, para que el panel lea cada campo. El id,
     // la hora y la llegada cambian de corrida a corrida: van fijos.

@@ -1160,6 +1160,28 @@ function initSchema(): void {
         `);
       },
     },
+    {
+      version: 40,
+      // Los viajes de origen a destino (D20): la intención del planificador,
+      // sin cuenta. Solo el par de zonas de 4 × 4 celdas, la franja de 3
+      // horas (su inicio, en ms) y la empresa de las rutas del plan; sin IP,
+      // dispositivo ni hora exacta. Una fila por par, franja y empresa.
+      apply: () => {
+        d.exec(`
+        CREATE TABLE viajes_od (
+          franja INTEGER NOT NULL,
+          o_lat REAL NOT NULL,
+          o_lng REAL NOT NULL,
+          d_lat REAL NOT NULL,
+          d_lng REAL NOT NULL,
+          company_id TEXT NOT NULL,
+          count INTEGER NOT NULL CHECK (count > 0),
+          PRIMARY KEY (franja, o_lat, o_lng, d_lat, d_lng, company_id)
+        );
+        CREATE INDEX idx_viajes_od_empresa ON viajes_od(company_id, franja);
+        `);
+      },
+    },
   ];
 
   for (const migration of migrations) {
