@@ -23,6 +23,13 @@ export interface MuestraPosicion {
   speedKmh: number;
   heading: number | null;
   sentido: string | null;
+  /**
+   * Dónde iba en su ruta, de 0 (terminal de salida) a 1 (la otra punta), y
+   * hacia dónde, como lo dedujo la visibilidad de terminal. De aquí salen
+   * los intervalos entre buses: cuándo cruzó cada uno el mismo punto.
+   */
+  fraccionRuta: number | null;
+  sentidoRuta: 'ida' | 'venida' | null;
   capturedAt: number;
   receivedAt: number;
   simulado: boolean;
@@ -37,15 +44,15 @@ export function registrarMuestra(m: MuestraPosicion): boolean {
   return getDb().prepare(`
     INSERT INTO posiciones_historial (
       bus_id, route_id, company_id, lat, lon, speed_kmh, heading, sentido,
-      captured_at, received_at, simulado
+      fraccion_ruta, sentido_ruta, captured_at, received_at, simulado
     )
-    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     WHERE NOT EXISTS (
       SELECT 1 FROM posiciones_historial WHERE bus_id = ? AND captured_at > ?
     )
   `).run(
     m.busId, m.routeId, m.companyId, m.lat, m.lon, m.speedKmh, m.heading, m.sentido,
-    m.capturedAt, m.receivedAt, m.simulado ? 1 : 0,
+    m.fraccionRuta, m.sentidoRuta, m.capturedAt, m.receivedAt, m.simulado ? 1 : 0,
     m.busId, m.capturedAt - MUESTREO_HISTORIAL_MS,
   ).changes === 1;
 }

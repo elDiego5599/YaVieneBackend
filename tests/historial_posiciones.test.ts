@@ -118,3 +118,38 @@ test('limpiarHistorial borra lo que pasó la retención y deja lo demás', () =>
   assert.ok(borradas >= 1);
   assert.deepEqual(muestras('BUS-HIS5').map((m) => m.captured_at), [ahora - historial.RETENCION_HISTORIAL_MS]);
 });
+
+test('la muestra guarda dónde iba el bus en su ruta (fracción y sentido)', () => {
+  assert.ok(historial.registrarMuestra({
+    busId: 'BUS-HIS6', routeId: 'R-900', companyId: 'HIS-E', lat: 10.96, lon: -74.79,
+    speedKmh: 18, heading: null, sentido: null, capturedAt: T0, receivedAt: T0,
+    simulado: false, fraccionRuta: 0.42, sentidoRuta: 'venida',
+  }));
+  const fila = getDb().prepare(
+    'SELECT fraccion_ruta, sentido_ruta FROM posiciones_historial WHERE bus_id = ?',
+  ).get('BUS-HIS6') as { fraccion_ruta: number | null; sentido_ruta: string | null };
+  assert.deepEqual({ ...fila }, { fraccion_ruta: 0.42, sentido_ruta: 'venida' });
+});
+
+test('al entrar por el ingreso, la muestra lleva la fracción que calculó la visibilidad', () => {
+  // R-101 tiene recorrido en rutas.json; a mitad de sus puntos el bus no
+  // está en ninguna terminal y la fracción queda entre 0 y 1.
+  const companyId = 'HIS-E';
+  empresas.ensureEmpresa(companyId);
+  getDb().prepare(`
+    INSERT OR IGNORE INTO buses (bus_id, company_id, route_id, is_demo, created_at, updated_at)
+    VALUES ('BUS-HIS7', ?, 'R-101', 0, ?, ?)
+  `).run(companyId, Date.now(), Date.now());
+  conductores.registerDriver('+57307', 'N BUS-HIS7', 'R-101', { driverId: 'D-BUS-HIS7', companyId, busId: 'BUS-HIS7' });
+  assert.ok(posiciones.upsertPosition('+57307', {
+    busId: 'BUS-HIS7', lat: 11.03324281268486, lon: -74.8730856244276, speedKmh: 20,
+    sentido: 'ida', sessionId: 's7', capturedAt: T0, sequence: 1, driverValidated: true,
+  }));
+  const viva = getDb().prepare('SELECT route_fraction FROM positions WHERE bus_id = ?')
+    .get('BUS-HIS7') as { route_fraction: number };
+  const fila = getDb().prepare('SELECT fraccion_ruta, sentido_ruta FROM posiciones_historial WHERE bus_id = ?')
+    .get('BUS-HIS7') as { fraccion_ruta: number; sentido_ruta: string };
+  assert.ok(fila.fraccion_ruta > 0 && fila.fraccion_ruta < 1);
+  assert.equal(fila.fraccion_ruta, viva.route_fraction);
+  assert.equal(fila.sentido_ruta, 'ida');
+});

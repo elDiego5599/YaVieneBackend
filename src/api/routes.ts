@@ -62,6 +62,7 @@ import {
 import { busInCatalog } from '../data/positions_store';
 import { getBusVisibility } from '../data/fleet_admin';
 import { dentroDeZona } from '../security/zona';
+import { indicadoresDeRuta } from '../data/indicadores';
 import { empresasDeRutas, leerZona, MAX_RUTAS_POR_VIAJE, registrarViaje, viajesDeEmpresa } from '../data/viajes_od';
 import { calorBusquedas, type DiaSemana, leerCelda, rangoEnDias, rankingBusquedas, registrarBusqueda } from '../data/busquedas';
 import { esMotivoQueja, quejasDeEmpresa } from '../data/quejas';
@@ -1210,6 +1211,17 @@ addRoute('GET', '/api/panel/busquedas/:routeId/calor', (req, res, params) => {
   const celdas = calorBusquedas(auth.companyId, params.routeId, rango.desde, rango.hasta, rango.hora, rango.diasSemana);
   if (celdas === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Ruta no encontrada'); return; }
   writeJson(res, 200, { routeId: params.routeId, celdas });
+});
+addRoute('GET', '/api/panel/indicadores/:routeId', (req, res, params) => {
+  if (!guardRate(readRateLimiter, req, res, 'panel:indicadores')) return;
+  const auth = authenticateCompanyAdmin(req);
+  if (!auth) { writeError(res, 401, 'ADMIN_AUTH_REQUIRED', 'Hace falta entrar como administrador de la empresa'); return; }
+  const rango = rangoBusquedas(req);
+  if (!rango) { writeError(res, 400, 'INVALID_INPUT', 'Rango, hora o días inválidos'); return; }
+  // Sin `hora`: los indicadores ya vienen hora por hora.
+  const indicadores = indicadoresDeRuta(auth.companyId, params.routeId, rango.desde, rango.hasta, rango.diasSemana);
+  if (indicadores === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Ruta no encontrada'); return; }
+  writeJson(res, 200, { routeId: params.routeId, ...indicadores });
 });
 
 // D20: el viaje buscado, anónimo. Todo se valida aquí: dos zonas de la

@@ -115,7 +115,19 @@ es dónde está el bus ahora. El recorrido, para medir el servicio (intervalos
 entre buses, velocidades, horas pico), va aparte en `posiciones_historial`:
 cada posición aceptada deja como mucho una muestra cada 30 s por bus, con la
 marca `simulado` de la flota de ejemplo, y una limpieza diaria borra lo de
-más de una semana, para que no crezca sin tope en el disco del Mac.
+más de una semana, para que no crezca sin tope en el disco del Mac. Cada
+muestra guarda también dónde iba el bus en su ruta (`fraccion_ruta`, de 0 a
+1) y hacia dónde (`sentido_ruta`), como los dedujo la visibilidad.
+
+De ahí salen los indicadores del servicio (`src/data/indicadores.ts`,
+`GET /api/panel/indicadores/:routeId`, con el mismo rango y días que el
+calor de búsquedas): por cada hora de Barranquilla, cuántos buses andan en
+promedio y a qué velocidad en marcha (sobre 3 km/h), la hora pico, y el
+intervalo entre buses en cada sentido. El intervalo se mide en la mitad de
+la ruta: cada cruce, interpolado entre dos muestras de menos de 90 s, es un
+paso; se dan la mediana y el p90 de los tiempos entre pasos, sin los de más
+de 2 h (pausas del servicio). La respuesta dice `simulado` si algo viene de
+la flota de ejemplo.
 
 Con `YA_VIENE_SEED_DEMO` activa, el arranque puede agregar búsquedas sintéticas a rutas demo vacías usando su geometría. `YA_VIENE_SEED_BUSQUEDAS_DEMO` las controla por separado (por defecto sigue la siembra demo); las rutas con actividad existente se conservan. Las pruebas apagan esta siembra salvo el caso que la comprueba explícitamente.
 

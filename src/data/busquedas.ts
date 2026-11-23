@@ -55,7 +55,7 @@ export function limpiarBusquedas(ahora = Date.now()): number {
 export type DiaSemana = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 /** Un campo de la fecha de Barranquilla (`%H` la hora, `%w` el día con 0 en domingo). */
-const enBogota = (formato: '%H' | '%w', columna: string) =>
+export const enBogota = (formato: '%H' | '%w', columna: string) =>
   `CAST(strftime('${formato}', datetime(${columna} / 1000, 'unixepoch', '-5 hours')) AS INTEGER)`;
 
 /** El filtro de días en SQL y sus valores; sin días pedidos, todos cuentan. */

@@ -212,6 +212,7 @@ export function upsertPosition(phoneNumber: string, data: {
 
   registrarMuestra({
     busId: data.busId, routeId, companyId, lat: data.lat, lon: data.lon, speedKmh, heading, sentido,
+    fraccionRuta: decision.fraccionRecorrida ?? null, sentidoRuta: decision.estado.sentido ?? null,
     capturedAt: data.capturedAt ?? now, receivedAt: now, simulado: bus.is_demo === 1,
   });
 

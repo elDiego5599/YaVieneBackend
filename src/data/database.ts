@@ -1199,6 +1199,8 @@ function initSchema(): void {
             speed_kmh REAL NOT NULL,
             heading REAL,
             sentido TEXT,
+            fraccion_ruta REAL CHECK (fraccion_ruta BETWEEN 0 AND 1),
+            sentido_ruta TEXT CHECK (sentido_ruta IN ('ida', 'venida')),
             captured_at INTEGER NOT NULL,
             received_at INTEGER NOT NULL,
             simulado INTEGER NOT NULL CHECK (simulado IN (0, 1))
