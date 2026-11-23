@@ -39,3 +39,4 @@ cuándo.
 | [D23](D23-recarga-tarjeta.md) | La recarga se entrega al operador o al banco; la app solo lee el resultado | app pasajero | decidida, con proveedor simulado; falta convenio |
 | [D24](D24-hora-de-llegada.md) | La hora de llegada es un rango sacado de los buses de la ruta, junto a la distancia | core, app pasajero, backend | decidida; se calibra en el piloto |
 | [D25](D25-buscador-de-lugares.md) | El buscador de lugares es un índice local de datos abiertos, sin red | core, app pasajero | decidida; falta conectarlo al planificador |
+| [D26](D26-historial-indicadores.md) | El historial de posiciones se mide por ruta, se exporta en CSV y se consolida con controles de calidad antes de borrarse | backend, panel | decidida; falta decidir el separador para Excel |
