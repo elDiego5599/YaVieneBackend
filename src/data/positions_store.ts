@@ -10,6 +10,7 @@ import {
   normalizeSentido,
 } from './bus_types';
 import { getDriver } from './drivers_store';
+import { registrarMuestra } from './historial';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { decidirVisibilidadTerminal, type EstadoVisibilidad } from './visibilidad_terminal';
@@ -208,6 +209,11 @@ export function upsertPosition(phoneNumber: string, data: {
   );
 
   if (result.changes !== 1) return null;
+
+  registrarMuestra({
+    busId: data.busId, routeId, companyId, lat: data.lat, lon: data.lon, speedKmh, heading, sentido,
+    capturedAt: data.capturedAt ?? now, receivedAt: now, simulado: bus.is_demo === 1,
+  });
 
   estadosVisibilidad.set(data.busId, decision.estado);
   const enTerminal = !decision.visible && decision.motivo === 'en_terminal';

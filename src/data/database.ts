@@ -1182,6 +1182,33 @@ function initSchema(): void {
         `);
       },
     },
+    // El historial de posiciones (src/data/historial.ts): `positions` es
+    // solo la última, y medir el servicio pide el recorrido. Sin llave
+    // foránea al catálogo: borrar un bus no debe borrar lo que ya anduvo.
+    {
+      version: 41,
+      apply: () => {
+        d.exec(`
+          CREATE TABLE IF NOT EXISTS posiciones_historial (
+            id INTEGER PRIMARY KEY,
+            bus_id TEXT NOT NULL,
+            route_id TEXT NOT NULL,
+            company_id TEXT NOT NULL,
+            lat REAL NOT NULL,
+            lon REAL NOT NULL,
+            speed_kmh REAL NOT NULL,
+            heading REAL,
+            sentido TEXT,
+            captured_at INTEGER NOT NULL,
+            received_at INTEGER NOT NULL,
+            simulado INTEGER NOT NULL CHECK (simulado IN (0, 1))
+          );
+          CREATE INDEX IF NOT EXISTS idx_historial_bus_captura ON posiciones_historial(bus_id, captured_at);
+          CREATE INDEX IF NOT EXISTS idx_historial_ruta_captura ON posiciones_historial(route_id, captured_at);
+          CREATE INDEX IF NOT EXISTS idx_historial_captura ON posiciones_historial(captured_at);
+        `);
+      },
+    },
   ];
 
   for (const migration of migrations) {

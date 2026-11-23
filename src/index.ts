@@ -48,6 +48,7 @@ import { enviarReportes } from './data/reportes';
 import { limpiarBusquedas } from './data/busquedas';
 import { limpiarQuejas } from './data/quejas';
 import { limpiarViajes } from './data/viajes_od';
+import { limpiarHistorial } from './data/historial';
 import {
   setupSocketServer,
   closeSocketServer,
@@ -287,6 +288,13 @@ const viajesLimpiezaTimer = setInterval(
   24 * 60 * 60_000,
 );
 viajesLimpiezaTimer.unref();
+
+limpiarHistorial();
+const historialLimpiezaTimer = setInterval(
+  vueltaProtegida('Historial', 'historial.limpieza.error', limpiarHistorial),
+  24 * 60 * 60_000,
+);
+historialLimpiezaTimer.unref();
 
 startBroker(
   (_clientId: string, auth: DeviceTokenPayload, topic, payload): PositionHandlingResult | void => {

@@ -23,6 +23,7 @@ validación                     formato (payload.ts) y física (physics.ts)
   ▼
 SQLite (positions)             una fila por bus, siempre la última
   │
+  ├─ posiciones_historial ────► una muestra cada 30 s por bus, una semana
   ├─ visibilidad terminal ───► buses.visible + eventos bus:hidden/visible
   ├──────────────► socket.io  ·  solo si el bus es visible para pasajeros
   │
@@ -102,6 +103,7 @@ importan para este camino:
 | Tabla | Qué guarda |
 |-------|------------|
 | `positions` | **Una fila por bus**, la última posición. No es un historial. |
+| `posiciones_historial` | Una muestra cada 30 s por bus, una semana (`src/data/historial.ts`). |
 | `buses` | El catálogo: placa, interno, ruta, si está visible. |
 | `driver_sessions` | La sesión viva de cada bus y su estado de revocación. |
 | `lifecycle_events` | La cola de avisos (ver abajo). |
@@ -109,8 +111,11 @@ importan para este camino:
 | `schema_migrations` | Hasta qué versión está migrada esta base. |
 
 `positions` tiene una fila por bus a propósito: lo que el pasajero necesita
-es dónde está el bus ahora, y un historial creciendo sin tope en el disco
-del Mac que sirve la demo es un problema de operación sin nadie que lo lea.
+es dónde está el bus ahora. El recorrido, para medir el servicio (intervalos
+entre buses, velocidades, horas pico), va aparte en `posiciones_historial`:
+cada posición aceptada deja como mucho una muestra cada 30 s por bus, con la
+marca `simulado` de la flota de ejemplo, y una limpieza diaria borra lo de
+más de una semana, para que no crezca sin tope en el disco del Mac.
 
 Con `YA_VIENE_SEED_DEMO` activa, el arranque puede agregar búsquedas sintéticas a rutas demo vacías usando su geometría. `YA_VIENE_SEED_BUSQUEDAS_DEMO` las controla por separado (por defecto sigue la siembra demo); las rutas con actividad existente se conservan. Las pruebas apagan esta siembra salvo el caso que la comprueba explícitamente.
 
