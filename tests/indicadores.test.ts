@@ -21,12 +21,12 @@ const { addCompanyRoute } = require('../src/data/routes_store') as typeof import
 const { createOrUpdateCompanyAdmin } = require('../src/data/empresas') as typeof import('../src/data/empresas');
 const { signToken } = require('../src/auth/tokens') as typeof import('../src/auth/tokens');
 const { hashSecret } = require('../src/auth/passwords') as typeof import('../src/auth/passwords');
-const { indicadoresDeRuta } = require('../src/data/indicadores') as typeof import('../src/data/indicadores');
+const { indicadoresDeRuta, indicadoresCsv } = require('../src/data/indicadores') as typeof import('../src/data/indicadores');
 
 const server = createServer((req, res) => { if (!handleAPI(req, res)) { res.writeHead(404); res.end(); } });
 let base = '';
 test.before(async () => {
-  for (const [empresa, ruta] of [['EMP-IND', 'R-IND'], ['EMP-IND', 'R-IND2'], ['EMP-IND', 'R-IND3'], ['EMP-IND', 'R-IND4'], ['EMP-OTRA', 'R-OTRA']]) {
+  for (const [empresa, ruta] of [['EMP-IND', 'R-IND'], ['EMP-IND', 'R-IND2'], ['EMP-IND', 'R-IND3'], ['EMP-IND', 'R-IND4'], ['EMP-IND', 'R-IND5'], ['EMP-IND', 'R-IND6'], ['EMP-OTRA', 'R-OTRA']]) {
     addCompanyRoute(empresa, ruta, `Ruta ${ruta}`);
   }
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -84,8 +84,8 @@ test('por hora de Barranquilla: buses que andan en promedio por día y velocidad
   const r = indicadoresDeRuta('EMP-IND', 'R-IND2', DESDE, HASTA);
   assert.ok(r);
   assert.equal(r.porHora.length, 24);
-  assert.deepEqual(r.porHora[7], { hora: 7, busesPromedio: 1.5, velocidadPromedioKmh: 25 });
-  assert.deepEqual(r.porHora[8], { hora: 8, busesPromedio: 0, velocidadPromedioKmh: null });
+  assert.deepEqual(r.porHora[7], { hora: 7, busesPromedio: 1.5, velocidadPromedioKmh: 25, intervaloIda: null, intervaloVenida: null });
+  assert.deepEqual(r.porHora[8], { hora: 8, busesPromedio: 0, velocidadPromedioKmh: null, intervaloIda: null, intervaloVenida: null });
   assert.equal(r.horaPico, 7);
   assert.equal(r.simulado, false);
 });
@@ -102,6 +102,37 @@ test('intervalo de ida: cada cuánto cruza un bus la mitad de la ruta, con media
   assert.ok(r);
   assert.deepEqual(r.intervalos.ida, { medianaMin: 12.5, p90Min: 15, pasos: 3 });
   assert.equal(r.intervalos.venida, null);
+});
+
+test('el intervalo también sale hora por hora: cada hueco cuenta en la hora en que llega el bus', () => {
+  // Ida a las 7:00:15 y 7:50:15 (50 min), 8:05:15 (15 min) y 8:15:15 (10 min).
+  for (const [bus, min] of [['L', 0], ['M', 50], ['N', 65], ['O', 75]] as const) cruce(bus, T0 + min * MIN, 'ida', 'R-IND5');
+  const r = indicadoresDeRuta('EMP-IND', 'R-IND5', DESDE, HASTA);
+  assert.ok(r);
+  assert.deepEqual(r.porHora[7].intervaloIda, { medianaMin: 50, p90Min: 50, pasos: 2 });
+  assert.deepEqual(r.porHora[8].intervaloIda, { medianaMin: 12.5, p90Min: 15, pasos: 2 });
+  assert.equal(r.porHora[9].intervaloIda, null);
+  assert.equal(r.porHora[8].intervaloVenida, null);
+});
+
+test('indicadoresCsv: una fila por hora, con cabecera fija y números con punto', () => {
+  cruce('P', T0, 'venida', 'R-IND6');
+  cruce('Q', T0 + 20 * MIN, 'venida', 'R-IND6');
+  const r = indicadoresDeRuta('EMP-IND', 'R-IND6', DESDE, HASTA);
+  assert.ok(r);
+  const lineas = indicadoresCsv('R-IND6', r).split('\r\n');
+  assert.equal(lineas[0], 'ruta,hora,buses_promedio,velocidad_promedio_kmh,intervalo_ida_mediana_min,intervalo_ida_p90_min,intervalo_venida_mediana_min,intervalo_venida_p90_min,simulado');
+  assert.equal(lineas.length, 1 + 24 + 1);
+  assert.equal(lineas[25], '');
+  assert.equal(lineas[1], 'R-IND6,0,0,,,,,,false');
+  // A las 7 anduvieron dos buses a 20 km/h y de venida pasaron con 20 min.
+  assert.equal(lineas[8], 'R-IND6,7,2,20,,,20,20,false');
+});
+
+test('indicadoresCsv: un campo con coma, comilla o salto va entre comillas (RFC 4180)', () => {
+  const vacio = indicadoresDeRuta('EMP-IND', 'R-IND6', HASTA, HASTA + HORA);
+  assert.ok(vacio);
+  assert.ok(indicadoresCsv('R "1",\nx', vacio).split('\r\n')[1].startsWith('"R ""1"",\nx",0,'));
 });
 
 test('el cruce se interpola: no se redondea a la muestra', () => {
@@ -160,4 +191,14 @@ test('GET /api/panel/indicadores/:routeId pide administrador, rango válido y ru
   assert.equal(cuerpo.routeId, 'R-IND');
   assert.deepEqual(cuerpo.intervalos.ida, { medianaMin: 12.5, p90Min: 15, pasos: 3 });
   assert.equal(cuerpo.porHora.length, 24);
+
+  // Con ?formato=csv baja como archivo, con su nombre, y el mismo filtro.
+  const csv = await fetch(url('R-IND', `${rango}&formato=csv`), { headers });
+  assert.equal(csv.status, 200);
+  assert.equal(csv.headers.get('content-type'), 'text/csv; charset=utf-8');
+  assert.equal(csv.headers.get('content-disposition'), 'attachment; filename="indicadores-R-IND-2026-11-20-a-2026-11-21.csv"');
+  const texto = await csv.text();
+  assert.ok(texto.startsWith('ruta,hora,'));
+  assert.equal(texto.split('\r\n').length, 26);
+  assert.equal((await fetch(url('R-IND', `${rango}&formato=xml`), { headers })).status, 400);
 });

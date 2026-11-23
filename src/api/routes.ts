@@ -62,7 +62,7 @@ import {
 import { busInCatalog } from '../data/positions_store';
 import { getBusVisibility } from '../data/fleet_admin';
 import { dentroDeZona } from '../security/zona';
-import { indicadoresDeRuta } from '../data/indicadores';
+import { indicadoresCsv, indicadoresDeRuta } from '../data/indicadores';
 import { empresasDeRutas, leerZona, MAX_RUTAS_POR_VIAJE, registrarViaje, viajesDeEmpresa } from '../data/viajes_od';
 import { calorBusquedas, type DiaSemana, leerCelda, rangoEnDias, rankingBusquedas, registrarBusqueda } from '../data/busquedas';
 import { esMotivoQueja, quejasDeEmpresa } from '../data/quejas';
@@ -1219,9 +1219,20 @@ addRoute('GET', '/api/panel/indicadores/:routeId', (req, res, params) => {
   const rango = rangoBusquedas(req);
   if (!rango) { writeError(res, 400, 'INVALID_INPUT', 'Rango, hora o días inválidos'); return; }
   // Sin `hora`: los indicadores ya vienen hora por hora.
+  const formato = new URL(req.url ?? '/', 'http://x').searchParams.get('formato') ?? 'json';
+  if (formato !== 'json' && formato !== 'csv') { writeError(res, 400, 'INVALID_INPUT', 'Formato inválido: json o csv'); return; }
   const indicadores = indicadoresDeRuta(auth.companyId, params.routeId, rango.desde, rango.hasta, rango.diasSemana);
   if (indicadores === null) { writeError(res, 404, 'ROUTE_NOT_FOUND', 'Ruta no encontrada'); return; }
-  writeJson(res, 200, { routeId: params.routeId, ...indicadores });
+  if (formato === 'json') { writeJson(res, 200, { routeId: params.routeId, ...indicadores }); return; }
+  // El nombre dice qué días trae, en fechas de Barranquilla; `hasta` no entra.
+  const dia = (t: number) => new Date(t - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const nombre = `indicadores-${params.routeId.replace(/[^A-Za-z0-9_-]/g, '_')}-${dia(rango.desde)}-a-${dia(rango.hasta - 1)}.csv`;
+  res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${nombre}"`,
+    'Cache-Control': 'no-store',
+  });
+  res.end(indicadoresCsv(params.routeId, indicadores));
 });
 
 // D20: el viaje buscado, anónimo. Todo se valida aquí: dos zonas de la

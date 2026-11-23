@@ -27,6 +27,12 @@ export interface IndicadorHora {
   /** Buses distintos que andan en esa hora, en promedio por día con servicio a esa hora. */
   busesPromedio: number;
   velocidadPromedioKmh: number | null;
+  /**
+   * El intervalo de esa hora: cada hueco cuenta en la hora en que llega el
+   * bus que lo cierra, que es cuando el pasajero termina de esperar.
+   */
+  intervaloIda: Intervalo | null;
+  intervaloVenida: Intervalo | null;
 }
 
 export interface Intervalo {
@@ -68,13 +74,23 @@ export function indicadoresDeRuta(
       GROUP BY strftime('%Y-%m-%d', datetime(captured_at / 1000, 'unixepoch', '-5 hours')), hora
     ) GROUP BY hora
   `).all(...valores) as { hora: number; buses: number; suma: number; marcha: number }[];
-  const porHora: IndicadorHora[] = Array.from({ length: 24 }, (_, hora) => ({ hora, busesPromedio: 0, velocidadPromedioKmh: null }));
+  const pasos = pasosPorSentido(db.prepare(`
+    SELECT bus_id AS bus, captured_at AS t, fraccion_ruta AS f, sentido_ruta AS sentido
+    FROM posiciones_historial WHERE ${donde} AND fraccion_ruta IS NOT NULL
+    ORDER BY bus_id, captured_at
+  `).iterate(...valores) as Iterable<MuestraRuta>);
+  const huecos = { ida: huecosEntre(pasos.ida), venida: huecosEntre(pasos.venida) };
+
+  const porHora: IndicadorHora[] = Array.from({ length: 24 }, (_, hora) => ({
+    hora,
+    busesPromedio: 0,
+    velocidadPromedioKmh: null,
+    intervaloIda: resumen(huecos.ida.filter((h) => horaBogota(h.llega) === hora), pasos.ida.filter((t) => horaBogota(t) === hora).length),
+    intervaloVenida: resumen(huecos.venida.filter((h) => horaBogota(h.llega) === hora), pasos.venida.filter((t) => horaBogota(t) === hora).length),
+  }));
   for (const f of filas) {
-    porHora[f.hora] = {
-      hora: f.hora,
-      busesPromedio: unDecimal(f.buses),
-      velocidadPromedioKmh: f.marcha > 0 ? unDecimal(f.suma / f.marcha) : null,
-    };
+    porHora[f.hora].busesPromedio = unDecimal(f.buses);
+    porHora[f.hora].velocidadPromedioKmh = f.marcha > 0 ? unDecimal(f.suma / f.marcha) : null;
   }
   const pico = porHora.reduce((max, h) => (h.busesPromedio > max.busesPromedio ? h : max));
 
@@ -83,18 +99,21 @@ export function indicadoresDeRuta(
   return {
     porHora,
     horaPico: pico.busesPromedio > 0 ? pico.hora : null,
-    intervalos: intervalos(db.prepare(`
-      SELECT bus_id AS bus, captured_at AS t, fraccion_ruta AS f, sentido_ruta AS sentido
-      FROM posiciones_historial WHERE ${donde} AND fraccion_ruta IS NOT NULL
-      ORDER BY bus_id, captured_at
-    `).iterate(...valores) as Iterable<MuestraRuta>),
+    intervalos: {
+      ida: resumen(huecos.ida, pasos.ida.length),
+      venida: resumen(huecos.venida, pasos.venida.length),
+    },
     simulado,
   };
 }
 
 interface MuestraRuta { bus: string; t: number; f: number; sentido: 'ida' | 'venida' | null }
 
-function intervalos(muestras: Iterable<MuestraRuta>): IndicadoresRuta['intervalos'] {
+/** La hora de Barranquilla (UTC-5, sin horario de verano) de un instante. */
+const horaBogota = (t: number) => new Date(t - 5 * 60 * 60 * 1000).getUTCHours();
+
+/** Cuándo cruzó cada bus el punto de paso, por sentido y en orden. */
+function pasosPorSentido(muestras: Iterable<MuestraRuta>): { ida: number[]; venida: number[] } {
   const pasos = { ida: [] as number[], venida: [] as number[] };
   let antes: MuestraRuta | undefined;
   for (const m of muestras) {
@@ -107,16 +126,51 @@ function intervalos(muestras: Iterable<MuestraRuta>): IndicadoresRuta['intervalo
     }
     antes = m;
   }
-  return { ida: resumen(pasos.ida), venida: resumen(pasos.venida) };
+  pasos.ida.sort((a, b) => a - b);
+  pasos.venida.sort((a, b) => a - b);
+  return pasos;
 }
 
-function resumen(pasos: number[]): Intervalo | null {
-  pasos.sort((a, b) => a - b);
-  const huecos = pasos.slice(1).map((t, i) => t - pasos[i]).filter((ms) => ms <= MAX_INTERVALO_MS).sort((a, b) => a - b);
+interface Hueco { llega: number; ms: number }
+
+/** El tiempo entre cada paso y el anterior, sin las pausas del servicio. */
+function huecosEntre(pasos: number[]): Hueco[] {
+  return pasos.slice(1).map((llega, i) => ({ llega, ms: llega - pasos[i] })).filter((h) => h.ms <= MAX_INTERVALO_MS);
+}
+
+function resumen(huecosDados: Hueco[], pasos: number): Intervalo | null {
+  const huecos = huecosDados.map((h) => h.ms).sort((a, b) => a - b);
   if (huecos.length === 0) return null;
   const mitad = huecos.length >> 1;
   const mediana = huecos.length % 2 ? huecos[mitad] : (huecos[mitad - 1] + huecos[mitad]) / 2;
   // p90 por rango más cercano: un valor que de verdad se midió.
   const p90 = huecos[Math.ceil(0.9 * huecos.length) - 1];
-  return { medianaMin: dosDecimales(mediana / 60_000), p90Min: dosDecimales(p90 / 60_000), pasos: pasos.length };
+  return { medianaMin: dosDecimales(mediana / 60_000), p90Min: dosDecimales(p90 / 60_000), pasos };
+}
+
+const COLUMNAS_CSV = [
+  'ruta', 'hora', 'buses_promedio', 'velocidad_promedio_kmh',
+  'intervalo_ida_mediana_min', 'intervalo_ida_p90_min',
+  'intervalo_venida_mediana_min', 'intervalo_venida_p90_min', 'simulado',
+];
+
+/** Un campo según RFC 4180: entre comillas solo si trae coma, comilla o salto. */
+function campoCsv(valor: string | number | boolean | null | undefined): string {
+  if (valor === null || valor === undefined) return '';
+  const texto = String(valor);
+  return /[",\r\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
+}
+
+/**
+ * Los indicadores en CSV, una fila por hora, para abrirlos en una hoja de
+ * cálculo o pasarlos a otro análisis. Coma y punto decimal (RFC 4180) y
+ * cabeceras en ASCII: así los lee cualquier herramienta sin adivinar.
+ */
+export function indicadoresCsv(routeId: string, r: IndicadoresRuta): string {
+  const filas = r.porHora.map((h) => [
+    routeId, h.hora, h.busesPromedio, h.velocidadPromedioKmh,
+    h.intervaloIda?.medianaMin, h.intervaloIda?.p90Min,
+    h.intervaloVenida?.medianaMin, h.intervaloVenida?.p90Min, r.simulado,
+  ].map(campoCsv).join(','));
+  return [COLUMNAS_CSV.join(','), ...filas, ''].join('\r\n');
 }
