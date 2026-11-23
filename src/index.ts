@@ -297,9 +297,9 @@ const consolidarYLimpiar = (): void => {
   consolidarPendientes();
   limpiarHistorial();
 };
-vueltaProtegida('Historial', 'historial.consolidacion.error', consolidarYLimpiar)();
+vueltaProtegida('Historial', 'historial.error', consolidarYLimpiar)();
 const historialLimpiezaTimer = setInterval(
-  vueltaProtegida('Historial', 'historial.consolidacion.error', consolidarYLimpiar),
+  vueltaProtegida('Historial', 'historial.error', consolidarYLimpiar),
   24 * 60 * 60_000,
 );
 historialLimpiezaTimer.unref();
