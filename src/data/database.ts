@@ -1211,6 +1211,40 @@ function initSchema(): void {
         `);
       },
     },
+    // El proceso de datos (src/data/consolidacion.ts): lo crudo dura una
+    // semana, así que cada día cerrado se resume por ruta y hora antes de
+    // que la retención lo borre, y se cuenta cuánto no pasó los controles.
+    // `calidad_historial` tiene una fila por día consolidado: también es la
+    // marca de que ese día ya se resumió.
+    {
+      version: 42,
+      apply: () => {
+        d.exec(`
+          CREATE TABLE IF NOT EXISTS servicio_horario (
+            company_id TEXT NOT NULL,
+            route_id TEXT NOT NULL,
+            dia INTEGER NOT NULL,
+            hora INTEGER NOT NULL CHECK (hora BETWEEN 0 AND 23),
+            simulado INTEGER NOT NULL CHECK (simulado IN (0, 1)),
+            buses INTEGER NOT NULL,
+            muestras INTEGER NOT NULL,
+            velocidad_media REAL,
+            PRIMARY KEY (company_id, route_id, dia, hora, simulado)
+          );
+          CREATE INDEX IF NOT EXISTS idx_servicio_horario_dia ON servicio_horario(dia);
+          CREATE TABLE IF NOT EXISTS calidad_historial (
+            dia INTEGER PRIMARY KEY,
+            muestras INTEGER NOT NULL,
+            validas INTEGER NOT NULL,
+            fuera_de_rango INTEGER NOT NULL,
+            reloj_adelantado INTEGER NOT NULL,
+            llegada_tardia INTEGER NOT NULL,
+            sin_posicion_en_ruta INTEGER NOT NULL,
+            consolidado_at INTEGER NOT NULL
+          );
+        `);
+      },
+    },
   ];
 
   for (const migration of migrations) {

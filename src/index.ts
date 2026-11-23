@@ -49,6 +49,7 @@ import { limpiarBusquedas } from './data/busquedas';
 import { limpiarQuejas } from './data/quejas';
 import { limpiarViajes } from './data/viajes_od';
 import { limpiarHistorial } from './data/historial';
+import { consolidarPendientes } from './data/consolidacion';
 import {
   setupSocketServer,
   closeSocketServer,
@@ -289,9 +290,16 @@ const viajesLimpiezaTimer = setInterval(
 );
 viajesLimpiezaTimer.unref();
 
-limpiarHistorial();
+// Primero se resume y después se borra: lo crudo nunca se va sin haberse
+// consolidado. Si el resumen falla, la limpieza no corre (la excepción corta
+// la vuelta) y la siguiente vuelta lo reintenta con el crudo aún entero.
+const consolidarYLimpiar = (): void => {
+  consolidarPendientes();
+  limpiarHistorial();
+};
+vueltaProtegida('Historial', 'historial.consolidacion.error', consolidarYLimpiar)();
 const historialLimpiezaTimer = setInterval(
-  vueltaProtegida('Historial', 'historial.limpieza.error', limpiarHistorial),
+  vueltaProtegida('Historial', 'historial.consolidacion.error', consolidarYLimpiar),
   24 * 60 * 60_000,
 );
 historialLimpiezaTimer.unref();

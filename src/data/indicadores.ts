@@ -20,7 +20,7 @@ const MAX_HUECO_CRUCE_MS = 3 * MUESTREO_HISTORIAL_MS;
 /** Un intervalo más largo que esto es una pausa del servicio (fin del turno, la noche), no un intervalo. */
 const MAX_INTERVALO_MS = 2 * 60 * 60 * 1000;
 /** Por debajo de esto el bus está parado (semáforo, paradero) y no cuenta para la velocidad en marcha. */
-const VELOCIDAD_EN_MARCHA_KMH = 3;
+export const VELOCIDAD_EN_MARCHA_KMH = 3;
 
 export interface IndicadorHora {
   hora: number;
