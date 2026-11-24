@@ -1229,6 +1229,7 @@ function initSchema(): void {
             buses INTEGER NOT NULL,
             muestras INTEGER NOT NULL,
             velocidad_media REAL,
+            muestras_en_marcha INTEGER NOT NULL,
             PRIMARY KEY (company_id, route_id, dia, hora, simulado)
           );
           CREATE INDEX IF NOT EXISTS idx_servicio_horario_dia ON servicio_horario(dia);

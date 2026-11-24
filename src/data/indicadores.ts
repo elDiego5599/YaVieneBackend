@@ -21,6 +21,13 @@ const MAX_HUECO_CRUCE_MS = 3 * MUESTREO_HISTORIAL_MS;
 const MAX_INTERVALO_MS = 2 * 60 * 60 * 1000;
 /** Por debajo de esto el bus está parado (semáforo, paradero) y no cuenta para la velocidad en marcha. */
 export const VELOCIDAD_EN_MARCHA_KMH = 3;
+/**
+ * La medianoche de Barranquilla (UTC-5, sin horario de verano) del día de
+ * una muestra, como la guarda la consolidación en `servicio_horario.dia`.
+ */
+const DESFASE_BOGOTA_MS = 5 * 60 * 60 * 1000;
+const DIA_MS = 24 * 60 * 60 * 1000;
+const DIA_CRUDO = `(CAST(captured_at - ${DESFASE_BOGOTA_MS} AS INTEGER) / ${DIA_MS} * ${DIA_MS} + ${DESFASE_BOGOTA_MS})`;
 
 export interface IndicadorHora {
   hora: number;
@@ -63,6 +70,11 @@ export function indicadoresDeRuta(
   const enDias = filtroDias('captured_at', dias);
   const donde = `route_id = ? AND captured_at >= ? AND captured_at < ? ${enDias.sql}`;
   const valores = [routeId, desde, hasta, ...enDias.valores];
+  // Lo crudo dura una semana; los días ya consolidados se leen del resumen
+  // (`servicio_horario`), que sobrevive a la retención. Un día consolidado
+  // sale solo del resumen aunque aún quede su crudo, para no contarlo dos veces.
+  const consolidado = `${DIA_CRUDO} IN (SELECT dia FROM calidad_historial)`;
+  const resumenDias = filtroDias('dia', dias);
 
   const filas = db.prepare(`
     SELECT hora, AVG(buses) AS buses, SUM(suma) AS suma, SUM(marcha) AS marcha FROM (
@@ -70,10 +82,15 @@ export function indicadoresDeRuta(
         COUNT(DISTINCT bus_id) AS buses,
         SUM(CASE WHEN speed_kmh > ${VELOCIDAD_EN_MARCHA_KMH} THEN speed_kmh ELSE 0 END) AS suma,
         SUM(CASE WHEN speed_kmh > ${VELOCIDAD_EN_MARCHA_KMH} THEN 1 ELSE 0 END) AS marcha
-      FROM posiciones_historial WHERE ${donde}
-      GROUP BY strftime('%Y-%m-%d', datetime(captured_at / 1000, 'unixepoch', '-5 hours')), hora
+      FROM posiciones_historial WHERE ${donde} AND NOT ${consolidado}
+      GROUP BY ${DIA_CRUDO}, hora
+      UNION ALL
+      -- Los buses reales y los de ejemplo van en filas aparte: se suman.
+      SELECT hora, SUM(buses), SUM(velocidad_media * muestras_en_marcha), SUM(muestras_en_marcha)
+      FROM servicio_horario WHERE route_id = ? AND dia >= ? AND dia < ? ${resumenDias.sql}
+      GROUP BY dia, hora
     ) GROUP BY hora
-  `).all(...valores) as { hora: number; buses: number; suma: number; marcha: number }[];
+  `).all(...valores, routeId, desde, hasta, ...resumenDias.valores) as { hora: number; buses: number; suma: number | null; marcha: number }[];
   const pasos = pasosPorSentido(db.prepare(`
     SELECT bus_id AS bus, captured_at AS t, fraccion_ruta AS f, sentido_ruta AS sentido
     FROM posiciones_historial WHERE ${donde} AND fraccion_ruta IS NOT NULL
@@ -90,11 +107,16 @@ export function indicadoresDeRuta(
   }));
   for (const f of filas) {
     porHora[f.hora].busesPromedio = unDecimal(f.buses);
-    porHora[f.hora].velocidadPromedioKmh = f.marcha > 0 ? unDecimal(f.suma / f.marcha) : null;
+    porHora[f.hora].velocidadPromedioKmh = f.marcha > 0 ? unDecimal(f.suma! / f.marcha) : null;
   }
   const pico = porHora.reduce((max, h) => (h.busesPromedio > max.busesPromedio ? h : max));
 
-  const simulado = db.prepare(`SELECT 1 FROM posiciones_historial WHERE ${donde} AND simulado = 1 LIMIT 1`).get(...valores) !== undefined;
+  const simulado = db.prepare(`
+    SELECT 1 FROM posiciones_historial WHERE ${donde} AND simulado = 1
+    UNION ALL
+    SELECT 1 FROM servicio_horario WHERE route_id = ? AND dia >= ? AND dia < ? ${resumenDias.sql} AND simulado = 1
+    LIMIT 1
+  `).get(...valores, routeId, desde, hasta, ...resumenDias.valores) !== undefined;
 
   return {
     porHora,

@@ -39,7 +39,7 @@ function muestra(m: Muestra): void {
 }
 function horas(dia: number) {
   return getDb().prepare(`
-    SELECT route_id, hora, simulado, buses, muestras, velocidad_media
+    SELECT route_id, hora, simulado, buses, muestras, velocidad_media, muestras_en_marcha
     FROM servicio_horario WHERE dia = ? ORDER BY route_id, hora, simulado
   `).all(dia);
 }
@@ -66,10 +66,10 @@ test('resume cada hora por ruta: buses distintos, muestras y la velocidad solo e
   consolidarDia(D);
 
   assert.deepEqual(horas(D), [
-    { route_id: 'R-CON', hora: 7, simulado: 0, buses: 2, muestras: 3, velocidad_media: 25 },
-    { route_id: 'R-CON', hora: 7, simulado: 1, buses: 1, muestras: 1, velocidad_media: 10 },
-    { route_id: 'R-CON', hora: 9, simulado: 0, buses: 1, muestras: 1, velocidad_media: null },
-    { route_id: 'R-OTRA', hora: 7, simulado: 0, buses: 1, muestras: 1, velocidad_media: 15 },
+    { route_id: 'R-CON', hora: 7, simulado: 0, buses: 2, muestras: 3, velocidad_media: 25, muestras_en_marcha: 2 },
+    { route_id: 'R-CON', hora: 7, simulado: 1, buses: 1, muestras: 1, velocidad_media: 10, muestras_en_marcha: 1 },
+    { route_id: 'R-CON', hora: 9, simulado: 0, buses: 1, muestras: 1, velocidad_media: null, muestras_en_marcha: 0 },
+    { route_id: 'R-OTRA', hora: 7, simulado: 0, buses: 1, muestras: 1, velocidad_media: 15, muestras_en_marcha: 1 },
   ]);
 });
 
@@ -86,7 +86,7 @@ test('lo que no pasa los controles no entra al resumen y queda contado por causa
   consolidarDia(D);
 
   assert.deepEqual(horas(D), [
-    { route_id: 'R-CON', hora: 8, simulado: 0, buses: 2, muestras: 2, velocidad_media: 20 },
+    { route_id: 'R-CON', hora: 8, simulado: 0, buses: 2, muestras: 2, velocidad_media: 20, muestras_en_marcha: 2 },
   ]);
   assert.deepEqual(calidad(D), {
     muestras: 7, validas: 2, fuera_de_rango: 3, reloj_adelantado: 1, llegada_tardia: 1, sin_posicion_en_ruta: 1,
@@ -101,7 +101,7 @@ test('una muestra de otro día no entra: el día va de medianoche a medianoche e
   consolidarDia(D);
 
   assert.deepEqual(horas(D), [
-    { route_id: 'R-CON', hora: 23, simulado: 0, buses: 1, muestras: 1, velocidad_media: 20 },
+    { route_id: 'R-CON', hora: 23, simulado: 0, buses: 1, muestras: 1, velocidad_media: 20, muestras_en_marcha: 1 },
   ]);
 });
 
@@ -142,6 +142,6 @@ test('el resumen sobrevive a la retención de lo crudo', () => {
 
   assert.equal((getDb().prepare('SELECT COUNT(*) AS n FROM posiciones_historial').get() as { n: number }).n, 0);
   assert.deepEqual(horas(D), [
-    { route_id: 'R-CON', hora: 1, simulado: 0, buses: 1, muestras: 1, velocidad_media: 20 },
+    { route_id: 'R-CON', hora: 1, simulado: 0, buses: 1, muestras: 1, velocidad_media: 20, muestras_en_marcha: 1 },
   ]);
 });

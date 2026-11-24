@@ -22,11 +22,12 @@ const { createOrUpdateCompanyAdmin } = require('../src/data/empresas') as typeof
 const { signToken } = require('../src/auth/tokens') as typeof import('../src/auth/tokens');
 const { hashSecret } = require('../src/auth/passwords') as typeof import('../src/auth/passwords');
 const { indicadoresDeRuta, indicadoresCsv } = require('../src/data/indicadores') as typeof import('../src/data/indicadores');
+const { consolidarDia } = require('../src/data/consolidacion') as typeof import('../src/data/consolidacion');
 
 const server = createServer((req, res) => { if (!handleAPI(req, res)) { res.writeHead(404); res.end(); } });
 let base = '';
 test.before(async () => {
-  for (const [empresa, ruta] of [['EMP-IND', 'R-IND'], ['EMP-IND', 'R-IND2'], ['EMP-IND', 'R-IND3'], ['EMP-IND', 'R-IND4'], ['EMP-IND', 'R-IND5'], ['EMP-IND', 'R-IND6'], ['EMP-OTRA', 'R-OTRA']]) {
+  for (const [empresa, ruta] of [['EMP-IND', 'R-IND'], ['EMP-IND', 'R-IND2'], ['EMP-IND', 'R-IND3'], ['EMP-IND', 'R-IND4'], ['EMP-IND', 'R-IND5'], ['EMP-IND', 'R-IND6'], ['EMP-IND', 'R-IND7'], ['EMP-OTRA', 'R-OTRA']]) {
     addCompanyRoute(empresa, ruta, `Ruta ${ruta}`);
   }
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -171,6 +172,32 @@ test('dice si lo medido viene de la flota de ejemplo', () => {
   muestra({ bus: 'S', t: T0 + 2 * HORA, ruta: 'R-IND2', simulado: true });
   const r = indicadoresDeRuta('EMP-IND', 'R-IND2', DESDE, HASTA);
   assert.equal(r?.simulado, true);
+});
+
+test('los días ya consolidados salen del resumen: siguen ahí cuando la retención borra lo crudo', () => {
+  // Medianoche del sábado 31 de octubre: tres semanas antes, ya sin crudo.
+  const VIEJO = DESDE - 20 * DIA;
+  // A las 7: A a 20 y 40 km/h, B parado y un bus de ejemplo a 10.
+  muestra({ bus: 'A', t: VIEJO + 7 * HORA, ruta: 'R-IND7', velocidad: 20 });
+  muestra({ bus: 'A', t: VIEJO + 7 * HORA + MIN, ruta: 'R-IND7', velocidad: 40 });
+  muestra({ bus: 'B', t: VIEJO + 7 * HORA + 2 * MIN, ruta: 'R-IND7', velocidad: 0 });
+  muestra({ bus: 'S', t: VIEJO + 7 * HORA, ruta: 'R-IND7', velocidad: 10, simulado: true });
+  consolidarDia(VIEJO);
+  getDb().prepare(`DELETE FROM posiciones_historial WHERE route_id = 'R-IND7'`).run();
+  // El domingo 1, consolidado y con lo crudo aún guardado: cuenta una vez.
+  muestra({ bus: 'D', t: VIEJO + DIA + 7 * HORA, ruta: 'R-IND7', velocidad: 30 });
+  consolidarDia(VIEJO + DIA);
+  // El viernes 20, sin consolidar todavía: sale de lo crudo.
+  muestra({ bus: 'C', t: T0, ruta: 'R-IND7', velocidad: 25 });
+
+  const r = indicadoresDeRuta('EMP-IND', 'R-IND7', VIEJO, HASTA);
+  assert.ok(r);
+  // Buses: 3, 1 y 1 en tres días → 1,7. Velocidad en marcha, muestra a
+  // muestra como en lo crudo: (20 + 40 + 10 + 30 + 25) / 5 = 25.
+  assert.deepEqual(r.porHora[7], { hora: 7, busesPromedio: 1.7, velocidadPromedioKmh: 25, intervaloIda: null, intervaloVenida: null });
+  assert.equal(r.simulado, true);
+  // Solo el sábado: los días de la semana también filtran el resumen.
+  assert.equal(indicadoresDeRuta('EMP-IND', 'R-IND7', VIEJO, HASTA, [6])?.porHora[7].busesPromedio, 3);
 });
 
 test('GET /api/panel/indicadores/:routeId pide administrador, rango válido y ruta propia', async () => {

@@ -64,12 +64,16 @@ export function consolidarDia(dia: number, ahora = Date.now()): void {
     d.prepare('DELETE FROM servicio_horario WHERE dia = ?').run(dia);
     // La velocidad media ignora los buses parados (semáforo, paradero): AVG
     // salta los NULL, y un bus que solo estuvo parado queda sin velocidad.
+    // Cuántas muestras la forman queda aparte, para promediar varios días
+    // pesando cada uno por lo que de verdad anduvo.
     d.prepare(`
-      INSERT INTO servicio_horario (company_id, route_id, dia, hora, simulado, buses, muestras, velocidad_media)
+      INSERT INTO servicio_horario (company_id, route_id, dia, hora, simulado, buses, muestras, velocidad_media,
+                                    muestras_en_marcha)
       SELECT company_id, route_id, @dia,
              CAST(captured_at - @dia AS INTEGER) / ${HORA_MS} AS hora,
              simulado, COUNT(DISTINCT bus_id), COUNT(*),
-             AVG(CASE WHEN speed_kmh > @enMarcha THEN speed_kmh END)
+             AVG(CASE WHEN speed_kmh > @enMarcha THEN speed_kmh END),
+             SUM(CASE WHEN speed_kmh > @enMarcha THEN 1 ELSE 0 END)
       FROM posiciones_historial
       WHERE captured_at >= @dia AND captured_at < @fin AND ${VALIDA}
       GROUP BY company_id, route_id, hora, simulado
