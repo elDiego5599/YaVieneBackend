@@ -176,23 +176,29 @@ const COLUMNAS_CSV = [
   'intervalo_venida_mediana_min', 'intervalo_venida_p90_min', 'simulado',
 ];
 
-/** Un campo según RFC 4180: entre comillas solo si trae coma, comilla o salto. */
+/**
+ * Excel en español de Colombia separa con punto y coma y escribe el decimal
+ * con coma: así el archivo se abre con doble clic, cada dato en su columna.
+ */
+const SEPARADOR_CSV = ';';
+
+/** Un campo entre comillas solo si trae punto y coma, comilla o salto. */
 function campoCsv(valor: string | number | boolean | null | undefined): string {
   if (valor === null || valor === undefined) return '';
-  const texto = String(valor);
-  return /[",\r\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
+  const texto = typeof valor === 'number' ? String(valor).replace('.', ',') : String(valor);
+  return /[";\r\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
 }
 
 /**
- * Los indicadores en CSV, una fila por hora, para abrirlos en una hoja de
- * cálculo o pasarlos a otro análisis. Coma y punto decimal (RFC 4180) y
- * cabeceras en ASCII: así los lee cualquier herramienta sin adivinar.
+ * Los indicadores en CSV, una fila por hora, para abrirlos en Excel o
+ * pasarlos a otro análisis. Cabeceras en ASCII; otra herramienta (Python,
+ * R) lo lee diciéndole el separador y el decimal.
  */
 export function indicadoresCsv(routeId: string, r: IndicadoresRuta): string {
   const filas = r.porHora.map((h) => [
     routeId, h.hora, h.busesPromedio, h.velocidadPromedioKmh,
     h.intervaloIda?.medianaMin, h.intervaloIda?.p90Min,
     h.intervaloVenida?.medianaMin, h.intervaloVenida?.p90Min, r.simulado,
-  ].map(campoCsv).join(','));
-  return [COLUMNAS_CSV.join(','), ...filas, ''].join('\r\n');
+  ].map(campoCsv).join(SEPARADOR_CSV));
+  return [COLUMNAS_CSV.join(SEPARADOR_CSV), ...filas, ''].join('\r\n');
 }

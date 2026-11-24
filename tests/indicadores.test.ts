@@ -116,24 +116,31 @@ test('el intervalo también sale hora por hora: cada hueco cuenta en la hora en 
   assert.equal(r.porHora[8].intervaloVenida, null);
 });
 
-test('indicadoresCsv: una fila por hora, con cabecera fija y números con punto', () => {
+test('indicadoresCsv: una fila por hora, con cabecera fija, punto y coma y decimal coma (Excel en español)', () => {
   cruce('P', T0, 'venida', 'R-IND6');
   cruce('Q', T0 + 20 * MIN, 'venida', 'R-IND6');
   const r = indicadoresDeRuta('EMP-IND', 'R-IND6', DESDE, HASTA);
   assert.ok(r);
   const lineas = indicadoresCsv('R-IND6', r).split('\r\n');
-  assert.equal(lineas[0], 'ruta,hora,buses_promedio,velocidad_promedio_kmh,intervalo_ida_mediana_min,intervalo_ida_p90_min,intervalo_venida_mediana_min,intervalo_venida_p90_min,simulado');
+  assert.equal(lineas[0], 'ruta;hora;buses_promedio;velocidad_promedio_kmh;intervalo_ida_mediana_min;intervalo_ida_p90_min;intervalo_venida_mediana_min;intervalo_venida_p90_min;simulado');
   assert.equal(lineas.length, 1 + 24 + 1);
   assert.equal(lineas[25], '');
-  assert.equal(lineas[1], 'R-IND6,0,0,,,,,,false');
+  assert.equal(lineas[1], 'R-IND6;0;0;;;;;;false');
   // A las 7 anduvieron dos buses a 20 km/h y de venida pasaron con 20 min.
-  assert.equal(lineas[8], 'R-IND6,7,2,20,,,20,20,false');
+  assert.equal(lineas[8], 'R-IND6;7;2;20;;;20;20;false');
+});
+test('indicadoresCsv: un decimal sale con coma, como lo lee Excel en español de Colombia', () => {
+  const r = indicadoresDeRuta('EMP-IND', 'R-IND6', HASTA, HASTA + HORA);
+  assert.ok(r);
+  r.porHora[7].busesPromedio = 2.5;
+  r.porHora[7].velocidadPromedioKmh = 18.3;
+  assert.equal(indicadoresCsv('R-IND6', r).split('\r\n')[8], 'R-IND6;7;2,5;18,3;;;;;false');
 });
 
-test('indicadoresCsv: un campo con coma, comilla o salto va entre comillas (RFC 4180)', () => {
+test('indicadoresCsv: un campo con punto y coma, comilla o salto va entre comillas', () => {
   const vacio = indicadoresDeRuta('EMP-IND', 'R-IND6', HASTA, HASTA + HORA);
   assert.ok(vacio);
-  assert.ok(indicadoresCsv('R "1",\nx', vacio).split('\r\n')[1].startsWith('"R ""1"",\nx",0,'));
+  assert.ok(indicadoresCsv('R "1";\nx', vacio).split('\r\n')[1].startsWith('"R ""1"";\nx";0;'));
 });
 
 test('el cruce se interpola: no se redondea a la muestra', () => {
@@ -225,7 +232,7 @@ test('GET /api/panel/indicadores/:routeId pide administrador, rango válido y ru
   assert.equal(csv.headers.get('content-type'), 'text/csv; charset=utf-8');
   assert.equal(csv.headers.get('content-disposition'), 'attachment; filename="indicadores-R-IND-2026-11-20-a-2026-11-21.csv"');
   const texto = await csv.text();
-  assert.ok(texto.startsWith('ruta,hora,'));
+  assert.ok(texto.startsWith('ruta;hora;'));
   assert.equal(texto.split('\r\n').length, 26);
   assert.equal((await fetch(url('R-IND', `${rango}&formato=xml`), { headers })).status, 400);
 });

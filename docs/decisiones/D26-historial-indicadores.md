@@ -23,15 +23,12 @@ de dos horas es fin de turno, no un intervalo. La flota de ejemplo va
 marcada `simulado` y no se mezcla (D8).
 
 **Exportar CSV** (`?formato=csv`, y «Exportar CSV» en Reportes del panel).
-Una fila por hora, cabeceras en ASCII, saltos `\r\n`. El separador es la
-**coma** y el decimal el **punto** (RFC 4180), tal como lo arma
-`indicadoresCsv`. Se eligió el estándar para que lo lea sin adivinar
-cualquier herramienta de análisis (Python, R, Google Sheets). **Límite
-conocido:** un Excel configurado en español de Colombia espera `;` como
-separador de lista y la coma como decimal, así que al abrir el archivo con
-doble clic puede dejar todo en una sola columna. Se abre bien con «Datos,
-Desde texto/CSV». Si el dueño prefiere abrirlo directo en Excel, la salida
-es `;` con decimal coma (o una BOM y `sep=;`); no está decidido.
+Una fila por hora, cabeceras en ASCII, saltos `\r\n`. El separador es el
+**punto y coma** y el decimal la **coma**, como los espera Excel en español
+de Colombia (dueño, 2026-11-24): el archivo se abre con doble clic, cada dato
+en su columna. Va sin BOM ni `sep=;`: todo el contenido es ASCII. Otra
+herramienta (Python, R) lo lee diciéndole el separador y el decimal, por
+ejemplo `pd.read_csv(f, sep=';', decimal=',')`.
 
 **Consolidación** (`src/data/consolidacion.ts`). Antes de que la retención
 borre lo crudo, cada día cerrado de Barranquilla (medianoche a medianoche,
@@ -71,11 +68,11 @@ no haya dos definiciones de «posible».
 
 ## Lo que no cubre
 
-- **Más de 7 días.** Los indicadores (intervalos, horas pico) se calculan de
-  lo crudo; pasada la semana solo queda `servicio_horario`, que no guarda
-  intervalos. Los indicadores de periodos largos están por hacer.
+- **El intervalo de más de 7 días.** Buses, velocidad y hora pico salen de
+  `servicio_horario` en cualquier periodo; el intervalo (mediana y p90) se
+  mide con los pasos por la mitad de la ruta, que solo están en lo crudo.
+  Para periodos largos falta consolidar esos pasos.
 - **Un día que la retención ya empezó a borrar** (el backend estuvo apagado
   más de una semana) no se consolida: un resumen parcial pasaría por entero.
 - **Datos personales.** Las muestras son de buses, no de personas; ni el
   historial ni el resumen guardan pasajeros.
-- **Excel directo.** Ver el límite del separador, arriba.
