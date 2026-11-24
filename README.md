@@ -8,6 +8,37 @@ equipos GPS instalados en los buses por **MQTT** y las retransmite por
 
 GPS del bus (MQTT) → Broker Aedes → validación y SQLite → Socket.IO → app del pasajero / panel de empresa
 
+## Datos
+
+- **Historial**: cada posición se guarda muestreada en `posiciones_historial`
+  (lo crudo dura una semana) y cada día se consolida en `servicio_horario`,
+  con su control de calidad en `calidad_historial` (D26).
+- **Indicadores por ruta** (`src/data/indicadores.ts`): buses por hora,
+  velocidad en marcha (sin las muestras detenidas), intervalo entre buses
+  (headway) por sentido con mediana y p90, hora pico y la marca de simulado.
+  El intervalo se mide al cruzar la mitad de la ruta, con el cruce
+  interpolado entre muestras y sin contar las pausas del servicio.
+- **Exportación CSV** (`indicadoresCsv`): punto y coma y coma decimal para
+  Excel en español, cabeceras en ASCII para Python o R.
+
+## Inteligencia artificial
+
+`prototipo-aforo/` estima la ocupación del bus (vacío, medio o lleno) con
+las cámaras del vehículo: **EfficientNet-B0** (PyTorch / torchvision)
+afinada desde ImageNet, umbrales sobre la probabilidad acumulada calibrados
+por barrido (F1 macro con a lo sumo 5 % de sobreestimación), promedio de 5
+cuadros y fusión de dos cámaras que se queda con el estado más bajo.
+Entrena en GPU, sirve en CPU, con inferencia en vivo por RTSP. Sus pruebas:
+`npm run test:aforo`. Aún no está conectado a las apps.
+
+## Infraestructura
+
+- En el Mac corre bajo **launchd**: el servidor, el túnel **ngrok** con
+  dominio fijo, las copias de respaldo de la base y la rotación de logs.
+- **Fly.io** (`fly.toml`) es el respaldo en la nube: las apps pasan a él en
+  menos de 55 s si el principal no contesta y vuelven en menos de 30 s.
+- `docs/runbook.md` dice qué hacer cuando algo se cae.
+
 ## Inicio rápido
 
 ```bash
