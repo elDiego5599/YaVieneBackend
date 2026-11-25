@@ -1,5 +1,7 @@
 # Ya Viene Backend
 
+> **Note:** This project targets Barranquilla, Colombia, so its docs and earlier commit history are in Spanish. New commits are in English.
+
 Backend en tiempo real para Ya Viene. Recibe las posiciones que mandan los
 equipos GPS instalados en los buses por **MQTT** y las retransmite por
 **WebSocket** (Socket.IO) a la app del pasajero y al panel de cada empresa.
